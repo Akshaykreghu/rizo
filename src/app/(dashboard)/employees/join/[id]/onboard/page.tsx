@@ -1,0 +1,238 @@
+'use client';
+
+import { useState } from 'react';
+import { useParams, useRouter } from 'next/navigation';
+import { useQuery } from '@tanstack/react-query';
+import { ArrowLeft } from 'lucide-react';
+import { EmployeeSearch } from '@/components/employees/EmployeeSearch';
+
+interface SelectOption { value: string; label: string }
+interface JoinDetail { join: Record<string, string> }
+
+const EMPTY_FORM = {
+  emp_id: '', emp_company_id: '', username: '', password: '',
+  joining_date: '', emp_branch: '', emp_dept: '', designation: '', emp_grade: '',
+  emp_type: '', attr1: '', probation: '',
+  structure_id: '', emp_anual_ctc: '', emp_monthly_ctc: '',
+};
+
+export default function OnboardPage() {
+  const params = useParams();
+  const id = params.id as string;
+  const router = useRouter();
+  const [form, setForm] = useState(EMPTY_FORM);
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const { data: join } = useQuery<JoinDetail>({
+    queryKey: ['employees/join', id],
+    queryFn: () => fetch(`/api/employees/join/${id}`).then((r) => r.json()),
+  });
+
+  const { data: branches = [] } = useQuery<SelectOption[]>({
+    queryKey: ['setup/branches'],
+    queryFn: () => fetch('/api/setup/branches').then((r) => r.json()).then((rows: Record<string, unknown>[]) =>
+      rows.map((r) => ({ value: String(r.branch_code), label: String(r.branch_name) }))
+    ),
+  });
+  const { data: departments = [] } = useQuery<SelectOption[]>({
+    queryKey: ['setup/departments'],
+    queryFn: () => fetch('/api/setup/departments').then((r) => r.json()).then((rows: Record<string, unknown>[]) =>
+      rows.map((r) => ({ value: String(r.dept_code), label: String(r.dept_name) }))
+    ),
+  });
+  const { data: designations = [] } = useQuery<SelectOption[]>({
+    queryKey: ['setup/designations'],
+    queryFn: () => fetch('/api/setup/designations').then((r) => r.json()).then((rows: Record<string, unknown>[]) =>
+      rows.map((r) => ({ value: String(r.desig_code), label: String(r.desig_name) }))
+    ),
+  });
+  const { data: grades = [] } = useQuery<SelectOption[]>({
+    queryKey: ['setup/grades'],
+    queryFn: () => fetch('/api/setup/grades').then((r) => r.json()).then((rows: Record<string, unknown>[]) =>
+      rows.map((r) => ({ value: String(r.grade_code), label: String(r.grade_name) }))
+    ),
+  });
+  const { data: structures = [] } = useQuery<SelectOption[]>({
+    queryKey: ['setup/salary-structures'],
+    queryFn: () => fetch('/api/setup/salary-structures').then((r) => r.json()).then((rows: Record<string, unknown>[]) =>
+      rows.map((r) => ({ value: String(r.structure_id), label: String(r.structure_name) }))
+    ),
+  });
+
+  function f(key: keyof typeof EMPTY_FORM) {
+    return {
+      value: form[key],
+      onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
+        setForm((prev) => ({ ...prev, [key]: e.target.value })),
+    };
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setSaving(true);
+    setError('');
+    try {
+      const res = await fetch(`/api/employees/join/${id}/onboard`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      });
+      if (!res.ok) { setError((await res.json()).error ?? 'Failed to onboard employee'); return; }
+      const data = await res.json();
+      router.push(`/employees/${data.emp_pkey}`);
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div>
+      <button
+        onClick={() => router.back()}
+        className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 mb-5 transition-colors"
+      >
+        <ArrowLeft className="w-4 h-4" /> Back
+      </button>
+
+      <h1 className="text-2xl font-semibold text-gray-900 mb-1">Onboard Employee</h1>
+      {join && (
+        <p className="text-sm text-gray-500 mb-6">
+          Converting join record for <span className="font-medium text-gray-700">{join.join.first_name} {join.join.last_name}</span>
+        </p>
+      )}
+
+      <form onSubmit={handleSubmit} className="bg-white rounded-xl border border-gray-200 p-6 max-w-3xl space-y-6">
+        <section>
+          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Identity &amp; Login</h2>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="label">Employee ID</label>
+              <input className="input" {...f('emp_id')} placeholder="Leave blank to auto-generate" />
+            </div>
+            <div>
+              <label className="label">Employee Company ID <span className="text-red-500">*</span></label>
+              <input required className="input" {...f('emp_company_id')} placeholder="e.g. 100024" />
+            </div>
+            <div>
+              <label className="label">Login Username <span className="text-red-500">*</span></label>
+              <input required className="input" {...f('username')} placeholder="e.g. GRTL100024" />
+            </div>
+            <div>
+              <label className="label">Initial Password <span className="text-red-500">*</span></label>
+              <input required type="password" className="input" {...f('password')} />
+            </div>
+          </div>
+        </section>
+
+        <section>
+          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Professional Details</h2>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="label">Joining Date</label>
+              <input type="date" className="input" {...f('joining_date')} />
+            </div>
+            <div>
+              <label className="label">Employment Type</label>
+              <select className="input" {...f('emp_type')}>
+                <option value="">Select type</option>
+                <option value="Permanent">Permanent</option>
+                <option value="Contract">Contract</option>
+                <option value="Trainee">Trainee</option>
+                <option value="Intern">Intern</option>
+              </select>
+            </div>
+            <div>
+              <label className="label">Branch</label>
+              <select className="input" {...f('emp_branch')}>
+                <option value="">Select branch</option>
+                {branches.map((b) => <option key={b.value} value={b.value}>{b.label}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="label">Department</label>
+              <select className="input" {...f('emp_dept')}>
+                <option value="">Select department</option>
+                {departments.map((d) => <option key={d.value} value={d.value}>{d.label}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="label">Designation</label>
+              <select className="input" {...f('designation')}>
+                <option value="">Select designation</option>
+                {designations.map((d) => <option key={d.value} value={d.value}>{d.label}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="label">Grade</label>
+              <select className="input" {...f('emp_grade')}>
+                <option value="">Select grade</option>
+                {grades.map((g) => <option key={g.value} value={g.value}>{g.label}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="label">Probation Period (days)</label>
+              <input type="number" className="input" {...f('probation')} />
+            </div>
+            <div>
+              <label className="label">Reporting Manager</label>
+              <EmployeeSearch
+                value={form.attr1}
+                onChange={(empPkey) => setForm((prev) => ({ ...prev, attr1: empPkey }))}
+              />
+            </div>
+          </div>
+        </section>
+
+        <section>
+          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Salary</h2>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="label">Salary Structure</label>
+              <select className="input" {...f('structure_id')}>
+                <option value="">Select structure</option>
+                {structures.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+              </select>
+            </div>
+            <div />
+            <div>
+              <label className="label">Annual CTC</label>
+              <input type="number" className="input" {...f('emp_anual_ctc')} />
+            </div>
+            <div>
+              <label className="label">Monthly CTC</label>
+              <input type="number" className="input" {...f('emp_monthly_ctc')} />
+            </div>
+          </div>
+        </section>
+
+        {error && <p className="text-red-500 text-sm">{error}</p>}
+
+        <div className="flex gap-3 pt-1">
+          <button
+            type="submit"
+            disabled={saving}
+            className="bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white px-5 py-2 rounded-lg text-sm font-medium transition-colors"
+          >
+            {saving ? 'Onboarding…' : 'Complete Onboarding'}
+          </button>
+          <button
+            type="button"
+            onClick={() => router.back()}
+            className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+          >
+            Cancel
+          </button>
+        </div>
+      </form>
+
+      <style jsx>{`
+        .label { display: block; font-size: 0.875rem; font-weight: 500; color: #374151; margin-bottom: 0.25rem; }
+        .input { width: 100%; padding: 0.5rem 0.75rem; border: 1px solid #d1d5db; border-radius: 0.5rem; font-size: 0.875rem; outline: none; }
+        .input:focus { box-shadow: 0 0 0 2px #6366f1; border-color: transparent; }
+      `}</style>
+    </div>
+  );
+}

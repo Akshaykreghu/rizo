@@ -1,0 +1,70 @@
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
+import { getCompanyPool } from '@/lib/db';
+import { NextRequest, NextResponse } from 'next/server';
+import type { RowDataPacket, ResultSetHeader } from 'mysql2';
+
+const JOIN_FIELDS = [
+  'first_name', 'last_name', 'date_of_birth', 'email', 'mobile_no', 'address',
+  'id_card', 'pincode', 'district', 'state', 'blood', 'maritual_status',
+  'guradian', 'relation_guardian', 'classification', 'nationality_id', 'country_origin',
+  'bank', 'bank_branch', 'ifsc_code', 'account_no', 'pf', 'company_pf', 'previous_member_id',
+  'esi_dispensary', 'esi', 'eps', 'pan_no', 'international_worker', 'locomotive', 'hearing',
+  'visual', 'physical_handicap', 'wps_code', 'lwf_code', 'profile_image_url',
+] as const;
+
+export async function GET(request: NextRequest) {
+  const session = await getServerSession(authOptions);
+  if (!session || session.user.userGroup !== 1) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  const pool = await getCompanyPool(session.user.companyCode);
+  const { searchParams } = new URL(request.url);
+  const status = searchParams.get('status') ?? '1';
+  const search = searchParams.get('search') ?? '';
+  const page = Math.max(1, parseInt(searchParams.get('page') ?? '1') || 1);
+  const pageSize = Math.max(1, parseInt(searchParams.get('pageSize') ?? '10') || 10);
+  const offset = (page - 1) * pageSize;
+
+  const conditions: string[] = ['status = ?'];
+  const params: (string | number)[] = [Number(status) || 1];
+  if (search) {
+    conditions.push('(first_name LIKE ? OR last_name LIKE ? OR email LIKE ? OR mobile_no LIKE ?)');
+    const like = `%${search}%`;
+    params.push(like, like, like, like);
+  }
+  const where = `WHERE ${conditions.join(' AND ')}`;
+
+  const [[countRow], [rows]] = await Promise.all([
+    pool.execute<RowDataPacket[]>(`SELECT COUNT(*) as total FROM emp_join ${where}`, params),
+    pool.execute<RowDataPacket[]>(
+      `SELECT emp_join_pkey, first_name, last_name, email, mobile_no, date_of_birth, district, status, emp_fkey, profile_image_url
+       FROM emp_join ${where} ORDER BY emp_join_pkey DESC LIMIT ${pageSize} OFFSET ${offset}`,
+      params
+    ),
+  ]);
+
+  return NextResponse.json({ data: rows, total: countRow[0]?.total ?? 0 });
+}
+
+export async function POST(request: NextRequest) {
+  const session = await getServerSession(authOptions);
+  if (!session || session.user.userGroup !== 1) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  const body = await request.json();
+  const pool = await getCompanyPool(session.user.companyCode);
+
+  const columns = JOIN_FIELDS.filter((k) => body[k] !== undefined && body[k] !== '');
+  const placeholders = columns.map(() => '?').join(', ');
+  const values = columns.map((k) => body[k]);
+
+  const [result] = await pool.execute<ResultSetHeader>(
+    `INSERT INTO emp_join (emp_fkey, status, ${columns.join(', ')}) VALUES (0, 1, ${placeholders})`,
+    values
+  );
+
+  return NextResponse.json({ emp_join_pkey: result.insertId }, { status: 201 });
+}
