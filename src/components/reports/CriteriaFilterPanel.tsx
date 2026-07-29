@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Plus, X } from 'lucide-react';
+import { Plus, X, ChevronDown } from 'lucide-react';
 import { EmployeeChecklist } from './EmployeeChecklist';
 
 interface CriteriaRow {
@@ -116,6 +116,10 @@ export function CriteriaFilterPanel({
   );
 }
 
+// Checkbox-dropdown multi-select — replaces a native `<select multiple>`, which technically
+// supports choosing more than one value (via ctrl/cmd-click) but hides that affordance well
+// enough that it reads as single-select. Explicit checkboxes make multi-select unambiguous,
+// matching the pattern already established for the Employee criteria (EmployeeChecklist).
 function CriteriaOptionSelect({
   name, label, selected, onChange,
 }: { name: string; label: string; selected: string[]; onChange: (vals: string[]) => void }) {
@@ -124,20 +128,56 @@ function CriteriaOptionSelect({
     queryFn: () => fetch(`/api/reports/criteria-options?criteria=${name}`).then((r) => r.json()),
   });
   const options = data?.rows ?? [];
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onClickOutside(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener('mousedown', onClickOutside);
+    return () => document.removeEventListener('mousedown', onClickOutside);
+  }, [open]);
+
+  const toggle = (value: string) => {
+    onChange(selected.includes(value) ? selected.filter((v) => v !== value) : [...selected, value]);
+  };
+
+  const summary = selected.length === 0 ? 'Select…' : selected.length === 1
+    ? (options.find((o) => String(o.value) === selected[0])?.label ?? `1 selected`)
+    : `${selected.length} selected`;
 
   return (
-    <div>
+    <div ref={ref} className="relative">
       <label className="block text-xs text-gray-500 mb-1">{label}</label>
-      <select
-        multiple
-        value={selected}
-        onChange={(e) => onChange(Array.from(e.target.selectedOptions, (o) => o.value))}
-        className="border border-gray-300 rounded-lg px-3 py-2 text-sm min-w-[160px] h-20"
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center justify-between gap-2 border border-gray-300 rounded-lg px-3 py-2 text-sm min-w-[180px] bg-white"
       >
-        {options.map((o) => (
-          <option key={o.value} value={o.value}>{o.label}</option>
-        ))}
-      </select>
+        <span className="truncate">{summary}</span>
+        <ChevronDown className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+      </button>
+      {open && (
+        <div className="absolute z-20 mt-1 w-full min-w-[220px] bg-white border border-gray-200 rounded-lg shadow-lg max-h-64 overflow-y-auto">
+          <div className="flex justify-between px-3 py-1.5 border-b border-gray-100 text-xs">
+            <button type="button" className="text-indigo-600 hover:underline" onClick={() => onChange(options.map((o) => String(o.value)))}>Select all</button>
+            <button type="button" className="text-gray-500 hover:underline" onClick={() => onChange([])}>Clear</button>
+          </div>
+          {options.length === 0 && <div className="px-3 py-2 text-sm text-gray-400">No options</div>}
+          {options.map((o) => (
+            <label key={o.value} className="flex items-center gap-2 px-3 py-1.5 text-sm hover:bg-gray-50 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={selected.includes(String(o.value))}
+                onChange={() => toggle(String(o.value))}
+              />
+              {o.label}
+            </label>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

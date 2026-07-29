@@ -27,6 +27,9 @@ export async function POST(request: NextRequest) {
   const period = await getAttPeriod(pool, month);
   const userId = session.user.loginUserId ?? String(session.user.empFkey ?? 'system');
 
+  console.log('insert_update_att_reg params: ' + JSON.stringify({
+    branch, periodStart: period.start, periodEnd: period.end, userId,
+  }));
   await pool.query('CALL insert_update_att_reg(?, ?, ?, ?, @poutput)', [branch, period.start, period.end, userId]);
   const [[result]] = await pool.query<RowDataPacket[]>('SELECT @poutput AS poutput');
 

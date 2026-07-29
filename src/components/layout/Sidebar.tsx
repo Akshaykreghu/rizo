@@ -94,10 +94,11 @@ const navItems: NavItem[] = [
     children: [
       { label: 'Employee Report', href: '/reports/employee' },
       { label: 'Payroll Report', href: '/reports/payroll' },
-      { label: 'Salary Slips', href: '/reports/salary-slips' },
       { label: 'Attendance', href: '/reports/attendance' },
-      { label: 'ESI / EPF', href: '/reports/statutory/esi-epf' },
+      { label: 'Statutory Report', href: '/reports/statutory' },
+      { label: 'Statutory Upload', href: '/reports/statutory-upload' },
       { label: 'LOP Report', href: '/reports/lop' },
+      { label: 'Loan / Advance Report', href: '/reports/loans-advances' },
     ],
   },
   {

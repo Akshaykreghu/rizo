@@ -1,9 +1,10 @@
 'use client';
 
 import { useState } from 'react';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { Download, Play } from 'lucide-react';
 import { CriteriaFilterPanel } from '@/components/reports/CriteriaFilterPanel';
+import { FieldPicker } from '@/components/reports/FieldPicker';
 import { exportReportToExcel, exportReportToPdf, type ReportColumn } from '@/lib/reportExport';
 
 type Subtype = 'employeelist' | 'salarystructure' | 'shiftpolicy' | 'leavepolicy' | 'holiday';
@@ -56,17 +57,37 @@ export default function EmployeeReportPage() {
   const [subtype, setSubtype] = useState<Subtype>('employeelist');
   const [includeResigned, setIncludeResigned] = useState(false);
   const [criteria, setCriteria] = useState<Record<string, string[]>>({});
+  const [fields, setFields] = useState<string[]>([]);
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const meta = SUBTYPE_META[subtype];
+
+  const { data: fieldCatalog } = useQuery<{ fields: { key: string; label: string }[] }>({
+    queryKey: ['reports/employee-fields'],
+    queryFn: () => fetch('/api/reports/employee-fields').then((r) => r.json()),
+    enabled: subtype === 'employeelist',
+  });
+
+  // When custom fields are picked, the table columns follow the picker's selection (always led
+  // by Employee ID / Name, which the API always includes); otherwise fall back to the subtype's
+  // default fixed column set.
+  const columns: ReportColumn[] = subtype === 'employeelist' && fields.length > 0
+    ? [
+        { key: 'employee_id', label: 'Employee ID' }, { key: 'emp_name', label: 'Name' },
+        ...fields.map((key) => ({ key, label: fieldCatalog?.fields.find((f) => f.key === key)?.label ?? key })),
+      ]
+    : meta.columns;
 
   const generate = useMutation({
     mutationFn: async () => {
       const res = await fetch('/api/reports/employee', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ subtype, includeResigned, criteria }),
+        body: JSON.stringify({
+          subtype, includeResigned, criteria,
+          fields: subtype === 'employeelist' && fields.length > 0 ? fields : undefined,
+        }),
       });
       const b = await res.json();
       if (!res.ok) throw new Error(b.error ?? 'Failed to generate report');
@@ -86,7 +107,7 @@ export default function EmployeeReportPage() {
             <label className="block text-xs text-gray-500 mb-1">Report Type</label>
             <select
               value={subtype}
-              onChange={(e) => { setSubtype(e.target.value as Subtype); setRows([]); setCriteria({}); setError(null); generate.reset(); }}
+              onChange={(e) => { setSubtype(e.target.value as Subtype); setRows([]); setCriteria({}); setFields([]); setError(null); generate.reset(); }}
               className="border border-gray-300 rounded-lg px-3 py-2 text-sm min-w-[180px]"
             >
               {Object.entries(SUBTYPE_META).map(([key, m]) => <option key={key} value={key}>{m.label}</option>)}
@@ -106,17 +127,25 @@ export default function EmployeeReportPage() {
             {generate.isPending ? 'Generating…' : 'Generate'}
           </button>
         </div>
+
+        {subtype === 'employeelist' && (
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Report Fields (optional — leave empty for default columns)</label>
+            <FieldPicker selected={fields} onChange={setFields} />
+          </div>
+        )}
+
         {error && <p className="text-sm text-red-600">{error}</p>}
         {rows.length > 0 && (
           <div className="flex gap-2">
             <button
-              onClick={() => exportReportToExcel(meta.columns, rows, 'employee_report')}
+              onClick={() => exportReportToExcel(columns, rows, 'employee_report')}
               className="flex items-center gap-2 border border-gray-300 hover:bg-gray-50 px-3 py-1.5 rounded-lg text-sm text-gray-700"
             >
               <Download className="w-3.5 h-3.5" /> Excel
             </button>
             <button
-              onClick={() => exportReportToPdf(meta.columns, rows, 'Employee Report', 'employee_report')}
+              onClick={() => exportReportToPdf(columns, rows, 'Employee Report', 'employee_report')}
               className="flex items-center gap-2 border border-gray-300 hover:bg-gray-50 px-3 py-1.5 rounded-lg text-sm text-gray-700"
             >
               <Download className="w-3.5 h-3.5" /> PDF
@@ -128,11 +157,11 @@ export default function EmployeeReportPage() {
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-gray-50 border-b border-gray-200">
-            <tr>{meta.columns.map((c) => <th key={c.key} className="text-left px-4 py-3 font-medium text-gray-600 whitespace-nowrap">{c.label}</th>)}</tr>
+            <tr>{columns.map((c) => <th key={c.key} className="text-left px-4 py-3 font-medium text-gray-600 whitespace-nowrap">{c.label}</th>)}</tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
             {rows.length === 0 && (
-              <tr><td colSpan={meta.columns.length} className="px-4 py-8 text-center text-gray-400">
+              <tr><td colSpan={columns.length} className="px-4 py-8 text-center text-gray-400">
                 {generate.isPending
                   ? 'Loading...'
                   : generate.isSuccess
@@ -142,7 +171,7 @@ export default function EmployeeReportPage() {
             )}
             {rows.map((row, i) => (
               <tr key={i} className="hover:bg-gray-50">
-                {meta.columns.map((c) => <td key={c.key} className="px-4 py-3 text-gray-700 whitespace-nowrap">{String(row[c.key] ?? '')}</td>)}
+                {columns.map((c) => <td key={c.key} className="px-4 py-3 text-gray-700 whitespace-nowrap">{String(row[c.key] ?? '')}</td>)}
               </tr>
             ))}
           </tbody>

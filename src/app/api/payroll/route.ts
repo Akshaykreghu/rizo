@@ -88,6 +88,11 @@ export async function POST(request: NextRequest) {
   }
 
   const pool = await getCompanyPool(session.user.companyCode);
+  console.log('seedPayrollDraft params: ' + JSON.stringify({
+    branch: body.branch,
+    monthYear: body.month,
+    userId: session.user.loginUserId,
+  }));
   const err = await seedPayrollDraft(pool, body.branch, body.month, session.user.loginUserId);
   if (err) return NextResponse.json({ error: err }, { status: 400 });
 

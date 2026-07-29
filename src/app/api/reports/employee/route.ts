@@ -20,6 +20,7 @@ export async function POST(request: NextRequest) {
       subtype,
       includeResigned: !!body.includeResigned,
       criteria: body.criteria ?? {},
+      fields: Array.isArray(body.fields) ? body.fields : undefined,
     });
     return NextResponse.json({ rows });
   } catch (err) {
