@@ -132,6 +132,7 @@ const navItems: NavItem[] = [
       { label: 'Salary Structure', href: '/setup/salary-structure' },
       { label: 'Financial Year', href: '/setup/financial-year' },
       { label: 'Holiday Calendar', href: '/setup/holidays' },
+      { label: 'Leave Types', href: '/setup/leave-types' },
       { label: 'Leave Policy', href: '/setup/leave-policy' },
       { label: 'Shifts', href: '/setup/shifts' },
       { label: 'Attendance Config', href: '/setup/attendance-config' },
