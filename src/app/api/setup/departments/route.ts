@@ -10,7 +10,7 @@ export async function GET() {
 
   const pool = await getCompanyPool(session.user.companyCode);
   const [rows] = await pool.execute<RowDataPacket[]>(
-    'SELECT id, dept_name, dept_code, status FROM department ORDER BY dept_name'
+    'SELECT id, dept_name, dept_code, status FROM department WHERE status = 1 ORDER BY dept_name'
   );
   return NextResponse.json(rows);
 }

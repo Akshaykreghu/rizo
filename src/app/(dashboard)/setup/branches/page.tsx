@@ -9,7 +9,6 @@ export default function BranchesPage() {
       displayKey="branch_name"
       fields={[
         { key: 'branch_name', label: 'Branch Name', required: true, placeholder: 'e.g. Head Office' },
-        { key: 'branch_code', label: 'Branch Code', placeholder: 'e.g. HO' },
         { key: 'address', label: 'Address', placeholder: 'Branch address' },
         { key: 'city', label: 'City' },
         { key: 'state', label: 'State' },

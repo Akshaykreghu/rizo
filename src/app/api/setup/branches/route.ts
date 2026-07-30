@@ -10,7 +10,7 @@ export async function GET() {
 
   const pool = await getCompanyPool(session.user.companyCode);
   const [rows] = await pool.execute<RowDataPacket[]>(
-    'SELECT id, branch_name, branch_code, address, city, state, pincode, status FROM branches ORDER BY branch_name'
+    'SELECT id, branch_name, branch_code, address, city, state, pincode, status FROM branches WHERE status = 1 ORDER BY branch_name'
   );
   return NextResponse.json(rows);
 }
@@ -24,14 +24,16 @@ export async function POST(request: NextRequest) {
   const body = await request.json();
   const pool = await getCompanyPool(session.user.companyCode);
 
+  // branch_code is deliberately not accepted from the client: a live BEFORE INSERT trigger
+  // (`branches_bi`) always overwrites it with a system-generated `<company_code><n>` value,
+  // matching legacy's own behavior (BranchController::savebranch() never lets the form set it).
   const [result] = await pool.execute<ResultSetHeader>(
     `INSERT INTO branches
        (company_code, branch_name, branch_code, address, city, state, pincode, latitude, longitude, status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 1)`,
+     VALUES (?, ?, '', ?, ?, ?, ?, 0, 0, 1)`,
     [
       session.user.companyCode,
       body.branch_name,
-      body.branch_code ?? '',
       body.address ?? '',
       body.city ?? '',
       body.state ?? '',

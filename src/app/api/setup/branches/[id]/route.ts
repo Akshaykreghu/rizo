@@ -16,9 +16,11 @@ export async function PUT(
   const body = await request.json();
   const pool = await getCompanyPool(session.user.companyCode);
 
+  // branch_code is immutable after creation, matching legacy (savebranch() never updates it
+  // on edit — see the POST handler's comment for why).
   await pool.execute(
-    'UPDATE branches SET branch_name = ?, branch_code = ?, address = ?, city = ?, state = ?, pincode = ? WHERE id = ?',
-    [body.branch_name, body.branch_code ?? '', body.address ?? '', body.city ?? '', body.state ?? '', body.pincode ?? '', id]
+    'UPDATE branches SET branch_name = ?, address = ?, city = ?, state = ?, pincode = ? WHERE id = ?',
+    [body.branch_name, body.address ?? '', body.city ?? '', body.state ?? '', body.pincode ?? '', id]
   );
   return NextResponse.json({ success: true });
 }

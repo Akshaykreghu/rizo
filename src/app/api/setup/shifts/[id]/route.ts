@@ -40,6 +40,9 @@ export async function PUT(
 
   const { id } = await params;
   const body = await request.json();
+  if (!String(body.day_time_desc ?? '').trim()) {
+    return NextResponse.json({ error: 'Shift Name is required' }, { status: 400 });
+  }
   const pool = await getCompanyPool(session.user.companyCode);
 
   const [dup] = await pool.execute<RowDataPacket[]>(

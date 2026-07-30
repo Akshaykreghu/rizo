@@ -103,12 +103,13 @@ export function ShiftForm({ id }: { id?: string }) {
     setForm((f) => ({ ...f, [key]: value }));
   }
 
-  function text(key: string, label: string, type: 'text' | 'number' | 'date' = 'text') {
+  function text(key: string, label: string, type: 'text' | 'number' | 'date' = 'text', required = false) {
     return (
       <div>
         <label className="block text-xs font-medium text-gray-600 mb-1">{label}</label>
         <input
           type={type}
+          required={required}
           value={form[key] ?? ''}
           onChange={(e) => set(key, e.target.value)}
           className="w-full px-2.5 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
@@ -163,7 +164,7 @@ export function ShiftForm({ id }: { id?: string }) {
         <section className="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
           <h2 className="text-sm font-semibold text-gray-900">Basic</h2>
           <div className="grid grid-cols-2 gap-4">
-            {text('day_time_desc', 'Shift Name *')}
+            {text('day_time_desc', 'Shift Name *', 'text', true)}
             <div className="flex items-end gap-4">
               {checkbox('active', 'Active', '1', '0')}
               {checkbox('isnextday', 'Next Day Shift', '1', '0')}
