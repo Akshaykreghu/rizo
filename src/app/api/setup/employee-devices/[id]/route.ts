@@ -1,6 +1,6 @@
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { getCompanyPool } from '@/lib/db';
+import { controlPool } from '@/lib/db';
 import { NextRequest, NextResponse } from 'next/server';
 
 export async function PUT(
@@ -14,18 +14,13 @@ export async function PUT(
 
   const { id } = await params;
   const body = await request.json();
-  const pool = await getCompanyPool(session.user.companyCode);
+  const deviceId = Number(body.deviceid);
+  if (!deviceId) return NextResponse.json({ error: 'Device is required' }, { status: 400 });
 
-  await pool.execute(
-    `UPDATE salary_head_items
-     SET item = ?, item_type = ?, item_value = ?, occurance = ?, item_part = ?,
-         value = ?, is_show_salslip = ?, salary_head_item_order1 = ?, comments = ?
-     WHERE salary_head_item_pkey = ?`,
-    [
-      body.item, body.item_type ?? 'Fixed', body.item_value ?? null, body.occurance ?? null,
-      body.item_part ?? 'Direct', body.value === 'N' ? 'N' : 'Y', body.is_show_salslip === 'N' ? 'N' : 'Y',
-      Number(body.salary_head_item_order1) || 0, body.comments ?? '', id,
-    ]
+  await controlPool.execute(
+    `UPDATE emp_device_comp_branch SET deviceid = ?, emp_device_id = ?, modified_by = ?, modified_date = NOW()
+     WHERE emp_device_comp_branch_seq = ? AND Company_code = ?`,
+    [deviceId, Number(body.emp_device_id) || 0, session.user.loginUserId, id, session.user.companyCode]
   );
   return NextResponse.json({ success: true });
 }
@@ -40,8 +35,9 @@ export async function DELETE(
   }
 
   const { id } = await params;
-  const pool = await getCompanyPool(session.user.companyCode);
-
-  await pool.execute('UPDATE salary_head_items SET status = 0 WHERE salary_head_item_pkey = ?', [id]);
+  await controlPool.execute(
+    'UPDATE emp_device_comp_branch SET status = 0 WHERE emp_device_comp_branch_seq = ? AND Company_code = ?',
+    [id, session.user.companyCode]
+  );
   return NextResponse.json({ success: true });
 }

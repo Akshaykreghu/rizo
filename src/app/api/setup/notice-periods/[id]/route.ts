@@ -2,6 +2,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
 import { NextRequest, NextResponse } from 'next/server';
+import type { RowDataPacket } from 'mysql2';
 
 export async function PUT(
   request: NextRequest,
@@ -16,16 +17,24 @@ export async function PUT(
   const body = await request.json();
   const pool = await getCompanyPool(session.user.companyCode);
 
+  const [dupDays] = await pool.execute<RowDataPacket[]>(
+    'SELECT 1 FROM notice_period WHERE notice_days = ? AND status = 1 AND notice_pkey != ?',
+    [Number(body.notice_days) || 0, id]
+  );
+  if (dupDays.length) {
+    return NextResponse.json({ error: 'A notice period with this many days already exists' }, { status: 409 });
+  }
+  const [dupDesc] = await pool.execute<RowDataPacket[]>(
+    'SELECT 1 FROM notice_period WHERE description = ? AND status = 1 AND notice_pkey != ?',
+    [body.description, id]
+  );
+  if (dupDesc.length) {
+    return NextResponse.json({ error: 'A notice period with this description already exists' }, { status: 409 });
+  }
+
   await pool.execute(
-    `UPDATE salary_head_items
-     SET item = ?, item_type = ?, item_value = ?, occurance = ?, item_part = ?,
-         value = ?, is_show_salslip = ?, salary_head_item_order1 = ?, comments = ?
-     WHERE salary_head_item_pkey = ?`,
-    [
-      body.item, body.item_type ?? 'Fixed', body.item_value ?? null, body.occurance ?? null,
-      body.item_part ?? 'Direct', body.value === 'N' ? 'N' : 'Y', body.is_show_salslip === 'N' ? 'N' : 'Y',
-      Number(body.salary_head_item_order1) || 0, body.comments ?? '', id,
-    ]
+    'UPDATE notice_period SET notice_days = ?, description = ? WHERE notice_pkey = ?',
+    [Number(body.notice_days) || 0, body.description ?? '', id]
   );
   return NextResponse.json({ success: true });
 }
@@ -41,7 +50,6 @@ export async function DELETE(
 
   const { id } = await params;
   const pool = await getCompanyPool(session.user.companyCode);
-
-  await pool.execute('UPDATE salary_head_items SET status = 0 WHERE salary_head_item_pkey = ?', [id]);
+  await pool.execute('UPDATE notice_period SET status = 0 WHERE notice_pkey = ?', [id]);
   return NextResponse.json({ success: true });
 }

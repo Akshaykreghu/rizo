@@ -2,6 +2,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
 import { NextRequest, NextResponse } from 'next/server';
+import type { RowDataPacket } from 'mysql2';
 
 export async function PUT(
   request: NextRequest,
@@ -16,16 +17,24 @@ export async function PUT(
   const body = await request.json();
   const pool = await getCompanyPool(session.user.companyCode);
 
+  const [dupCode] = await pool.execute<RowDataPacket[]>(
+    'SELECT 1 FROM division WHERE div_code = ? AND status = 1 AND id != ?',
+    [body.div_code ?? '', id]
+  );
+  if (dupCode.length) {
+    return NextResponse.json({ error: 'Division code already exists' }, { status: 409 });
+  }
+  const [dupName] = await pool.execute<RowDataPacket[]>(
+    'SELECT 1 FROM division WHERE div_name = ? AND status = 1 AND id != ?',
+    [body.div_name, id]
+  );
+  if (dupName.length) {
+    return NextResponse.json({ error: 'Division name already exists' }, { status: 409 });
+  }
+
   await pool.execute(
-    `UPDATE salary_head_items
-     SET item = ?, item_type = ?, item_value = ?, occurance = ?, item_part = ?,
-         value = ?, is_show_salslip = ?, salary_head_item_order1 = ?, comments = ?
-     WHERE salary_head_item_pkey = ?`,
-    [
-      body.item, body.item_type ?? 'Fixed', body.item_value ?? null, body.occurance ?? null,
-      body.item_part ?? 'Direct', body.value === 'N' ? 'N' : 'Y', body.is_show_salslip === 'N' ? 'N' : 'Y',
-      Number(body.salary_head_item_order1) || 0, body.comments ?? '', id,
-    ]
+    'UPDATE division SET div_code = ?, div_name = ? WHERE id = ?',
+    [body.div_code ?? '', body.div_name, id]
   );
   return NextResponse.json({ success: true });
 }
@@ -41,7 +50,6 @@ export async function DELETE(
 
   const { id } = await params;
   const pool = await getCompanyPool(session.user.companyCode);
-
-  await pool.execute('UPDATE salary_head_items SET status = 0 WHERE salary_head_item_pkey = ?', [id]);
+  await pool.execute('UPDATE division SET status = 0 WHERE id = ?', [id]);
   return NextResponse.json({ success: true });
 }

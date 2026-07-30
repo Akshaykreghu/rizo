@@ -96,6 +96,7 @@ export default function SalaryHeadsPage() {
                   { key: 'value', label: 'Available in Structure Builder', type: 'checkbox' },
                   { key: 'is_show_salslip', label: 'Show on Salary Slip', type: 'checkbox' },
                   { key: 'salary_head_item_order1', label: 'Display Order', type: 'number' },
+                  { key: 'comments', label: 'Comments', placeholder: 'Explanatory note shown to HR when configuring this item' },
                 ]}
                 columns={[
                   { key: 'item', label: 'Item' },

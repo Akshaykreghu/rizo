@@ -39,7 +39,7 @@ export async function GET(request: NextRequest) {
   if (!headId) return NextResponse.json({ error: 'headId is required' }, { status: 400 });
   const [rows] = await pool.execute<RowDataPacket[]>(
     `SELECT salary_head_item_pkey, head_fkey, item, item_type, item_value, occurance, item_part,
-            value, is_show_salslip, status, salary_head_item_order1
+            value, is_show_salslip, status, salary_head_item_order1, comments
      FROM salary_head_items WHERE head_fkey = ? AND status = 1 ORDER BY salary_head_item_order1, salary_head_item_pkey`,
     [headId]
   );
@@ -62,12 +62,12 @@ export async function POST(request: NextRequest) {
   const [result] = await pool.execute<ResultSetHeader>(
     `INSERT INTO salary_head_items
        (head_fkey, item, item_type, item_value, occurance, item_part, value, is_show_salslip,
-        status, salary_head_item_order1)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+        status, salary_head_item_order1, comments)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
     [
       headId, body.item, body.item_type ?? 'Fixed', body.item_value ?? null, body.occurance ?? null,
       body.item_part ?? 'Direct', body.value === 'N' ? 'N' : 'Y', body.is_show_salslip === 'N' ? 'N' : 'Y',
-      Number(body.salary_head_item_order1) || 0,
+      Number(body.salary_head_item_order1) || 0, body.comments ?? '',
     ]
   );
   return NextResponse.json({ id: result.insertId }, { status: 201 });

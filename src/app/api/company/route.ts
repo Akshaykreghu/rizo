@@ -27,9 +27,11 @@ export async function PUT(request: NextRequest) {
   await pool.execute(
     `UPDATE comp_contact_info SET
        business_name = ?, address = ?, city = ?, state = ?,
-       pincode = ?, phone = ?, email = ?, website = ?`,
+       pincode = ?, phone = ?, email = ?, website = ?,
+       business_nature = ?, business_type = ?, logo = ?`,
     [body.business_name, body.address ?? null, body.city ?? null, body.state ?? null,
-     body.pincode ?? null, body.phone ?? null, body.email ?? null, body.website ?? null]
+     body.pincode ?? null, body.phone ?? null, body.email ?? null, body.website ?? null,
+     body.business_nature ?? null, body.business_type ?? null, body.logo ?? null]
   );
   return NextResponse.json({ success: true });
 }

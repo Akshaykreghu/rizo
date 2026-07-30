@@ -16,6 +16,7 @@ import {
   ChevronRight,
   CreditCard,
   Package,
+  Receipt,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useState } from 'react';
@@ -117,6 +118,12 @@ const navItems: NavItem[] = [
     href: '/assets',
   },
   {
+    label: 'Expenses',
+    icon: Receipt,
+    adminOnly: true,
+    href: '/expenses',
+  },
+  {
     label: 'Company Setup',
     icon: Building2,
     adminOnly: true,
@@ -137,6 +144,10 @@ const navItems: NavItem[] = [
       { label: 'Shifts', href: '/setup/shifts' },
       { label: 'Attendance Config', href: '/setup/attendance-config' },
       { label: 'Devices', href: '/setup/devices' },
+      { label: 'Notice Period', href: '/setup/notice-periods' },
+      { label: 'Division', href: '/setup/divisions' },
+      { label: 'Section', href: '/setup/sections' },
+      { label: 'Employee Devices', href: '/setup/employee-devices' },
     ],
   },
   {
@@ -145,6 +156,8 @@ const navItems: NavItem[] = [
     adminOnly: true,
     children: [
       { label: 'Tax Heads', href: '/setup/tax-heads' },
+      { label: 'Statutory Heads', href: '/setup/statutory-heads' },
+      { label: 'Expense Types', href: '/setup/expense-types' },
     ],
   },
 ];
