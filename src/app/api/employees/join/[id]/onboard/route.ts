@@ -16,7 +16,13 @@ export async function POST(
   }
 
   const { id } = await params;
-  const body = await request.json();
+  const rawBody = (await request.json()) as Record<string, string | undefined>;
+  // Frontend form fields default to '' rather than null/undefined, which `??` doesn't catch —
+  // blank out to null so optional DATE/numeric columns (joining_date, probation, structure_id,
+  // emp_anual_ctc, emp_monthly_ctc) don't hit MySQL's strict-mode ER_TRUNCATED_WRONG_VALUE.
+  const body = Object.fromEntries(
+    Object.entries(rawBody).map(([k, v]) => [k, v === '' ? null : v])
+  ) as Record<string, string | null>;
   const pool = await getCompanyPool(session.user.companyCode);
 
   const [joinRows] = await pool.execute<RowDataPacket[]>(

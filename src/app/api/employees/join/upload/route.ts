@@ -14,6 +14,21 @@ function str(value: unknown): string | null {
   return s || null;
 }
 
+// Excel stores date-formatted cells as a numeric serial, not text — sheet_to_json returns that
+// raw number (e.g. 36130) unless the cell happens to be formatted as plain text. String(36130)
+// is a value that passes every "is this present" check but is not a real date, and MySQL's
+// strict mode rejects it outright (ER_TRUNCATED_WRONG_VALUE) rather than silently coercing it.
+function excelDate(value: unknown): string | null {
+  if (value == null || value === '') return null;
+  if (typeof value === 'number') {
+    const date = XLSX.SSF.parse_date_code(value);
+    if (!date) return null;
+    return `${date.y}-${String(date.m).padStart(2, '0')}-${String(date.d).padStart(2, '0')}`;
+  }
+  const s = String(value).trim();
+  return /^\d{4}-\d{2}-\d{2}/.test(s) ? s.slice(0, 10) : s;
+}
+
 export async function POST(request: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session || session.user.userGroup !== 1) {
@@ -48,7 +63,7 @@ export async function POST(request: NextRequest) {
     const rowNum = i + 2; // header row is line 1
 
     const name = str(row['Name *']);
-    const birthDate = str(row['Birth Date * (yyyy-mm-dd)']);
+    const birthDate = excelDate(row['Birth Date * (yyyy-mm-dd)']);
     const gender = str(row['Gender *']);
     const nationalityName = str(row['Nationality *']);
     const aadhaar = str(row['Aadhaar No *']);

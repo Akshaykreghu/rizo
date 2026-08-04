@@ -118,11 +118,11 @@ export default function OnboardPage() {
             </div>
             <div>
               <label className="label">Login Username <span className="text-red-500">*</span></label>
-              <input required className="input" {...f('username')} placeholder="e.g. GRTL100024" />
+              <input required autoComplete="off" className="input" {...f('username')} placeholder="e.g. GRTL100024" />
             </div>
             <div>
               <label className="label">Initial Password <span className="text-red-500">*</span></label>
-              <input required type="password" className="input" {...f('password')} />
+              <input required type="password" autoComplete="new-password" className="input" {...f('password')} />
             </div>
           </div>
         </section>

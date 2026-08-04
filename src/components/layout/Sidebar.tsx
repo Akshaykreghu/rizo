@@ -43,6 +43,7 @@ const navItems: NavItem[] = [
       { label: 'Allocate Assets', href: '/employees/assets' },
       { label: 'Allocate Policies in Bulk', href: '/employees/bulk-policies' },
       { label: 'Menu Allocation', href: '/employees/menu-allocation' },
+      { label: 'Document Upload', href: '/employees/documents' },
       { label: 'Income Tax Declarations', href: '/employees/tax-declarations' },
       { label: 'Promotion Approval', href: '/employees/promotions' },
       { label: 'Generate Employee Documents', href: '/employees/generate-documents' },
