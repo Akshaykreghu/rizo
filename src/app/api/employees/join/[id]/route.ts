@@ -3,6 +3,7 @@ import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket } from 'mysql2';
+import { dobError, mobileError, aadhaarError } from '@/lib/validation';
 
 const JOIN_FIELDS = [
   'first_name', 'last_name', 'date_of_birth', 'email', 'mobile_no', 'address',
@@ -55,6 +56,15 @@ export async function PUT(
 
   const { id } = await params;
   const body = await request.json();
+
+  const validationError =
+    (body.date_of_birth !== undefined ? dobError(body.date_of_birth ?? '') : null) ||
+    (body.mobile_no !== undefined ? mobileError(body.mobile_no ?? '') : null) ||
+    (body.id_card !== undefined ? aadhaarError(body.id_card ?? '') : null);
+  if (validationError) {
+    return NextResponse.json({ error: validationError }, { status: 400 });
+  }
+
   const pool = await getCompanyPool(session.user.companyCode);
 
   const columns = JOIN_FIELDS.filter((k) => body[k] !== undefined);

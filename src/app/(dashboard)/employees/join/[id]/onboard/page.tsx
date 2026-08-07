@@ -24,9 +24,13 @@ export default function OnboardPage() {
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 
-  const { data: join } = useQuery<JoinDetail>({
+  const { data: join, isLoading: joinLoading, isError: joinError } = useQuery<JoinDetail>({
     queryKey: ['employees/join', id],
-    queryFn: () => fetch(`/api/employees/join/${id}`).then((r) => r.json()),
+    queryFn: async () => {
+      const res = await fetch(`/api/employees/join/${id}`);
+      if (!res.ok) throw new Error((await res.json()).error ?? 'Failed to load join record');
+      return res.json();
+    },
   });
 
   const { data: branches = [] } = useQuery<SelectOption[]>({
@@ -87,6 +91,18 @@ export default function OnboardPage() {
       setSaving(false);
     }
   }
+
+  if (joinError) {
+    return (
+      <div className="text-sm">
+        <p className="text-red-600 mb-3">Couldn&apos;t load this join record. It may have been removed, or you may need to sign in again.</p>
+        <button onClick={() => router.push('/employees/join')} className="text-indigo-600 hover:text-indigo-800 font-medium">
+          Back to Employee Join
+        </button>
+      </div>
+    );
+  }
+  if (joinLoading) return <p className="text-sm text-gray-500">Loading…</p>;
 
   return (
     <div>

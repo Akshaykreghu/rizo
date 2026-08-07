@@ -35,7 +35,7 @@ export async function GET(request: NextRequest) {
   const [[countRow], [rows]] = await Promise.all([
     pool.execute<RowDataPacket[]>(`SELECT COUNT(*) as total ${baseJoin} ${where}`, params),
     pool.execute<RowDataPacket[]>(
-      `SELECT e.emp_pkey, e.first_name, e.last_name, e.mobile_no, e.email,
+      `SELECT e.emp_pkey, e.first_name, e.last_name, e.mobile_no, uc.email,
               p.emp_company_id,
               uc.user_pkey, uc.user_id, uc.access_allowed, uc.locked, uc.reset_login_flag,
               uc.incorrect_login_attempt,

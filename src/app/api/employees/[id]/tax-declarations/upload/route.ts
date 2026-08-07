@@ -2,10 +2,10 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
 import { NextRequest, NextResponse } from 'next/server';
-import { writeFile, mkdir } from 'fs/promises';
 import path from 'path';
 import crypto from 'crypto';
 import type { RowDataPacket } from 'mysql2';
+import { saveFile, resolveFileUrl } from '@/lib/storage';
 
 // Mirrors legacy TaxationController::uploadFile(): allow-listed proof-document types, a 2MB
 // cap, and rejection once admin has locked the head. Legacy sniffs real file bytes via PHP's
@@ -53,11 +53,9 @@ export async function POST(
     return NextResponse.json({ error: 'This tax head is locked by admin and cannot be edited' }, { status: 403 });
   }
 
-  const uploadDir = path.join(process.cwd(), 'public', 'uploads', session.user.companyCode, 'taxdocuments');
-  await mkdir(uploadDir, { recursive: true });
   const ext = path.extname(file.name) || '';
   const filename = `${crypto.randomUUID()}${ext}`;
-  await writeFile(path.join(uploadDir, filename), Buffer.from(await file.arrayBuffer()));
+  await saveFile(session.user.companyCode, 'taxdocuments', filename, Buffer.from(await file.arrayBuffer()), file.type);
 
   const fileNames = [existing?.file_name, filename].filter(Boolean).join(',');
   const fileTypes = [existing?.file_type, file.type].filter(Boolean).join(',');
@@ -76,5 +74,5 @@ export async function POST(
     );
   }
 
-  return NextResponse.json({ path: `/uploads/${session.user.companyCode}/taxdocuments/${filename}` }, { status: 201 });
+  return NextResponse.json({ path: resolveFileUrl(session.user.companyCode, 'taxdocuments', filename) }, { status: 201 });
 }

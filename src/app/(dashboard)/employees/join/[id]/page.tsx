@@ -7,6 +7,7 @@ import { ArrowLeft, ArrowRightCircle } from 'lucide-react';
 import { RepeatableRows } from '@/components/employees/RepeatableRows';
 import { DocumentUploadField } from '@/components/employees/DocumentUploadField';
 import { FileUploadField } from '@/components/employees/FileUploadField';
+import { dobError, mobileError, aadhaarError } from '@/lib/validation';
 
 interface JoinDetail {
   join: Record<string, string>;
@@ -37,10 +38,15 @@ export default function JoinDetailPage() {
   const queryClient = useQueryClient();
   const [form, setForm] = useState<Record<string, string>>({});
   const [docFile, setDocFile] = useState('');
+  const [validationError, setValidationError] = useState('');
 
-  const { data, isLoading } = useQuery<JoinDetail>({
+  const { data, isLoading, isError } = useQuery<JoinDetail>({
     queryKey: ['employees/join', id],
-    queryFn: () => fetch(`/api/employees/join/${id}`).then((r) => r.json()),
+    queryFn: async () => {
+      const res = await fetch(`/api/employees/join/${id}`);
+      if (!res.ok) throw new Error((await res.json()).error ?? 'Failed to load join record');
+      return res.json();
+    },
   });
 
   const { data: nationalities = [] } = useQuery<NationalityOption[]>({
@@ -101,6 +107,16 @@ export default function JoinDetailPage() {
     };
   }
 
+  if (isError) {
+    return (
+      <div className="text-sm">
+        <p className="text-red-600 mb-3">Couldn&apos;t load this join record. It may have been removed, or you may need to sign in again.</p>
+        <button onClick={() => router.push('/employees/join')} className="text-indigo-600 hover:text-indigo-800 font-medium">
+          Back to Employee Join
+        </button>
+      </div>
+    );
+  }
   if (isLoading || !data) return <p className="text-sm text-gray-500">Loading…</p>;
 
   return (
@@ -138,7 +154,7 @@ export default function JoinDetailPage() {
             </div>
             <div>
               <label className="label">Date of Birth</label>
-              <input type="date" className="input" {...f('date_of_birth')} />
+              <input type="date" max={new Date().toISOString().slice(0, 10)} className="input" {...f('date_of_birth')} />
             </div>
             <div>
               <label className="label">Gender</label>
@@ -151,7 +167,7 @@ export default function JoinDetailPage() {
             </div>
             <div>
               <label className="label">Mobile</label>
-              <input type="tel" className="input" {...f('mobile_no')} />
+              <input type="tel" maxLength={10} className="input" {...f('mobile_no')} />
             </div>
             <div>
               <label className="label">Email</label>
@@ -159,7 +175,7 @@ export default function JoinDetailPage() {
             </div>
             <div>
               <label className="label">Aadhaar / ID Card</label>
-              <input className="input" {...f('id_card')} />
+              <input maxLength={12} className="input" {...f('id_card')} />
             </div>
             <div>
               <label className="label">Blood Group</label>
@@ -296,8 +312,14 @@ export default function JoinDetailPage() {
               <input className="input" {...f('account_no')} />
             </div>
           </div>
+          {validationError && <p className="text-red-500 text-sm mt-3">{validationError}</p>}
           <button
-            onClick={() => savePersonal.mutate()}
+            onClick={() => {
+              const err = dobError(form.date_of_birth ?? '') || mobileError(form.mobile_no ?? '') || aadhaarError(form.id_card ?? '');
+              if (err) { setValidationError(err); return; }
+              setValidationError('');
+              savePersonal.mutate();
+            }}
             disabled={savePersonal.isPending}
             className="mt-5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
           >

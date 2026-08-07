@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Upload, Trash2, Users, X } from 'lucide-react';
-import { FileUploadField } from '@/components/employees/FileUploadField';
+import { DocumentUploadField } from '@/components/employees/DocumentUploadField';
 import { EmployeeSearch } from '@/components/employees/EmployeeSearch';
 
 interface DocumentRow {
@@ -98,7 +98,7 @@ export default function DocumentLibraryPage() {
             placeholder="e.g. Offer Letter Template"
           />
         </div>
-        <FileUploadField label="File" value={newPath} onChange={setNewPath} />
+        <DocumentUploadField value={newPath} onChange={setNewPath} />
         <button
           onClick={() => create.mutate()}
           disabled={!newName || !newPath || create.isPending}

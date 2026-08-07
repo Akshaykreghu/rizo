@@ -2,10 +2,10 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
 import { NextRequest, NextResponse } from 'next/server';
-import { writeFile, mkdir } from 'fs/promises';
 import path from 'path';
 import { PDFParse } from 'pdf-parse';
 import type { RowDataPacket } from 'mysql2';
+import { saveFile } from '@/lib/storage';
 
 const MAX_SIZE = 2 * 1024 * 1024;
 
@@ -34,8 +34,6 @@ export async function POST(request: NextRequest) {
   }
 
   const pool = await getCompanyPool(session.user.companyCode);
-  const uploadDir = path.join(process.cwd(), 'public', 'uploads', session.user.companyCode, 'form16');
-  await mkdir(uploadDir, { recursive: true });
 
   const accepted: string[] = [];
   const rejected: { name: string; reason: string }[] = [];
@@ -77,7 +75,7 @@ export async function POST(request: NextRequest) {
     }
 
     const filename = `${pan}_${Date.now()}_${Math.floor(Math.random() * 90000 + 10000)}.pdf`;
-    await writeFile(path.join(uploadDir, filename), buffer);
+    await saveFile(session.user.companyCode, 'form16', filename, buffer, 'application/pdf');
 
     await pool.execute(
       `INSERT INTO tax_form_documents (form_name, pan, fin_year, created_by, created_date, status)

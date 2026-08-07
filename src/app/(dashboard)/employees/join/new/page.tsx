@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft } from 'lucide-react';
 import { FileUploadField } from '@/components/employees/FileUploadField';
+import { dobError, mobileError, aadhaarError } from '@/lib/validation';
 
 interface NationalityOption { id: number; nationality: string; country_name: string }
 
@@ -38,6 +39,8 @@ export default function NewJoinPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    const validationError = dobError(form.date_of_birth) || mobileError(form.mobile_no) || aadhaarError(form.id_card);
+    if (validationError) { setError(validationError); return; }
     setSaving(true);
     setError('');
     try {
@@ -81,7 +84,7 @@ export default function NewJoinPage() {
             </div>
             <div>
               <label className="label">Date of Birth <span className="text-red-500">*</span></label>
-              <input required type="date" className="input" {...f('date_of_birth')} />
+              <input required type="date" max={new Date().toISOString().slice(0, 10)} className="input" {...f('date_of_birth')} />
             </div>
             <div>
               <label className="label">Gender</label>
@@ -94,7 +97,7 @@ export default function NewJoinPage() {
             </div>
             <div>
               <label className="label">Mobile</label>
-              <input type="tel" className="input" {...f('mobile_no')} />
+              <input type="tel" maxLength={10} className="input" {...f('mobile_no')} />
             </div>
             <div>
               <label className="label">Email</label>
@@ -102,7 +105,7 @@ export default function NewJoinPage() {
             </div>
             <div>
               <label className="label">Aadhaar / ID Card <span className="text-red-500">*</span></label>
-              <input required className="input" {...f('id_card')} />
+              <input required maxLength={12} className="input" {...f('id_card')} />
             </div>
             <div>
               <label className="label">Blood Group</label>

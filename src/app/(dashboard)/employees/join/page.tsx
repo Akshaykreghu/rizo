@@ -20,6 +20,8 @@ interface JoinRow {
   profile_image_url: string | null;
 }
 
+const PAGE_SIZE_OPTIONS = [10, 20, 30, 40, 50];
+
 export default function EmployeeJoinPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -29,7 +31,7 @@ export default function EmployeeJoinPage() {
   const [search, setSearch] = useState('');
   const [searchInput, setSearchInput] = useState('');
   const [uploadResult, setUploadResult] = useState<{ inserted: number; errors: { row: number; message: string }[] } | null>(null);
-  const pageSize = 10;
+  const [pageSize, setPageSize] = useState(10);
 
   const { data, isLoading } = useQuery<{ data: JoinRow[]; total: number }>({
     queryKey: ['employees/join', page, pageSize, search],
@@ -196,21 +198,33 @@ export default function EmployeeJoinPage() {
         </div>
 
         {tab === 'joining' && (
-          <form onSubmit={handleSearch} className="flex gap-2 max-w-sm">
-            <div className="relative flex-1">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-              <input
-                type="text"
-                placeholder="Search by name or mobile"
-                value={searchInput}
-                onChange={(e) => setSearchInput(e.target.value)}
-                className="w-full pl-8 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              />
-            </div>
-            <button type="submit" className="px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm transition-colors">
-              Search
-            </button>
-          </form>
+          <div className="flex items-center gap-3">
+            <form onSubmit={handleSearch} className="flex gap-2 max-w-sm">
+              <div className="relative flex-1">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <input
+                  type="text"
+                  placeholder="Search by name or mobile"
+                  value={searchInput}
+                  onChange={(e) => setSearchInput(e.target.value)}
+                  className="w-full pl-8 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+              <button type="submit" className="px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm transition-colors">
+                Search
+              </button>
+            </form>
+            <label className="flex items-center gap-2 text-sm text-gray-600">
+              Rows per page
+              <select
+                value={pageSize}
+                onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}
+                className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              >
+                {PAGE_SIZE_OPTIONS.map((n) => <option key={n} value={n}>{n}</option>)}
+              </select>
+            </label>
+          </div>
         )}
       </div>
 
@@ -218,6 +232,7 @@ export default function EmployeeJoinPage() {
         <EmployeesPage />
       ) : (
         <DataTable
+          key={pageSize}
           data={data?.data ?? []}
           columns={columns}
           pageSize={pageSize}

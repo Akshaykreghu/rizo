@@ -3,11 +3,12 @@ import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket } from 'mysql2';
+import { resolveFileUrl } from '@/lib/storage';
 
 // Mirrors TaxController::setupdownload_new()/downloadtaxdocument_modal(): Form-16 documents are
 // matched to an employee via PAN (emp_details.pan_no), not a direct FK — same lookup as legacy.
-// Files are served directly from public/uploads/<company>/form16/ (static), so this just returns
-// the matching rows; no separate download endpoint is needed.
+// Files resolve to Spaces (production) or public/uploads/<company>/form16/ (local dev fallback),
+// so this just returns the matching rows; no separate download endpoint is needed.
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -40,7 +41,7 @@ export async function GET(
 
   const documents = rows.map((r) => ({
     ...r,
-    path: `/uploads/${session.user.companyCode}/form16/${r.form_name}`,
+    path: resolveFileUrl(session.user.companyCode, 'form16', String(r.form_name)),
   }));
 
   return NextResponse.json({ documents });

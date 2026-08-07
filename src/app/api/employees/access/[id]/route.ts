@@ -5,6 +5,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket } from 'mysql2';
 import bcrypt from 'bcryptjs';
 
+const MIN_PASSWORD_LENGTH = 8;
+
 export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -16,6 +18,14 @@ export async function PUT(
 
   const { id } = await params;
   const body = await request.json();
+
+  if (body.new_password && body.new_password.length < MIN_PASSWORD_LENGTH) {
+    return NextResponse.json(
+      { error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters` },
+      { status: 400 }
+    );
+  }
+
   const pool = await getCompanyPool(session.user.companyCode);
 
   const [existing] = await pool.execute<RowDataPacket[]>(
@@ -32,21 +42,21 @@ export async function PUT(
       const hash = await bcrypt.hash(body.new_password, 12);
       await pool.execute(
         `UPDATE user_credentials
-         SET password = ?, reset_login_flag = 'Y', locked = 0, incorrect_login_attempt = 0, access_allowed = ?
+         SET password = ?, reset_login_flag = 'Y', locked = 0, incorrect_login_attempt = 0, access_allowed = ?, email = ?
          WHERE user_pkey = ?`,
-        [hash, body.access_allowed ?? 'Y', existing[0].user_pkey]
+        [hash, body.access_allowed ?? 'Y', body.email ?? null, existing[0].user_pkey]
       );
     } else {
       const locked = Number(body.locked) === 1 ? 1 : 0;
       if (locked === 0) {
         await pool.execute(
-          `UPDATE user_credentials SET access_allowed = ?, locked = 0, incorrect_login_attempt = 0 WHERE user_pkey = ?`,
-          [body.access_allowed ?? 'N', existing[0].user_pkey]
+          `UPDATE user_credentials SET access_allowed = ?, locked = 0, incorrect_login_attempt = 0, email = ? WHERE user_pkey = ?`,
+          [body.access_allowed ?? 'N', body.email ?? null, existing[0].user_pkey]
         );
       } else {
         await pool.execute(
-          `UPDATE user_credentials SET access_allowed = ?, locked = 1 WHERE user_pkey = ?`,
-          [body.access_allowed ?? 'N', existing[0].user_pkey]
+          `UPDATE user_credentials SET access_allowed = ?, locked = 1, email = ? WHERE user_pkey = ?`,
+          [body.access_allowed ?? 'N', body.email ?? null, existing[0].user_pkey]
         );
       }
     }
@@ -76,7 +86,7 @@ export async function PUT(
          (emp_fkey, company_code, user_id, password, access_allowed, first_name, last_name, email,
           reset_login_flag, locked, incorrect_login_attempt, user_group)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'N', 0, 0, 1)`,
-      [id, session.user.companyCode, userId, hash, body.access_allowed ?? 'Y', emp.first_name, emp.last_name, emp.email]
+      [id, session.user.companyCode, userId, hash, body.access_allowed ?? 'Y', emp.first_name, emp.last_name, body.email || emp.email]
     );
   }
 

@@ -17,6 +17,7 @@ import {
   CreditCard,
   Package,
   Receipt,
+  Sparkles,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useState } from 'react';
@@ -31,6 +32,7 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
+  { label: 'Ask RIZO', href: '/assistant', icon: Sparkles },
   {
     label: 'Employees',
     icon: Users,
