@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Upload, Trash2, Users, X } from 'lucide-react';
+import { Upload, Trash2, Users, X, Download } from 'lucide-react';
 import { DocumentUploadField } from '@/components/employees/DocumentUploadField';
 import { EmployeeSearch } from '@/components/employees/EmployeeSearch';
 
@@ -26,12 +26,21 @@ interface AllocationRow {
   allocated_date: string;
 }
 
+function previewKind(doc: DocumentRow): 'pdf' | 'image' | 'other' {
+  const type = doc.type ?? '';
+  const ext = doc.document_path.split('.').pop()?.toLowerCase() ?? '';
+  if (type === 'application/pdf' || ext === 'pdf') return 'pdf';
+  if (type.startsWith('image/') || ['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(ext)) return 'image';
+  return 'other';
+}
+
 export default function DocumentLibraryPage() {
   const queryClient = useQueryClient();
   const [newName, setNewName] = useState('');
   const [newPath, setNewPath] = useState('');
   const [allocateFor, setAllocateFor] = useState<DocumentRow | null>(null);
   const [allocateEmp, setAllocateEmp] = useState('');
+  const [previewDoc, setPreviewDoc] = useState<DocumentRow | null>(null);
 
   const { data: documents = [] } = useQuery<DocumentRow[]>({
     queryKey: ['employees/documents'],
@@ -123,9 +132,9 @@ export default function DocumentLibraryPage() {
             {documents.map((doc) => (
               <tr key={doc.document_upload_pkey} className="border-t border-gray-100">
                 <td className="px-4 py-2.5">
-                  <a href={doc.document_path} target="_blank" rel="noreferrer" className="text-indigo-600 hover:underline">
+                  <button onClick={() => setPreviewDoc(doc)} className="text-indigo-600 hover:underline text-left">
                     {doc.document_name}
-                  </a>
+                  </button>
                 </td>
                 <td className="px-4 py-2.5 text-gray-600">{doc.created_by}</td>
                 <td className="px-4 py-2.5 text-gray-500">{new Date(doc.creation_date).toLocaleDateString()}</td>
@@ -183,6 +192,44 @@ export default function DocumentLibraryPage() {
                   </button>
                 </div>
               ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {previewDoc && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-6" onClick={() => setPreviewDoc(null)}>
+          <div className="bg-white rounded-xl w-full max-w-3xl max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="p-4 border-b border-gray-100 flex items-center justify-between shrink-0">
+              <h3 className="text-base font-semibold truncate pr-4">{previewDoc.document_name}</h3>
+              <div className="flex items-center gap-3 shrink-0">
+                <a
+                  href={previewDoc.document_path}
+                  download
+                  className="text-gray-400 hover:text-indigo-600"
+                  title="Download"
+                >
+                  <Download className="w-4 h-4" />
+                </a>
+                <button onClick={() => setPreviewDoc(null)}><X className="w-4 h-4 text-gray-400" /></button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-auto bg-gray-50">
+              {previewKind(previewDoc) === 'pdf' && (
+                <iframe src={previewDoc.document_path} title={previewDoc.document_name} className="w-full h-[70vh]" />
+              )}
+              {previewKind(previewDoc) === 'image' && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={previewDoc.document_path} alt={previewDoc.document_name} className="max-w-full max-h-[70vh] mx-auto object-contain" />
+              )}
+              {previewKind(previewDoc) === 'other' && (
+                <div className="flex flex-col items-center justify-center h-[40vh] text-sm text-gray-500 gap-3">
+                  <p>Preview isn&apos;t available for this file type.</p>
+                  <a href={previewDoc.document_path} download className="text-indigo-600 hover:underline">
+                    Download {previewDoc.document_name}
+                  </a>
+                </div>
+              )}
             </div>
           </div>
         </div>
