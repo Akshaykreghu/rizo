@@ -198,7 +198,11 @@ export default function DocumentLibraryPage() {
       )}
 
       {previewDoc && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-6" onClick={() => setPreviewDoc(null)}>
+        <div
+          className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-6"
+          onClick={() => setPreviewDoc(null)}
+          onContextMenu={(e) => e.preventDefault()}
+        >
           <div className="bg-white rounded-xl w-full max-w-3xl max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
             <div className="p-4 border-b border-gray-100 flex items-center justify-between shrink-0">
               <h3 className="text-base font-semibold truncate pr-4">{previewDoc.document_name}</h3>
@@ -214,13 +218,19 @@ export default function DocumentLibraryPage() {
                 <button onClick={() => setPreviewDoc(null)}><X className="w-4 h-4 text-gray-400" /></button>
               </div>
             </div>
-            <div className="flex-1 overflow-auto bg-gray-50">
+            <div className="flex-1 overflow-auto bg-gray-50" onContextMenu={(e) => e.preventDefault()}>
               {previewKind(previewDoc) === 'pdf' && (
                 <iframe src={previewDoc.document_path} title={previewDoc.document_name} className="w-full h-[70vh]" />
               )}
               {previewKind(previewDoc) === 'image' && (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={previewDoc.document_path} alt={previewDoc.document_name} className="max-w-full max-h-[70vh] mx-auto object-contain" />
+                <img
+                  src={previewDoc.document_path}
+                  alt={previewDoc.document_name}
+                  className="max-w-full max-h-[70vh] mx-auto object-contain"
+                  onContextMenu={(e) => e.preventDefault()}
+                  draggable={false}
+                />
               )}
               {previewKind(previewDoc) === 'other' && (
                 <div className="flex flex-col items-center justify-center h-[40vh] text-sm text-gray-500 gap-3">

@@ -1,11 +1,22 @@
 const MIN_WORKING_AGE_YEARS = 18;
 
+// Generic "not in the future" check, shared by every date field that's turned out to need this
+// exact validation (Employee Join's Date of Birth, Allocate Assets' Allocated Date, and any
+// future one) — confirmed as a recurring gap across 3+ date fields rather than fixing it per-field.
+export function futureDateError(value: string, label = 'Date'): string | null {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return `Invalid ${label.toLowerCase()}`;
+  if (date > new Date()) return `${label} cannot be in the future`;
+  return null;
+}
+
 export function dobError(value: string): string | null {
   if (!value) return null;
+  const futureCheck = futureDateError(value, 'Date of birth');
+  if (futureCheck) return futureCheck;
   const dob = new Date(value);
-  if (Number.isNaN(dob.getTime())) return 'Invalid date of birth';
   const today = new Date();
-  if (dob > today) return 'Date of birth cannot be in the future';
   const cutoff = new Date(today.getFullYear() - MIN_WORKING_AGE_YEARS, today.getMonth(), today.getDate());
   if (dob > cutoff) return `Employee must be at least ${MIN_WORKING_AGE_YEARS} years old`;
   return null;

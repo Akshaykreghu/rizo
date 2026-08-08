@@ -3,6 +3,7 @@ import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket, ResultSetHeader } from 'mysql2';
+import { futureDateError } from '@/lib/validation';
 
 export async function GET(request: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -57,6 +58,10 @@ export async function POST(request: NextRequest) {
   }
 
   const body = await request.json();
+
+  const dateError = futureDateError(body.allocated_date ?? '', 'Allocated date');
+  if (dateError) return NextResponse.json({ error: dateError }, { status: 400 });
+
   const pool = await getCompanyPool(session.user.companyCode);
 
   const [[asset]] = await pool.execute<RowDataPacket[]>(
