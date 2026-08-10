@@ -1,7 +1,8 @@
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
-import { buildItemToken, evaluateSalaryFormula, FormulaError } from '@/lib/salaryFormula';
+import { FormulaError } from '@/lib/salaryFormula';
+import { saveStructureDetails, structureHeaderError, type StructureDetailInput } from '@/lib/salaryStructureSave';
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket } from 'mysql2';
 
@@ -53,88 +54,35 @@ export async function PUT(
   const body = await request.json() as {
     structure_name: string; prorate_code?: string; prorate_desc?: string; fixed_days?: number;
     defined_structure_for?: string; structure_eg_amt: number;
-    startdate_effective: string; enddate_effective: string;
-    details: {
-      salary_head_item_fkey: number; structure_det_operator: string;
-      structure_det_value?: number; structure_det_depends?: number; formula?: string;
-    }[];
+    structure_active?: number;
+    details: StructureDetailInput[];
   };
+
+  const headerError = structureHeaderError(body);
+  if (headerError) return NextResponse.json({ error: headerError }, { status: 400 });
 
   const pool = await getCompanyPool(session.user.companyCode);
   const exampleGross = Number(body.structure_eg_amt) || 0;
-
-  // Resolve every item's numeric value at the example gross first (fixed/manually rows first,
-  // since formula rows may reference them), so formula evaluation below has a value to look up
-  // regardless of the order the admin listed rows in.
-  const itemRows = body.details.length
-    ? await pool.execute<RowDataPacket[]>(
-        `SELECT salary_head_item_pkey, item FROM salary_head_items WHERE salary_head_item_pkey IN (${body.details.map(() => '?').join(',')})`,
-        body.details.map((d) => d.salary_head_item_fkey)
-      ).then(([rows]) => rows)
-    : [];
-  const itemNameByPkey = new Map(itemRows.map((r) => [r.salary_head_item_pkey as number, r.item as string]));
-
-  const itemValues: Record<string, number> = {};
-  for (const d of body.details) {
-    const name = itemNameByPkey.get(d.salary_head_item_fkey);
-    if (!name) continue;
-    const token = buildItemToken(d.salary_head_item_fkey, name);
-    if (d.structure_det_operator === 'fixed' || d.structure_det_operator === 'manually') {
-      itemValues[token] = Number(d.structure_det_value) || 0;
-    }
-  }
 
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
 
+    // startdate_effective/enddate_effective deliberately left untouched here — dropped from
+    // the product surface entirely (see structureHeaderError), so an edit shouldn't overwrite
+    // whatever placeholder/legacy value already sits in those columns.
     await connection.execute(
       `UPDATE salary_structure SET structure_name = ?, prorate_code = ?, prorate_desc = ?,
-              fixed_days = ?, defined_structure_for = ?, structure_eg_amt = ?,
-              startdate_effective = ?, enddate_effective = ?
+              fixed_days = ?, defined_structure_for = ?, structure_eg_amt = ?, structure_active = ?
        WHERE structure_id = ?`,
       [
         body.structure_name, body.prorate_code ?? '', body.prorate_desc ?? '', Number(body.fixed_days) || 30,
-        body.defined_structure_for ?? '', exampleGross, body.startdate_effective, body.enddate_effective, id,
+        body.defined_structure_for ?? '', exampleGross,
+        body.structure_active !== undefined ? Number(body.structure_active) : 1, id,
       ]
     );
 
-    await connection.execute('DELETE FROM salary_structure_details WHERE structure_id = ?', [id]);
-
-    for (const d of body.details) {
-      const name = itemNameByPkey.get(d.salary_head_item_fkey);
-      if (!name) continue;
-      const token = buildItemToken(d.salary_head_item_fkey, name);
-
-      let detValue = Number(d.structure_det_value) || 0;
-      let derivedPerc: number | null = null;
-      let calEquation: string | null = null;
-      let formulaDisplay: string | null = null;
-
-      if (['formula', 'limit', 'limit_wl', 'limit_wg'].includes(d.structure_det_operator)) {
-        if (!d.formula) {
-          throw new FormulaError(`A formula is required for item "${name}" (operator ${d.structure_det_operator})`);
-        }
-        detValue = evaluateSalaryFormula(d.formula, itemValues, exampleGross);
-        derivedPerc = exampleGross > 0 ? (detValue * 100) / exampleGross : 0;
-        calEquation = d.formula;
-        formulaDisplay = d.formula;
-        itemValues[token] = detValue;
-      } else {
-        derivedPerc = exampleGross > 0 ? (detValue * 100) / exampleGross : 0;
-      }
-
-      await connection.execute(
-        `INSERT INTO salary_structure_details
-           (structure_id, salary_head_item_fkey, structure_det_operator, structure_det_value,
-            structure_det_depends, structure_formula, structure_derived_perc, structure_det_calequation)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          id, d.salary_head_item_fkey, d.structure_det_operator, detValue,
-          d.structure_det_depends ?? null, formulaDisplay, derivedPerc, calEquation,
-        ]
-      );
-    }
+    await saveStructureDetails(connection, Number(id), body.details ?? [], exampleGross);
 
     await connection.commit();
     return NextResponse.json({ success: true });

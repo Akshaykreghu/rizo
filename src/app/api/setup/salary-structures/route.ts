@@ -3,6 +3,8 @@ import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket, ResultSetHeader } from 'mysql2';
+import { saveStructureDetails, structureHeaderError, type StructureDetailInput } from '@/lib/salaryStructureSave';
+import { FormulaError } from '@/lib/salaryFormula';
 
 // GET response shape (structure_id/structure_name only) is load-bearing for existing
 // employee-side structure pickers (bulk-policies, join onboarding, new/edit employee,
@@ -37,19 +39,47 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const body = await request.json();
-  const pool = await getCompanyPool(session.user.companyCode);
+  const body = await request.json() as {
+    structure_name: string; prorate_code?: string; prorate_desc?: string; fixed_days?: number;
+    defined_structure_for?: string; structure_eg_amt: number;
+    details?: StructureDetailInput[];
+  };
 
-  const [result] = await pool.execute<ResultSetHeader>(
-    `INSERT INTO salary_structure
-       (company_code, structure_name, prorate_code, prorate_desc, fixed_days, defined_structure_for,
-        structure_eg_amt, structure_created_date, startdate_effective, enddate_effective, structure_active)
-     VALUES (?, ?, ?, ?, ?, ?, ?, UNIX_TIMESTAMP(), ?, ?, 1)`,
-    [
-      session.user.companyCode, body.structure_name, body.prorate_code ?? '', body.prorate_desc ?? '',
-      Number(body.fixed_days) || 30, body.defined_structure_for ?? '', Number(body.structure_eg_amt) || 0,
-      body.startdate_effective, body.enddate_effective,
-    ]
-  );
-  return NextResponse.json({ id: result.insertId }, { status: 201 });
+  const headerError = structureHeaderError(body);
+  if (headerError) return NextResponse.json({ error: headerError }, { status: 400 });
+
+  const pool = await getCompanyPool(session.user.companyCode);
+  const exampleGross = Number(body.structure_eg_amt) || 0;
+
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+
+    // startdate_effective/enddate_effective are NOT NULL columns nothing actually reads (see
+    // structureHeaderError) — CURDATE() satisfies the constraint without asking the admin to
+    // fill in a meaningless date, matching legacy's present-day disuse of these fields.
+    const [result] = await connection.execute<ResultSetHeader>(
+      `INSERT INTO salary_structure
+         (company_code, structure_name, prorate_code, prorate_desc, fixed_days, defined_structure_for,
+          structure_eg_amt, structure_created_date, startdate_effective, enddate_effective, structure_active)
+       VALUES (?, ?, ?, ?, ?, ?, ?, UNIX_TIMESTAMP(), CURDATE(), CURDATE(), 1)`,
+      [
+        session.user.companyCode, body.structure_name, body.prorate_code ?? '', body.prorate_desc ?? '',
+        Number(body.fixed_days) || 30, body.defined_structure_for ?? '', exampleGross,
+      ]
+    );
+
+    await saveStructureDetails(connection, result.insertId, body.details ?? [], exampleGross);
+
+    await connection.commit();
+    return NextResponse.json({ id: result.insertId }, { status: 201 });
+  } catch (err) {
+    await connection.rollback();
+    if (err instanceof FormulaError) {
+      return NextResponse.json({ error: err.message }, { status: 400 });
+    }
+    throw err;
+  } finally {
+    connection.release();
+  }
 }

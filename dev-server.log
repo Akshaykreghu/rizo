@@ -4,21 +4,8 @@
 
 ▲ Next.js 16.2.9 (Turbopack)
 - Local:         http://localhost:3000
-- Network:       http://192.168.29.170:3000
+- Network:       http://192.168.1.7:3000
 - Environments: .env.local
-✓ Ready in 1616ms
-⚠ Slow filesystem detected. The benchmark took 315ms. If D:\Projects\RIZOMigration\rizo\.next/dev is a network drive, consider moving it to a local folder.
-See more: https://nextjs.org/docs/app/guides/local-development
+✓ Ready in 1414ms
 
-○ Compiling /login ...
- GET /api/auth/error 302 in 5.2s (next.js: 5.1s, application-code: 91ms)
- GET /login?callbackUrl=%2F 200 in 10.3s (next.js: 9.3s, application-code: 1042ms)
- GET /login?error=undefined 200 in 4.6s (next.js: 4.3s, application-code: 333ms)
- GET /api/auth/session 200 in 68ms (next.js: 31ms, application-code: 36ms)
- GET /api/auth/csrf 200 in 49ms (next.js: 11ms, application-code: 38ms)
- GET /ai-navigation 200 in 12.4s (next.js: 11.4s, proxy.ts: 432ms, application-code: 583ms)
- GET /api/auth/session 200 in 46ms (next.js: 12ms, application-code: 34ms)
- GET /api/auth/session 200 in 43ms (next.js: 13ms, application-code: 30ms)
- GET /api/auth/session 200 in 52ms (next.js: 11ms, application-code: 41ms)
- GET /api/auth/session 200 in 85ms (next.js: 37ms, application-code: 48ms)
-[?25h
+○ Compiling /setup/salary-structure ...

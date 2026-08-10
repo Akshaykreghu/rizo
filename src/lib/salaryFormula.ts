@@ -18,6 +18,28 @@ export function buildItemToken(salaryHeadItemPkey: number, itemName: string): st
   return `${salaryHeadItemPkey}_${cleaned}`;
 }
 
+// Renders a stored token formula back into admin-facing text (e.g. "monthsal * . 4" ->
+// "Monthly Gross Salary * . 4") so the UI never has to show the raw `<pkey>_<Item_Name>`
+// grammar. `itemLabelByToken` maps buildItemToken(...) -> the item's real display name;
+// any token not found there (including legacy free-text formulas this grammar doesn't
+// cover) is passed through unchanged rather than guessed at.
+export function formatFormulaForDisplay(
+  formula: string,
+  itemLabelByToken: Record<string, string>
+): string {
+  if (!formula.trim()) return '';
+  return formula
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((token) => {
+      if (token === 'monthsal') return 'Monthly Gross Salary';
+      if (IDENTIFIER_RE.test(token)) return itemLabelByToken[token] ?? token;
+      return token;
+    })
+    .join(' ');
+}
+
 export class FormulaError extends Error {}
 
 // Resolves identifier/monthsal tokens to their numeric values and concatenates the token
