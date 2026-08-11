@@ -4,8 +4,29 @@
 
 ▲ Next.js 16.2.9 (Turbopack)
 - Local:         http://localhost:3000
-- Network:       http://192.168.1.7:3000
+- Network:       http://192.168.29.170:3000
 - Environments: .env.local
-✓ Ready in 1414ms
+✓ Ready in 9.0s
+○ Compiling proxy ...
 
-○ Compiling /setup/salary-structure ...
+ GET /api/auth/csrf 200 in 2.7s (next.js: 2.6s, application-code: 92ms)
+ POST /api/auth/callback/credentials 200 in 525ms (next.js: 23ms, application-code: 502ms)
+seedPayrollDraft params: {"branch":"GRTL08","monthYear":"2026-04","userId":"GRTLADMIN01"}
+ POST /api/payroll 200 in 1980ms (next.js: 1551ms, proxy.ts: 91ms, application-code: 337ms)
+ GET /api/payroll?branch=GRTL08&month=2026-04&status=pending 200 in 82ms (next.js: 9ms, proxy.ts: 18ms, application-code: 55ms)
+ GET / 307 in 2.8s (next.js: 2.3s, proxy.ts: 27ms, application-code: 486ms)
+ GET /dashboard 200 in 2.3s (next.js: 1883ms, proxy.ts: 19ms, application-code: 441ms)
+ GET /api/auth/session 200 in 54ms (next.js: 22ms, application-code: 32ms)
+ GET /api/auth/session 200 in 77ms (next.js: 39ms, application-code: 38ms)
+ GET /payroll/process 200 in 1661ms (next.js: 1557ms, proxy.ts: 16ms, application-code: 89ms)
+ GET /api/setup/branches 200 in 202ms (next.js: 132ms, proxy.ts: 21ms, application-code: 48ms)
+ GET /api/payroll?branch=GRTL04&month=2026-04&status=hold 200 in 79ms (next.js: 20ms, proxy.ts: 13ms, application-code: 47ms)
+ GET /api/payroll?branch=GRTL04&month=2026-04&status=pending 200 in 59ms (next.js: 9ms, proxy.ts: 9ms, application-code: 41ms)
+ GET /api/auth/session 200 in 108ms (next.js: 55ms, application-code: 53ms)
+ GET /api/auth/session 200 in 65ms (next.js: 42ms, application-code: 23ms)
+ GET /payroll/process 200 in 285ms (next.js: 24ms, proxy.ts: 11ms, application-code: 250ms)
+ GET /api/auth/session 200 in 99ms (next.js: 30ms, application-code: 69ms)
+ GET /api/setup/branches 200 in 149ms (next.js: 76ms, proxy.ts: 38ms, application-code: 35ms)
+ GET /api/payroll?branch=GRTL04&month=2026-08&status=pending 200 in 46ms (next.js: 10ms, proxy.ts: 10ms, application-code: 27ms)
+ GET /api/payroll?branch=GRTL04&month=2026-08&status=hold 200 in 57ms (next.js: 23ms, proxy.ts: 9ms, application-code: 25ms)
+ GET /api/auth/session 200 in 61ms (next.js: 28ms, application-code: 32ms)
