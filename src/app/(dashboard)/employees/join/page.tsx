@@ -3,9 +3,10 @@
 import { useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
-import { Plus, UserCircle, Trash2, ArrowRightCircle, Search, Download, Upload } from 'lucide-react';
-import { formatDate } from '@/lib/utils';
+import { Plus, Trash2, ArrowRightCircle, Search, Download, Upload } from 'lucide-react';
+import { cn, formatDate } from '@/lib/utils';
 import { DataTable } from '@/components/data-table/DataTable';
+import { Avatar } from '@/components/ui/Avatar';
 import type { ColumnDef } from '@tanstack/react-table';
 import EmployeesPage from '../page';
 
@@ -74,14 +75,12 @@ export default function EmployeeJoinPage() {
       header: 'Name',
       accessorFn: (row) => `${row.first_name} ${row.last_name ?? ''}`,
       cell: ({ row }) => (
-        <div className="flex items-center gap-2">
-          {row.original.profile_image_url ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={row.original.profile_image_url} alt="" className="w-7 h-7 rounded-full object-cover border border-gray-200" />
-          ) : (
-            <UserCircle className="w-7 h-7 text-gray-300 shrink-0" />
-          )}
-          <span className="font-medium text-gray-900">{row.original.first_name} {row.original.last_name ?? ''}</span>
+        <div className="flex items-center gap-2.5">
+          <Avatar
+            name={`${row.original.first_name} ${row.original.last_name ?? ''}`}
+            imageUrl={row.original.profile_image_url}
+          />
+          <span className="font-medium text-slate-800">{row.original.first_name} {row.original.last_name ?? ''}</span>
         </div>
       ),
     },
@@ -117,7 +116,7 @@ export default function EmployeeJoinPage() {
                 discard.mutate(row.original.emp_join_pkey);
               }
             }}
-            className="text-gray-400 hover:text-red-500"
+            className="text-slate-400 hover:text-rose-500"
             title="Discard"
           >
             <Trash2 className="w-4 h-4" />
@@ -130,26 +129,29 @@ export default function EmployeeJoinPage() {
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-semibold text-gray-900">Employee Join</h1>
+        <div>
+          <h1 className="text-2xl font-bold text-slate-800 tracking-tight">Employee Join</h1>
+          <p className="text-sm text-slate-400 mt-0.5">Manage and track employee joining details</p>
+        </div>
         {tab === 'joining' && (
           <div className="flex items-center gap-2">
             <a
               href="/api/employees/join/template"
-              className="flex items-center gap-1.5 text-sm text-gray-600 hover:text-gray-900 px-3 py-2 rounded-lg hover:bg-gray-100 transition-colors"
+              className="flex items-center gap-1.5 text-sm text-slate-600 hover:text-slate-900 px-3 py-2 rounded-xl glass-panel transition-colors"
             >
               <Download className="w-4 h-4" /> Download Template
             </a>
             <button
               onClick={() => fileInputRef.current?.click()}
               disabled={upload.isPending}
-              className="flex items-center gap-1.5 text-sm text-gray-600 hover:text-gray-900 px-3 py-2 rounded-lg hover:bg-gray-100 transition-colors disabled:opacity-50"
+              className="flex items-center gap-1.5 text-sm text-slate-600 hover:text-slate-900 px-3 py-2 rounded-xl glass-panel transition-colors disabled:opacity-50"
             >
               <Upload className="w-4 h-4" /> {upload.isPending ? 'Uploading…' : 'Upload File'}
             </button>
             <input ref={fileInputRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleFileSelected} />
             <button
               onClick={() => router.push('/employees/join/new')}
-              className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+              className="flex items-center gap-2 bg-gradient-to-r from-blue-500 to-purple-500 hover:from-blue-600 hover:to-purple-600 text-white px-4 py-2.5 rounded-xl text-sm font-medium shadow-lg shadow-indigo-200 transition-colors"
             >
               <Plus className="w-4 h-4" />
               New Join
@@ -159,18 +161,18 @@ export default function EmployeeJoinPage() {
       </div>
 
       {uploadResult && (
-        <div className="mb-4 p-3 rounded-lg border border-gray-200 bg-gray-50 text-sm">
+        <div className="mb-4 p-3 rounded-xl glass-panel text-sm">
           <div className="flex items-center justify-between">
             <span>
               <span className="font-medium text-emerald-700">{uploadResult.inserted} inserted</span>
               {uploadResult.errors.length > 0 && (
-                <span className="text-red-600 ml-2">{uploadResult.errors.length} row(s) skipped</span>
+                <span className="text-rose-600 ml-2">{uploadResult.errors.length} row(s) skipped</span>
               )}
             </span>
-            <button onClick={() => setUploadResult(null)} className="text-gray-400 hover:text-gray-600 text-xs">Dismiss</button>
+            <button onClick={() => setUploadResult(null)} className="text-slate-400 hover:text-slate-600 text-xs">Dismiss</button>
           </div>
           {uploadResult.errors.length > 0 && (
-            <ul className="mt-2 space-y-0.5 text-xs text-red-600">
+            <ul className="mt-2 space-y-0.5 text-xs text-rose-600">
               {uploadResult.errors.map((err, i) => (
                 <li key={i}>Row {err.row}: {err.message}</li>
               ))}
@@ -180,7 +182,7 @@ export default function EmployeeJoinPage() {
       )}
 
       <div className="flex items-center justify-between mb-5">
-        <div className="flex items-center gap-1 text-sm">
+        <div className="flex items-center gap-1 text-sm glass-panel rounded-xl p-1">
           {[
             { value: 'joining' as const, label: 'Employee Joining' },
             { value: 'all' as const, label: 'All Employees' },
@@ -188,9 +190,12 @@ export default function EmployeeJoinPage() {
             <button
               key={t.value}
               onClick={() => setTab(t.value)}
-              className={`px-3 py-1.5 rounded-lg transition-colors ${
-                tab === t.value ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-              }`}
+              className={cn(
+                'px-3.5 py-1.5 rounded-lg transition-colors font-medium',
+                tab === t.value
+                  ? 'bg-gradient-to-r from-indigo-500 to-purple-500 text-white shadow-sm shadow-indigo-200'
+                  : 'text-slate-500 hover:bg-white/70'
+              )}
             >
               {t.label}
             </button>
@@ -201,25 +206,25 @@ export default function EmployeeJoinPage() {
           <div className="flex items-center gap-3">
             <form onSubmit={handleSearch} className="flex gap-2 max-w-sm">
               <div className="relative flex-1">
-                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                 <input
                   type="text"
                   placeholder="Search by name or mobile"
                   value={searchInput}
                   onChange={(e) => setSearchInput(e.target.value)}
-                  className="w-full pl-8 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className="w-full pl-9 pr-3 py-2 bg-white/80 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
                 />
               </div>
-              <button type="submit" className="px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm transition-colors">
+              <button type="submit" className="px-3.5 py-2 bg-white/80 hover:bg-white border border-slate-200 rounded-xl text-sm text-slate-600 transition-colors">
                 Search
               </button>
             </form>
-            <label className="flex items-center gap-2 text-sm text-gray-600">
+            <label className="flex items-center gap-2 text-sm text-slate-500">
               Rows per page
               <select
                 value={pageSize}
                 onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}
-                className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="bg-white/80 border border-slate-200 rounded-xl px-2 py-1.5 text-sm text-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-400"
               >
                 {PAGE_SIZE_OPTIONS.map((n) => <option key={n} value={n}>{n}</option>)}
               </select>

@@ -14,6 +14,8 @@ import {
   Settings,
   ChevronDown,
   ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
   CreditCard,
   Package,
   Receipt,
@@ -21,7 +23,9 @@ import {
   Wand2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+
+const COLLAPSED_STORAGE_KEY = 'rizo-sidebar-collapsed';
 
 interface NavItem {
   label: string;
@@ -39,8 +43,6 @@ const navItems: NavItem[] = [
     label: 'Employees',
     icon: Users,
     children: [
-      { label: 'All Employees', href: '/employees' },
-      { label: 'Add Employee', href: '/employees/new' },
       { label: 'Employee Join', href: '/employees/join' },
       { label: 'Import Employee', href: '/employees/import' },
       { label: 'User Access', href: '/employees/access' },
@@ -172,6 +174,20 @@ export function Sidebar() {
   const { data: session } = useSession();
   const isAdmin = session?.user.userGroup === 1;
   const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
+  const [collapsed, setCollapsed] = useState(false);
+
+  useEffect(() => {
+    const stored = window.localStorage.getItem(COLLAPSED_STORAGE_KEY);
+    if (stored) setCollapsed(stored === 'true');
+  }, []);
+
+  function toggleCollapsed() {
+    setCollapsed((prev) => {
+      const next = !prev;
+      window.localStorage.setItem(COLLAPSED_STORAGE_KEY, String(next));
+      return next;
+    });
+  }
 
   function toggleGroup(label: string) {
     setOpenGroups((prev) => {
@@ -189,12 +205,53 @@ export function Sidebar() {
   const visibleItems = navItems.filter((item) => !item.adminOnly || isAdmin);
 
   return (
-    <aside className="w-64 flex-shrink-0 bg-gray-900 text-gray-200 flex flex-col h-full overflow-y-auto">
+    <aside
+      className={cn(
+        'glass-panel flex-shrink-0 text-slate-600 flex flex-col h-full overflow-y-auto transition-[width] duration-200 m-3 mr-0 rounded-3xl shadow-xl shadow-indigo-100/40',
+        collapsed ? 'w-[76px]' : 'w-64'
+      )}
+    >
       {/* Brand */}
-      <div className="px-6 py-5 border-b border-gray-700">
-        <span className="text-xl font-bold text-white">RIZO</span>
-        <p className="text-xs text-gray-400 mt-0.5">HR & Payroll</p>
+      <div
+        className={cn(
+          'flex items-center border-b border-slate-200/70 py-5',
+          collapsed ? 'justify-center px-2' : 'justify-between px-5'
+        )}
+      >
+        <div className={cn('flex items-center gap-3', collapsed && 'flex-col gap-2')}>
+          <div className="w-9 h-9 rounded-full brand-ring p-[2px] flex-shrink-0">
+            <div className="w-full h-full rounded-full bg-white flex items-center justify-center text-xs font-bold text-indigo-600">
+              R
+            </div>
+          </div>
+          {!collapsed && (
+            <div>
+              <span className="text-lg font-bold text-slate-800 tracking-tight">RIZO</span>
+              <p className="text-[11px] text-slate-400 -mt-0.5">HR & Payroll</p>
+            </div>
+          )}
+        </div>
+        {!collapsed && (
+          <button
+            onClick={toggleCollapsed}
+            title="Collapse sidebar"
+            aria-label="Collapse sidebar"
+            className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition-colors"
+          >
+            <ChevronsLeft className="w-4 h-4" />
+          </button>
+        )}
       </div>
+      {collapsed && (
+        <button
+          onClick={toggleCollapsed}
+          title="Expand sidebar"
+          aria-label="Expand sidebar"
+          className="mx-auto mt-2 p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition-colors"
+        >
+          <ChevronsRight className="w-4 h-4" />
+        </button>
+      )}
 
       {/* Nav */}
       <nav className="flex-1 py-4 px-3 space-y-1">
@@ -202,19 +259,22 @@ export function Sidebar() {
           const Icon = item.icon;
 
           if (item.href && !item.children) {
+            const active = isActive(item.href);
             return (
               <Link
                 key={item.label}
                 href={item.href}
+                title={collapsed ? item.label : undefined}
                 className={cn(
-                  'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors',
-                  isActive(item.href)
-                    ? 'bg-indigo-600 text-white'
-                    : 'text-gray-300 hover:bg-gray-800 hover:text-white'
+                  'flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors',
+                  collapsed && 'justify-center px-2',
+                  active
+                    ? 'bg-gradient-to-r from-indigo-500 to-purple-500 text-white shadow-md shadow-indigo-200'
+                    : 'text-slate-500 hover:bg-slate-100/80 hover:text-slate-800'
                 )}
               >
                 <Icon className="w-4 h-4 flex-shrink-0" />
-                {item.label}
+                {!collapsed && item.label}
               </Link>
             );
           }
@@ -225,24 +285,35 @@ export function Sidebar() {
           return (
             <div key={item.label}>
               <button
-                onClick={() => toggleGroup(item.label)}
+                onClick={() => {
+                  if (collapsed) {
+                    setCollapsed(false);
+                    window.localStorage.setItem(COLLAPSED_STORAGE_KEY, 'false');
+                    if (!openGroups.has(item.label)) toggleGroup(item.label);
+                  } else {
+                    toggleGroup(item.label);
+                  }
+                }}
+                title={collapsed ? item.label : undefined}
                 className={cn(
-                  'w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors',
+                  'w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors',
+                  collapsed && 'justify-center px-2',
                   hasActiveChild
-                    ? 'text-white bg-gray-800'
-                    : 'text-gray-300 hover:bg-gray-800 hover:text-white'
+                    ? 'bg-indigo-50 text-indigo-700'
+                    : 'text-slate-500 hover:bg-slate-100/80 hover:text-slate-800'
                 )}
               >
-                <Icon className="w-4 h-4 flex-shrink-0" />
-                <span className="flex-1 text-left">{item.label}</span>
-                {isOpen ? (
-                  <ChevronDown className="w-3.5 h-3.5" />
-                ) : (
-                  <ChevronRight className="w-3.5 h-3.5" />
-                )}
+                <Icon className={cn('w-4 h-4 flex-shrink-0', hasActiveChild && 'text-indigo-600')} />
+                {!collapsed && <span className="flex-1 text-left">{item.label}</span>}
+                {!collapsed &&
+                  (isOpen ? (
+                    <ChevronDown className="w-3.5 h-3.5" />
+                  ) : (
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  ))}
               </button>
-              {isOpen && (
-                <div className="ml-7 mt-1 space-y-0.5">
+              {!collapsed && isOpen && (
+                <div className="ml-7 mt-1 space-y-0.5 border-l border-slate-200 pl-3">
                   {item.children?.map((child) => (
                     <Link
                       key={child.href}
@@ -250,8 +321,8 @@ export function Sidebar() {
                       className={cn(
                         'block px-3 py-1.5 rounded-lg text-xs transition-colors',
                         isActive(child.href)
-                          ? 'bg-indigo-600 text-white font-medium'
-                          : 'text-gray-400 hover:bg-gray-800 hover:text-white'
+                          ? 'bg-indigo-100 text-indigo-700 font-medium'
+                          : 'text-slate-400 hover:bg-slate-100/80 hover:text-slate-700'
                       )}
                     >
                       {child.label}

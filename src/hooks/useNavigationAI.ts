@@ -88,8 +88,6 @@ export const MODULES: ModuleMeta[] = [
     icon: Users,
     keywords: ['employee', 'staff', 'people', 'directory', 'profile'],
     submenus: [
-      { label: 'All Employees', href: '/employees' },
-      { label: 'Add Employee', href: '/employees/new' },
       { label: 'Employee Join', href: '/employees/join' },
       { label: 'Document Upload', href: '/employees/documents' },
     ],

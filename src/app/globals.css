@@ -12,15 +12,37 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+/* Liquid-glass app shell */
+.app-shell-bg {
+  background:
+    radial-gradient(circle at 8% 8%, rgba(129, 140, 248, 0.20), transparent 45%),
+    radial-gradient(circle at 92% 12%, rgba(236, 72, 153, 0.14), transparent 45%),
+    radial-gradient(circle at 15% 92%, rgba(56, 189, 248, 0.16), transparent 45%),
+    radial-gradient(circle at 90% 88%, rgba(167, 139, 250, 0.18), transparent 45%),
+    linear-gradient(135deg, #eef2ff 0%, #f5f3ff 45%, #eff6ff 100%);
+}
+
+.glass-panel {
+  background: rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+}
+
+.glass-card {
+  background: rgba(255, 255, 255, 0.78);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  box-shadow: 0 8px 32px -12px rgba(79, 70, 229, 0.18);
+}
+
+.brand-ring {
+  background: conic-gradient(from 180deg, #38bdf8, #818cf8, #c084fc, #f472b6, #38bdf8);
 }

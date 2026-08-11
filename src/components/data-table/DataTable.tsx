@@ -27,6 +27,20 @@ interface DataTableProps<TData> {
   onRowClick?: (row: TData) => void;
 }
 
+function getPageNumbers(current: number, total: number): (number | '…')[] {
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
+
+  const pages = new Set([1, total, current, current - 1, current + 1]);
+  const sorted = [...pages].filter((p) => p >= 1 && p <= total).sort((a, b) => a - b);
+
+  const result: (number | '…')[] = [];
+  for (let i = 0; i < sorted.length; i++) {
+    if (i > 0 && sorted[i] - sorted[i - 1] > 1) result.push('…');
+    result.push(sorted[i]);
+  }
+  return result;
+}
+
 export function DataTable<TData>({
   data,
   columns,
@@ -67,27 +81,31 @@ export function DataTable<TData>({
       : undefined,
   });
 
+  const pageIndex = table.getState().pagination.pageIndex;
+  const pageCount = table.getPageCount() || 1;
+  const pageNumbers = getPageNumbers(pageIndex + 1, pageCount);
+
   return (
-    <div className={cn('space-y-3', className)}>
-      <div className="rounded-lg border border-gray-200 overflow-hidden bg-white">
+    <div className={cn('space-y-4', className)}>
+      <div className="glass-card rounded-2xl overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="bg-gray-50 border-b border-gray-200">
+            <thead className="bg-slate-50/70 border-b border-slate-200/70">
               {table.getHeaderGroups().map((headerGroup) => (
                 <tr key={headerGroup.id}>
                   {headerGroup.headers.map((header) => (
                     <th
                       key={header.id}
                       className={cn(
-                        'px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wide whitespace-nowrap',
-                        header.column.getCanSort() && 'cursor-pointer select-none hover:text-gray-900'
+                        'px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap',
+                        header.column.getCanSort() && 'cursor-pointer select-none hover:text-slate-800'
                       )}
                       onClick={header.column.getToggleSortingHandler()}
                     >
                       <div className="flex items-center gap-1">
                         {flexRender(header.column.columnDef.header, header.getContext())}
                         {header.column.getCanSort() && (
-                          <span className="text-gray-400">
+                          <span className="text-slate-400">
                             {header.column.getIsSorted() === 'asc' ? (
                               <ChevronUp className="w-3 h-3" />
                             ) : header.column.getIsSorted() === 'desc' ? (
@@ -103,16 +121,16 @@ export function DataTable<TData>({
                 </tr>
               ))}
             </thead>
-            <tbody className="divide-y divide-gray-100">
+            <tbody className="divide-y divide-slate-100">
               {isLoading ? (
                 <tr>
-                  <td colSpan={columns.length} className="px-4 py-12 text-center text-gray-400">
+                  <td colSpan={columns.length} className="px-4 py-12 text-center text-slate-400">
                     Loading…
                   </td>
                 </tr>
               ) : table.getRowModel().rows.length === 0 ? (
                 <tr>
-                  <td colSpan={columns.length} className="px-4 py-12 text-center text-gray-400">
+                  <td colSpan={columns.length} className="px-4 py-12 text-center text-slate-400">
                     No records found.
                   </td>
                 </tr>
@@ -120,11 +138,11 @@ export function DataTable<TData>({
                 table.getRowModel().rows.map((row) => (
                   <tr
                     key={row.id}
-                    className={cn('hover:bg-gray-50 transition-colors', onRowClick && 'cursor-pointer')}
+                    className={cn('hover:bg-indigo-50/40 transition-colors', onRowClick && 'cursor-pointer')}
                     onClick={() => onRowClick?.(row.original)}
                   >
                     {row.getVisibleCells().map((cell) => (
-                      <td key={cell.id} className="px-4 py-3 text-gray-700">
+                      <td key={cell.id} className="px-4 py-3 text-slate-700">
                         {flexRender(cell.column.columnDef.cell, cell.getContext())}
                       </td>
                     ))}
@@ -134,46 +152,65 @@ export function DataTable<TData>({
             </tbody>
           </table>
         </div>
-      </div>
 
-      {/* Pagination */}
-      <div className="flex items-center justify-between text-sm text-gray-600">
-        <span>
-          Page {table.getState().pagination.pageIndex + 1} of{' '}
-          {table.getPageCount() || 1}
-          {isServerSide && totalRows !== undefined && (
-            <span className="text-gray-400 ml-2">({totalRows} total)</span>
-          )}
-        </span>
-        <div className="flex items-center gap-1">
-          <button
-            onClick={() => table.setPageIndex(0)}
-            disabled={!table.getCanPreviousPage()}
-            className="p-1.5 rounded hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            <ChevronsLeft className="w-4 h-4" />
-          </button>
-          <button
-            onClick={() => table.previousPage()}
-            disabled={!table.getCanPreviousPage()}
-            className="p-1.5 rounded hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            <ChevronLeft className="w-4 h-4" />
-          </button>
-          <button
-            onClick={() => table.nextPage()}
-            disabled={!table.getCanNextPage()}
-            className="p-1.5 rounded hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            <ChevronRight className="w-4 h-4" />
-          </button>
-          <button
-            onClick={() => table.setPageIndex(table.getPageCount() - 1)}
-            disabled={!table.getCanNextPage()}
-            className="p-1.5 rounded hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            <ChevronsRight className="w-4 h-4" />
-          </button>
+        {/* Pagination */}
+        <div className="flex items-center justify-between text-sm text-slate-500 border-t border-slate-200/70 px-4 py-3">
+          <span>
+            Page {pageIndex + 1} of {pageCount}
+            {isServerSide && totalRows !== undefined && (
+              <span className="text-slate-400 ml-2">({totalRows} total)</span>
+            )}
+          </span>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => table.setPageIndex(0)}
+              disabled={!table.getCanPreviousPage()}
+              className="p-1.5 rounded-lg hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed"
+            >
+              <ChevronsLeft className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => table.previousPage()}
+              disabled={!table.getCanPreviousPage()}
+              className="p-1.5 rounded-lg hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            {pageNumbers.map((n, i) =>
+              n === '…' ? (
+                <span key={`ellipsis-${i}`} className="px-1.5 text-slate-400">
+                  …
+                </span>
+              ) : (
+                <button
+                  key={n}
+                  onClick={() => table.setPageIndex(n - 1)}
+                  className={cn(
+                    'w-8 h-8 rounded-lg text-sm font-medium transition-colors',
+                    n === pageIndex + 1
+                      ? 'bg-gradient-to-r from-indigo-500 to-purple-500 text-white shadow-sm shadow-indigo-200'
+                      : 'text-slate-500 hover:bg-slate-100'
+                  )}
+                >
+                  {n}
+                </button>
+              )
+            )}
+            <button
+              onClick={() => table.nextPage()}
+              disabled={!table.getCanNextPage()}
+              className="p-1.5 rounded-lg hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => table.setPageIndex(table.getPageCount() - 1)}
+              disabled={!table.getCanNextPage()}
+              className="p-1.5 rounded-lg hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed"
+            >
+              <ChevronsRight className="w-4 h-4" />
+            </button>
+          </div>
         </div>
       </div>
     </div>
