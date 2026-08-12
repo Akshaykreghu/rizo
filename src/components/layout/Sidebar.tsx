@@ -12,25 +12,26 @@ import {
   FileText,
   Building2,
   Settings,
-  ChevronDown,
-  ChevronRight,
-  ChevronsLeft,
-  ChevronsRight,
   CreditCard,
   Package,
   Receipt,
   Sparkles,
   Wand2,
+  ChevronsLeft,
+  ChevronsRight,
+  ChevronDown,
+  ChevronRight,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { Avatar } from '@/components/ui/Avatar';
 import { useEffect, useState } from 'react';
 
-const COLLAPSED_STORAGE_KEY = 'rizo-sidebar-collapsed';
+const EXPANDED_STORAGE_KEY = 'rizo-sidebar-expanded';
 
 interface NavItem {
   label: string;
   href?: string;
-  icon: React.ComponentType<{ className?: string }>;
+  icon: React.ComponentType<{ className?: string; strokeWidth?: number }>;
   children?: { label: string; href: string }[];
   adminOnly?: boolean;
 }
@@ -173,18 +174,18 @@ export function Sidebar() {
   const pathname = usePathname();
   const { data: session } = useSession();
   const isAdmin = session?.user.userGroup === 1;
+  const [expanded, setExpanded] = useState(false);
   const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
-  const [collapsed, setCollapsed] = useState(false);
 
   useEffect(() => {
-    const stored = window.localStorage.getItem(COLLAPSED_STORAGE_KEY);
-    if (stored) setCollapsed(stored === 'true');
+    const stored = window.localStorage.getItem(EXPANDED_STORAGE_KEY);
+    if (stored) setExpanded(stored === 'true');
   }, []);
 
-  function toggleCollapsed() {
-    setCollapsed((prev) => {
+  function toggleExpanded() {
+    setExpanded((prev) => {
       const next = !prev;
-      window.localStorage.setItem(COLLAPSED_STORAGE_KEY, String(next));
+      window.localStorage.setItem(EXPANDED_STORAGE_KEY, String(next));
       return next;
     });
   }
@@ -207,133 +208,166 @@ export function Sidebar() {
   return (
     <aside
       className={cn(
-        'glass-panel flex-shrink-0 text-slate-600 flex flex-col h-full overflow-y-auto transition-[width] duration-200 m-3 mr-0 rounded-3xl shadow-xl shadow-indigo-100/40',
-        collapsed ? 'w-[76px]' : 'w-64'
+        'glass-panel flex-shrink-0 flex flex-col h-full my-3 ml-3 rounded-[28px] py-4 transition-[width] duration-200',
+        expanded ? 'w-64 items-stretch overflow-visible' : 'w-[72px] items-center overflow-visible'
       )}
     >
-      {/* Brand */}
-      <div
-        className={cn(
-          'flex items-center border-b border-slate-200/70 py-5',
-          collapsed ? 'justify-center px-2' : 'justify-between px-5'
-        )}
-      >
-        <div className={cn('flex items-center gap-3', collapsed && 'flex-col gap-2')}>
-          <div className="w-9 h-9 rounded-full brand-ring p-[2px] flex-shrink-0">
-            <div className="w-full h-full rounded-full bg-white flex items-center justify-center text-xs font-bold text-indigo-600">
-              R
-            </div>
+      {/* Logo + collapse toggle */}
+      <div className={cn('flex items-center flex-shrink-0 mb-5', expanded ? 'justify-between px-4' : 'justify-center')}>
+        <div className={cn('flex items-center', expanded && 'gap-2.5')}>
+          <div className="w-11 h-11 rounded-full brand-ring flex items-center justify-center flex-shrink-0">
+            <span className="text-sm font-bold text-[color:var(--color-primary)] font-heading">R</span>
           </div>
-          {!collapsed && (
+          {expanded && (
             <div>
-              <span className="text-lg font-bold text-slate-800 tracking-tight">RIZO</span>
-              <p className="text-[11px] text-slate-400 -mt-0.5">HR & Payroll</p>
+              <p className="font-heading text-sm font-bold text-[#0F172A] leading-none">RIZO</p>
+              <p className="text-[11px] text-[#64748B] mt-1">HR & Payroll</p>
             </div>
           )}
         </div>
-        {!collapsed && (
+        {expanded && (
           <button
-            onClick={toggleCollapsed}
-            title="Collapse sidebar"
+            onClick={toggleExpanded}
             aria-label="Collapse sidebar"
-            className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition-colors"
+            title="Collapse sidebar"
+            className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100/80 hover:text-slate-700 transition-all duration-[180ms]"
           >
             <ChevronsLeft className="w-4 h-4" />
           </button>
         )}
       </div>
-      {collapsed && (
+      {!expanded && (
         <button
-          onClick={toggleCollapsed}
-          title="Expand sidebar"
+          onClick={toggleExpanded}
           aria-label="Expand sidebar"
-          className="mx-auto mt-2 p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition-colors"
+          title="Expand sidebar"
+          className="mb-2 p-1.5 rounded-lg text-slate-400 hover:bg-slate-100/80 hover:text-slate-700 transition-all duration-[180ms]"
         >
           <ChevronsRight className="w-4 h-4" />
         </button>
       )}
 
       {/* Nav */}
-      <nav className="flex-1 py-4 px-3 space-y-1">
+      <nav className={cn('flex-1 flex flex-col gap-1.5 w-full overflow-y-auto overflow-x-visible', expanded ? 'items-stretch px-3' : 'items-center px-2.5')}>
         {visibleItems.map((item) => {
           const Icon = item.icon;
 
           if (item.href && !item.children) {
             const active = isActive(item.href);
             return (
-              <Link
-                key={item.label}
-                href={item.href}
-                title={collapsed ? item.label : undefined}
-                className={cn(
-                  'flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors',
-                  collapsed && 'justify-center px-2',
-                  active
-                    ? 'bg-gradient-to-r from-indigo-500 to-purple-500 text-white shadow-md shadow-indigo-200'
-                    : 'text-slate-500 hover:bg-slate-100/80 hover:text-slate-800'
+              <div key={item.label} className={cn('relative group w-full flex', expanded ? 'justify-stretch' : 'justify-center')}>
+                <Link
+                  href={item.href}
+                  aria-label={item.label}
+                  className={cn(
+                    'flex items-center transition-all duration-[180ms]',
+                    expanded
+                      ? 'w-full gap-3 px-3 py-2.5 rounded-xl text-sm font-medium'
+                      : 'w-11 h-11 rounded-2xl justify-center',
+                    active ? 'nav-pill-active text-[color:var(--color-primary)]' : 'text-slate-400 hover:bg-slate-100/80 hover:text-slate-700'
+                  )}
+                >
+                  <Icon className="w-[22px] h-[22px] flex-shrink-0" strokeWidth={1.75} />
+                  {expanded && item.label}
+                </Link>
+                {!expanded && (
+                  <div className="pointer-events-none absolute left-full top-1/2 -translate-y-1/2 ml-3 whitespace-nowrap glass-card-strong rounded-xl px-3 py-1.5 text-xs font-medium text-slate-700 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-[180ms] z-50">
+                    {item.label}
+                  </div>
                 )}
-              >
-                <Icon className="w-4 h-4 flex-shrink-0" />
-                {!collapsed && item.label}
-              </Link>
+              </div>
             );
           }
 
-          const isOpen = openGroups.has(item.label);
           const hasActiveChild = item.children?.some((c) => isActive(c.href));
+          const isOpen = openGroups.has(item.label);
+
+          if (expanded) {
+            return (
+              <div key={item.label} className="w-full">
+                <button
+                  onClick={() => toggleGroup(item.label)}
+                  className={cn(
+                    'w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-[180ms]',
+                    hasActiveChild ? 'nav-pill-active text-[color:var(--color-primary)]' : 'text-slate-400 hover:bg-slate-100/80 hover:text-slate-700'
+                  )}
+                >
+                  <Icon className="w-[22px] h-[22px] flex-shrink-0" strokeWidth={1.75} />
+                  <span className="flex-1 text-left">{item.label}</span>
+                  {isOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                </button>
+                {isOpen && (
+                  <div className="ml-7 mt-1 space-y-0.5 border-l border-slate-200 pl-3">
+                    {item.children?.map((child) => (
+                      <Link
+                        key={child.href}
+                        href={child.href}
+                        className={cn(
+                          'block px-2.5 py-1.5 rounded-lg text-xs transition-colors',
+                          isActive(child.href)
+                            ? 'bg-[color:var(--color-primary)]/10 text-[color:var(--color-primary)] font-medium'
+                            : 'text-slate-500 hover:bg-slate-100/80'
+                        )}
+                      >
+                        {child.label}
+                      </Link>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          }
 
           return (
-            <div key={item.label}>
+            <div key={item.label} className="relative group w-full flex justify-center">
               <button
-                onClick={() => {
-                  if (collapsed) {
-                    setCollapsed(false);
-                    window.localStorage.setItem(COLLAPSED_STORAGE_KEY, 'false');
-                    if (!openGroups.has(item.label)) toggleGroup(item.label);
-                  } else {
-                    toggleGroup(item.label);
-                  }
-                }}
-                title={collapsed ? item.label : undefined}
+                aria-label={item.label}
                 className={cn(
-                  'w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors',
-                  collapsed && 'justify-center px-2',
-                  hasActiveChild
-                    ? 'bg-indigo-50 text-indigo-700'
-                    : 'text-slate-500 hover:bg-slate-100/80 hover:text-slate-800'
+                  'w-11 h-11 rounded-2xl flex items-center justify-center transition-all duration-[180ms]',
+                  hasActiveChild ? 'nav-pill-active text-[color:var(--color-primary)]' : 'text-slate-400 hover:bg-slate-100/80 hover:text-slate-700'
                 )}
               >
-                <Icon className={cn('w-4 h-4 flex-shrink-0', hasActiveChild && 'text-indigo-600')} />
-                {!collapsed && <span className="flex-1 text-left">{item.label}</span>}
-                {!collapsed &&
-                  (isOpen ? (
-                    <ChevronDown className="w-3.5 h-3.5" />
-                  ) : (
-                    <ChevronRight className="w-3.5 h-3.5" />
-                  ))}
+                <Icon className="w-[22px] h-[22px]" strokeWidth={1.75} />
               </button>
-              {!collapsed && isOpen && (
-                <div className="ml-7 mt-1 space-y-0.5 border-l border-slate-200 pl-3">
+              <div className="absolute left-full top-0 ml-3 min-w-[220px] glass-card-strong rounded-2xl p-2 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-[180ms] z-50">
+                <p className="px-2.5 pt-1 pb-2 text-xs font-semibold text-slate-400 uppercase tracking-wide font-heading">{item.label}</p>
+                <div className="space-y-0.5 max-h-[70vh] overflow-y-auto">
                   {item.children?.map((child) => (
                     <Link
                       key={child.href}
                       href={child.href}
                       className={cn(
-                        'block px-3 py-1.5 rounded-lg text-xs transition-colors',
+                        'block px-2.5 py-1.5 rounded-lg text-sm transition-colors',
                         isActive(child.href)
-                          ? 'bg-indigo-100 text-indigo-700 font-medium'
-                          : 'text-slate-400 hover:bg-slate-100/80 hover:text-slate-700'
+                          ? 'bg-[color:var(--color-primary)]/10 text-[color:var(--color-primary)] font-medium'
+                          : 'text-slate-600 hover:bg-slate-100/80'
                       )}
                     >
                       {child.label}
                     </Link>
                   ))}
                 </div>
-              )}
+              </div>
             </div>
           );
         })}
       </nav>
+
+      {/* User avatar docked at bottom */}
+      {session?.user.loginUserId && (
+        <div className={cn('relative group flex flex-shrink-0 mt-3', expanded ? 'items-center gap-2.5 px-4' : 'justify-center')}>
+          <div className="p-0.5 rounded-full ring-2 ring-white/70 flex-shrink-0">
+            <Avatar name={session.user.loginUserId} />
+          </div>
+          {expanded ? (
+            <span className="text-sm font-medium text-slate-600 truncate">{session.user.loginUserId}</span>
+          ) : (
+            <div className="pointer-events-none absolute left-full bottom-1/2 translate-y-1/2 ml-3 whitespace-nowrap glass-card-strong rounded-xl px-3 py-1.5 text-xs font-medium text-slate-700 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-[180ms] z-50">
+              {session.user.loginUserId}
+            </div>
+          )}
+        </div>
+      )}
     </aside>
   );
 }

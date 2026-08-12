@@ -89,16 +89,16 @@ export function DataTable<TData>({
     <div className={cn('space-y-4', className)}>
       <div className="glass-card rounded-2xl overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-slate-50/70 border-b border-slate-200/70">
+          <table className="w-full text-sm border-separate border-spacing-0">
+            <thead className="sticky top-0 z-10 bg-white/80 backdrop-blur-xl border-b border-slate-200/70">
               {table.getHeaderGroups().map((headerGroup) => (
                 <tr key={headerGroup.id}>
                   {headerGroup.headers.map((header) => (
                     <th
                       key={header.id}
                       className={cn(
-                        'px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap',
-                        header.column.getCanSort() && 'cursor-pointer select-none hover:text-slate-800'
+                        'px-4 py-3 text-left text-[12px] font-semibold text-[#64748B] uppercase tracking-wide whitespace-nowrap',
+                        header.column.getCanSort() && 'cursor-pointer select-none hover:text-[#0F172A]'
                       )}
                       onClick={header.column.getToggleSortingHandler()}
                     >
@@ -121,7 +121,7 @@ export function DataTable<TData>({
                 </tr>
               ))}
             </thead>
-            <tbody className="divide-y divide-slate-100">
+            <tbody>
               {isLoading ? (
                 <tr>
                   <td colSpan={columns.length} className="px-4 py-12 text-center text-slate-400">
@@ -135,14 +135,19 @@ export function DataTable<TData>({
                   </td>
                 </tr>
               ) : (
-                table.getRowModel().rows.map((row) => (
+                table.getRowModel().rows.map((row, i) => (
                   <tr
                     key={row.id}
-                    className={cn('hover:bg-indigo-50/40 transition-colors', onRowClick && 'cursor-pointer')}
+                    className={cn(
+                      'group/row relative h-14 transition-all duration-[180ms] border-b border-slate-100',
+                      i % 2 === 1 && 'bg-slate-900/[0.02]',
+                      'hover:bg-[color:var(--color-primary)]/[0.04] hover:shadow-[0_4px_16px_-6px_rgba(15,23,42,0.12)] hover:-translate-y-px hover:relative hover:z-[1]',
+                      onRowClick && 'cursor-pointer'
+                    )}
                     onClick={() => onRowClick?.(row.original)}
                   >
                     {row.getVisibleCells().map((cell) => (
-                      <td key={cell.id} className="px-4 py-3 text-slate-700">
+                      <td key={cell.id} className="px-4 py-3 text-[#0F172A]">
                         {flexRender(cell.column.columnDef.cell, cell.getContext())}
                       </td>
                     ))}
@@ -186,9 +191,9 @@ export function DataTable<TData>({
                   key={n}
                   onClick={() => table.setPageIndex(n - 1)}
                   className={cn(
-                    'w-8 h-8 rounded-lg text-sm font-medium transition-colors',
+                    'w-8 h-8 rounded-lg text-sm font-medium transition-all duration-[180ms]',
                     n === pageIndex + 1
-                      ? 'bg-gradient-to-r from-indigo-500 to-purple-500 text-white shadow-sm shadow-indigo-200'
+                      ? 'bg-[color:var(--color-primary)] text-white shadow-sm'
                       : 'text-slate-500 hover:bg-slate-100'
                   )}
                 >

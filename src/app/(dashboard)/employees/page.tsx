@@ -27,7 +27,12 @@ interface BranchOption {
   branch_name: string;
 }
 
-export default function EmployeesPage() {
+interface EmployeesPageProps {
+  /** Set when rendered inside another page (e.g. the Employee Join "All Employees" tab) that already shows its own title. */
+  embedded?: boolean;
+}
+
+export default function EmployeesPage({ embedded = false }: EmployeesPageProps) {
   const router = useRouter();
   const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
@@ -60,6 +65,14 @@ export default function EmployeesPage() {
   });
 
   const columns: ColumnDef<Employee, unknown>[] = [
+    {
+      id: 'slNo',
+      header: 'Sl No',
+      cell: ({ row, table }) => {
+        const { pageIndex, pageSize } = table.getState().pagination;
+        return <span className="text-slate-400">{pageIndex * pageSize + row.index + 1}</span>;
+      },
+    },
     { accessorKey: 'emp_id', header: 'Emp ID', size: 90 },
     {
       id: 'name',
@@ -75,8 +88,16 @@ export default function EmployeesPage() {
       ),
     },
     { accessorKey: 'branch_name', header: 'Branch' },
-    { accessorKey: 'dept_name', header: 'Department' },
-    { accessorKey: 'desig_name', header: 'Designation' },
+    {
+      accessorKey: 'dept_name',
+      header: 'Department',
+      cell: ({ getValue }) => <span className="font-medium text-[#0F172A]">{String(getValue() ?? '')}</span>,
+    },
+    {
+      accessorKey: 'desig_name',
+      header: 'Designation',
+      cell: ({ getValue }) => <span className="text-[#64748B]">{String(getValue() ?? '')}</span>,
+    },
     {
       accessorKey: 'joining_date',
       header: 'Joining Date',
@@ -99,17 +120,17 @@ export default function EmployeesPage() {
               });
             }}
             className={cn(
-              'flex items-center gap-1 text-xs px-2 py-1 rounded-lg font-medium transition-colors',
+              'w-8 h-8 rounded-xl flex items-center justify-center opacity-0 group-hover/row:opacity-100 transition-all duration-[180ms]',
               row.original.status === 1
-                ? 'text-rose-500 hover:bg-rose-50'
-                : 'text-emerald-600 hover:bg-emerald-50'
+                ? 'text-[color:var(--color-danger)] hover:bg-[color:var(--color-danger)]/10'
+                : 'text-[color:var(--color-success)] hover:bg-[color:var(--color-success)]/10'
             )}
             title={row.original.status === 1 ? 'Deactivate' : 'Activate'}
           >
             {row.original.status === 1 ? (
-              <><UserX className="w-3.5 h-3.5" /> Deactivate</>
+              <UserX className="w-4 h-4" />
             ) : (
-              <><UserCheck className="w-3.5 h-3.5" /> Activate</>
+              <UserCheck className="w-4 h-4" />
             )}
           </button>
         ),
@@ -124,32 +145,32 @@ export default function EmployeesPage() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-slate-800 tracking-tight">Employees</h1>
+      <div className={cn('flex items-center justify-between', embedded ? 'justify-end mb-4' : 'mb-6')}>
+        {!embedded && <h1 className="font-heading text-2xl font-bold text-[#0F172A] tracking-tight">Employees</h1>}
         <button
           onClick={() => router.push('/employees/new')}
-          className="flex items-center gap-2 bg-gradient-to-r from-blue-500 to-purple-500 hover:from-blue-600 hover:to-purple-600 text-white px-4 py-2.5 rounded-xl text-sm font-medium shadow-lg shadow-indigo-200 transition-colors"
+          className="flex items-center gap-2 bg-[color:var(--color-primary)] hover:scale-[1.03] text-white px-4 py-2.5 rounded-xl text-sm font-medium shadow-lg shadow-[color:var(--color-primary)]/20 transition-all duration-[180ms]"
         >
           <Plus className="w-4 h-4" />
           Add Employee
         </button>
       </div>
 
-      <div className="glass-card rounded-2xl p-3 mb-4 flex flex-wrap items-center gap-3">
+      <div className="sticky top-0 z-20 glass-card-strong rounded-2xl p-3 mb-4 flex flex-wrap items-center gap-3">
         <form onSubmit={handleSearch} className="flex gap-2 max-w-sm flex-1 min-w-[220px]">
           <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
             <input
               type="text"
               placeholder="Search by name or employee ID"
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
-              className="w-full pl-9 pr-3 py-2 bg-white/80 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              className="w-full h-11 pl-10 pr-3 bg-white/80 border border-slate-200 rounded-full text-sm focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/40"
             />
           </div>
           <button
             type="submit"
-            className="px-3.5 py-2 bg-white/80 hover:bg-white border border-slate-200 rounded-xl text-sm text-slate-600 transition-colors"
+            className="px-3.5 py-2 bg-white/80 hover:bg-white border border-slate-200 rounded-full text-sm text-slate-600 transition-all duration-[180ms]"
           >
             Search
           </button>
@@ -165,9 +186,9 @@ export default function EmployeesPage() {
               key={opt.value}
               onClick={() => { setStatus(opt.value); setPage(1); }}
               className={cn(
-                'px-3 py-2 rounded-xl transition-colors font-medium',
+                'px-3 py-2 rounded-xl transition-all duration-[180ms] font-medium',
                 status === opt.value
-                  ? 'bg-emerald-100 text-emerald-700'
+                  ? 'bg-[color:var(--color-success)]/10 text-[color:var(--color-success)]'
                   : 'bg-white/80 text-slate-500 hover:bg-white border border-slate-200'
               )}
             >
@@ -179,7 +200,7 @@ export default function EmployeesPage() {
         <select
           value={branch}
           onChange={(e) => { setBranch(e.target.value); setPage(1); }}
-          className="px-3 py-2 bg-white/80 border border-slate-200 rounded-xl text-sm text-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+          className="px-3 py-2 bg-white/80 border border-slate-200 rounded-xl text-sm text-slate-600 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/40"
         >
           <option value="">All Branches</option>
           {branches.map((b) => (
