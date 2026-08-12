@@ -1,11 +1,15 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
-import { Plus, Search, UserX, UserCheck } from 'lucide-react';
+import { Plus, Search, UserX, UserCheck, Eye } from 'lucide-react';
 import { DataTable } from '@/components/data-table/DataTable';
 import { Avatar } from '@/components/ui/Avatar';
+import { Modal } from '@/components/ui/Modal';
+import { FloatingActionPanel, type FloatingAction } from '@/components/ui/FloatingActionPanel';
+import { EmployeeDetail } from '@/components/employees/EmployeeDetail';
+import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { cn, formatDate } from '@/lib/utils';
 import type { ColumnDef } from '@tanstack/react-table';
 
@@ -30,17 +34,29 @@ interface BranchOption {
 interface EmployeesPageProps {
   /** Set when rendered inside another page (e.g. the Employee Join "All Employees" tab) that already shows its own title. */
   embedded?: boolean;
+  /** When embedded, the search term is controlled by the parent's shared search bar. */
+  search?: string;
+  /** When embedded, rows-per-page is controlled by the parent's shared toolbar. */
+  pageSize?: number;
 }
 
-export default function EmployeesPage({ embedded = false }: EmployeesPageProps) {
+export default function EmployeesPage({ embedded = false, search: searchProp, pageSize: pageSizeProp }: EmployeesPageProps) {
   const router = useRouter();
   const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
-  const [search, setSearch] = useState('');
   const [searchInput, setSearchInput] = useState('');
+  const debouncedSearchInput = useDebouncedValue(searchInput, 300);
   const [status, setStatus] = useState('1');
   const [branch, setBranch] = useState('');
-  const pageSize = 25;
+  const [selectedEmpPkey, setSelectedEmpPkey] = useState<number | null>(null);
+  const [modalOpen, setModalOpen] = useState(false);
+
+  const search = embedded ? (searchProp ?? '') : debouncedSearchInput;
+  const pageSize = embedded ? (pageSizeProp ?? 25) : 25;
+
+  useEffect(() => {
+    setPage(1);
+  }, [search, status, branch, pageSize]);
 
   const { data: branches = [] } = useQuery<BranchOption[]>({
     queryKey: ['setup/branches'],
@@ -73,17 +89,19 @@ export default function EmployeesPage({ embedded = false }: EmployeesPageProps) 
         return <span className="text-slate-400">{pageIndex * pageSize + row.index + 1}</span>;
       },
     },
-    { accessorKey: 'emp_id', header: 'Emp ID', size: 90 },
     {
       id: 'name',
-      header: 'Name',
+      header: 'Employee',
       accessorFn: (row) => `${row.first_name} ${row.last_name}`,
       cell: ({ row }) => (
         <div className="flex items-center gap-2.5">
           <Avatar name={`${row.original.first_name} ${row.original.last_name}`} />
-          <span className="font-medium text-slate-800">
-            {row.original.first_name} {row.original.last_name}
-          </span>
+          <div className="leading-tight">
+            <p className="font-medium text-[#0F172A]">
+              {row.original.first_name} {row.original.last_name}
+            </p>
+            <p className="text-xs text-slate-400 mt-0.5">EMP {row.original.emp_id}</p>
+          </div>
         </div>
       ),
     },
@@ -104,61 +122,52 @@ export default function EmployeesPage({ embedded = false }: EmployeesPageProps) 
       cell: ({ getValue }) => formatDate(String(getValue() ?? '')),
     },
     { accessorKey: 'mobile_no', header: 'Mobile' },
-    {
-      id: 'actions',
-      header: 'Actions',
-      cell: ({ row }) =>
-        row.original.status === 2 ? (
-          <span className="text-xs text-slate-400">Resigned — managed via Remove Employee</span>
-        ) : (
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              toggleStatus.mutate({
-                empPkey: row.original.emp_pkey,
-                newStatus: row.original.status === 1 ? 0 : 1,
-              });
-            }}
-            className={cn(
-              'w-8 h-8 rounded-xl flex items-center justify-center opacity-0 group-hover/row:opacity-100 transition-all duration-[180ms]',
-              row.original.status === 1
-                ? 'text-[color:var(--color-danger)] hover:bg-[color:var(--color-danger)]/10'
-                : 'text-[color:var(--color-success)] hover:bg-[color:var(--color-success)]/10'
-            )}
-            title={row.original.status === 1 ? 'Deactivate' : 'Activate'}
-          >
-            {row.original.status === 1 ? (
-              <UserX className="w-4 h-4" />
-            ) : (
-              <UserCheck className="w-4 h-4" />
-            )}
-          </button>
-        ),
-    },
   ];
 
-  function handleSearch(e: React.FormEvent) {
-    e.preventDefault();
-    setSearch(searchInput);
-    setPage(1);
-  }
+  const selectedEmployee = data?.data?.find((e: Employee) => e.emp_pkey === selectedEmpPkey);
+  const panelActions: FloatingAction[] = selectedEmployee
+    ? [
+        { key: 'view', label: 'View', icon: Eye, variant: 'primary', onClick: () => setModalOpen(true) },
+        ...(selectedEmployee.status === 2
+          ? []
+          : [
+              selectedEmployee.status === 1
+                ? {
+                    key: 'deactivate',
+                    label: 'Deactivate',
+                    icon: UserX,
+                    variant: 'danger' as const,
+                    onClick: () => toggleStatus.mutate({ empPkey: selectedEmployee.emp_pkey, newStatus: 0 }),
+                  }
+                : {
+                    key: 'activate',
+                    label: 'Activate',
+                    icon: UserCheck,
+                    variant: 'success' as const,
+                    onClick: () => toggleStatus.mutate({ empPkey: selectedEmployee.emp_pkey, newStatus: 1 }),
+                  },
+            ]),
+      ]
+    : [];
 
   return (
     <div>
-      <div className={cn('flex items-center justify-between', embedded ? 'justify-end mb-4' : 'mb-6')}>
-        {!embedded && <h1 className="font-heading text-2xl font-bold text-[#0F172A] tracking-tight">Employees</h1>}
-        <button
-          onClick={() => router.push('/employees/new')}
-          className="flex items-center gap-2 bg-[color:var(--color-primary)] hover:scale-[1.03] text-white px-4 py-2.5 rounded-xl text-sm font-medium shadow-lg shadow-[color:var(--color-primary)]/20 transition-all duration-[180ms]"
-        >
-          <Plus className="w-4 h-4" />
-          Add Employee
-        </button>
-      </div>
+      {!embedded && (
+        <div className="flex items-center justify-between mb-6">
+          <h1 className="font-heading text-2xl font-bold text-[#0F172A] tracking-tight">Employees</h1>
+          <button
+            onClick={() => router.push('/employees/new')}
+            className="flex items-center gap-2 bg-[color:var(--color-primary)] hover:scale-[1.03] text-white px-4 py-2.5 rounded-xl text-sm font-medium shadow-lg shadow-[color:var(--color-primary)]/20 transition-all duration-[180ms]"
+          >
+            <Plus className="w-4 h-4" />
+            Add Employee
+          </button>
+        </div>
+      )}
 
       <div className="sticky top-0 z-20 glass-card-strong rounded-2xl p-3 mb-4 flex flex-wrap items-center gap-3">
-        <form onSubmit={handleSearch} className="flex gap-2 max-w-sm flex-1 min-w-[220px]">
-          <div className="relative flex-1">
+        {!embedded && (
+          <div className="relative max-w-sm flex-1 min-w-[220px]">
             <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
             <input
               type="text"
@@ -168,13 +177,7 @@ export default function EmployeesPage({ embedded = false }: EmployeesPageProps) 
               className="w-full h-11 pl-10 pr-3 bg-white/80 border border-slate-200 rounded-full text-sm focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/40"
             />
           </div>
-          <button
-            type="submit"
-            className="px-3.5 py-2 bg-white/80 hover:bg-white border border-slate-200 rounded-full text-sm text-slate-600 transition-all duration-[180ms]"
-          >
-            Search
-          </button>
-        </form>
+        )}
 
         <div className="flex items-center gap-1 text-sm">
           {[
@@ -184,7 +187,7 @@ export default function EmployeesPage({ embedded = false }: EmployeesPageProps) 
           ].map((opt) => (
             <button
               key={opt.value}
-              onClick={() => { setStatus(opt.value); setPage(1); }}
+              onClick={() => setStatus(opt.value)}
               className={cn(
                 'px-3 py-2 rounded-xl transition-all duration-[180ms] font-medium',
                 status === opt.value
@@ -199,7 +202,7 @@ export default function EmployeesPage({ embedded = false }: EmployeesPageProps) 
 
         <select
           value={branch}
-          onChange={(e) => { setBranch(e.target.value); setPage(1); }}
+          onChange={(e) => setBranch(e.target.value)}
           className="px-3 py-2 bg-white/80 border border-slate-200 rounded-xl text-sm text-slate-600 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/40"
         >
           <option value="">All Branches</option>
@@ -210,14 +213,24 @@ export default function EmployeesPage({ embedded = false }: EmployeesPageProps) 
       </div>
 
       <DataTable
+        key={pageSize}
         data={data?.data ?? []}
         columns={columns}
         pageSize={pageSize}
         totalRows={data?.total ?? 0}
         onPageChange={(p) => setPage(p)}
         isLoading={isLoading}
-        onRowClick={(row) => router.push(`/employees/${row.emp_pkey}`)}
+        onRowClick={(row) => setSelectedEmpPkey((prev) => (prev === row.emp_pkey ? null : row.emp_pkey))}
+        isRowSelected={(row) => selectedEmpPkey === row.emp_pkey}
       />
+
+      <FloatingActionPanel visible={selectedEmpPkey !== null} actions={panelActions} />
+
+      <Modal open={modalOpen} onClose={() => setModalOpen(false)}>
+        {selectedEmpPkey !== null && (
+          <EmployeeDetail id={String(selectedEmpPkey)} onBack={() => setModalOpen(false)} showBackLink={false} />
+        )}
+      </Modal>
     </div>
   );
 }

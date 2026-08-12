@@ -1,12 +1,16 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
-import { Plus, Trash2, ArrowRightCircle, Search, Download, Upload, Users, UserCheck, UserPlus } from 'lucide-react';
+import { Plus, Trash2, Pencil, ArrowRightCircle, Search, Download, Upload, Users, UserCheck, UserPlus } from 'lucide-react';
 import { cn, formatDate } from '@/lib/utils';
 import { DataTable } from '@/components/data-table/DataTable';
 import { Avatar } from '@/components/ui/Avatar';
+import { Modal } from '@/components/ui/Modal';
+import { FloatingActionPanel, type FloatingAction } from '@/components/ui/FloatingActionPanel';
+import { JoinDetail } from '@/components/employees/JoinDetail';
+import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import type { ColumnDef } from '@tanstack/react-table';
 import EmployeesPage from '../page';
 
@@ -29,10 +33,16 @@ export default function EmployeeJoinPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [tab, setTab] = useState<'joining' | 'all'>('joining');
   const [page, setPage] = useState(1);
-  const [search, setSearch] = useState('');
   const [searchInput, setSearchInput] = useState('');
+  const search = useDebouncedValue(searchInput, 300);
   const [uploadResult, setUploadResult] = useState<{ inserted: number; errors: { row: number; message: string }[] } | null>(null);
   const [pageSize, setPageSize] = useState(10);
+  const [selectedJoinId, setSelectedJoinId] = useState<number | null>(null);
+  const [modalOpen, setModalOpen] = useState(false);
+
+  useEffect(() => {
+    setPage(1);
+  }, [search]);
 
   const { data, isLoading } = useQuery<{ data: JoinRow[]; total: number }>({
     queryKey: ['employees/join', page, pageSize, search],
@@ -77,12 +87,6 @@ export default function EmployeeJoinPage() {
     },
   });
 
-  function handleSearch(e: React.FormEvent) {
-    e.preventDefault();
-    setSearch(searchInput);
-    setPage(1);
-  }
-
   function handleFileSelected(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (file) upload.mutate(file);
@@ -120,39 +124,39 @@ export default function EmployeeJoinPage() {
       cell: ({ getValue }) => formatDate(String(getValue() ?? '')),
     },
     { accessorKey: 'district', header: 'District' },
-    {
-      id: 'actions',
-      header: '',
-      cell: ({ row }) => (
-        <div className="flex items-center gap-3">
-          <button
-            onClick={(e) => { e.stopPropagation(); router.push(`/employees/join/${row.original.emp_join_pkey}`); }}
-            className="flex items-center gap-1 text-xs text-[color:var(--color-primary)] hover:opacity-80 font-medium"
-          >
-            Edit
-          </button>
-          <button
-            onClick={(e) => { e.stopPropagation(); router.push(`/employees/join/${row.original.emp_join_pkey}/onboard`); }}
-            className="flex items-center gap-1 text-xs text-[color:var(--color-success)] hover:opacity-80 font-medium"
-          >
-            <ArrowRightCircle className="w-3.5 h-3.5" /> Continue Onboarding
-          </button>
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              if (confirm('Discard this join record? This cannot be undone.')) {
-                discard.mutate(row.original.emp_join_pkey);
-              }
-            }}
-            className="text-slate-400 hover:text-[color:var(--color-danger)] transition-colors duration-[180ms]"
-            title="Discard"
-          >
-            <Trash2 className="w-4 h-4" />
-          </button>
-        </div>
-      ),
-    },
   ];
+
+  const selectedJoinRow = data?.data?.find((r) => r.emp_join_pkey === selectedJoinId);
+  const joinPanelActions: FloatingAction[] = selectedJoinRow
+    ? [
+        {
+          key: 'edit',
+          label: 'Edit',
+          icon: Pencil,
+          variant: 'primary',
+          onClick: () => setModalOpen(true),
+        },
+        {
+          key: 'onboard',
+          label: 'Continue Onboarding',
+          icon: ArrowRightCircle,
+          variant: 'success',
+          onClick: () => router.push(`/employees/join/${selectedJoinRow.emp_join_pkey}/onboard`),
+        },
+        {
+          key: 'delete',
+          label: 'Delete',
+          icon: Trash2,
+          variant: 'danger',
+          onClick: () => {
+            if (confirm('Discard this join record? This cannot be undone.')) {
+              discard.mutate(selectedJoinRow.emp_join_pkey);
+              setSelectedJoinId(null);
+            }
+          },
+        },
+      ]
+    : [];
 
   const kpis = [
     { label: 'Total Employees', value: statusCounts?.total, icon: Users, color: 'primary' as const },
@@ -191,7 +195,7 @@ export default function EmployeeJoinPage() {
             ))}
           </div>
         </div>
-        {tab === 'joining' && (
+        {tab === 'joining' ? (
           <div className="flex items-center gap-2">
             <a
               href="/api/employees/join/template"
@@ -215,7 +219,7 @@ export default function EmployeeJoinPage() {
               New Join
             </button>
           </div>
-        )}
+        ) : null}
       </div>
 
       {uploadResult && (
@@ -260,42 +264,32 @@ export default function EmployeeJoinPage() {
           ))}
         </div>
 
-        {tab === 'joining' && (
-          <div className="flex items-center gap-3">
-            <form onSubmit={handleSearch} className="flex gap-2 max-w-sm">
-              <div className="relative flex-1">
-                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                <input
-                  type="text"
-                  placeholder="Search by name or mobile"
-                  value={searchInput}
-                  onChange={(e) => setSearchInput(e.target.value)}
-                  className="w-full h-11 pl-10 pr-16 bg-white/80 border border-slate-200 rounded-full text-sm focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/40"
-                />
-                <kbd className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] font-medium text-slate-400 bg-slate-100 border border-slate-200 rounded-md px-1.5 py-0.5">
-                  Ctrl K
-                </kbd>
-              </div>
-              <button type="submit" className="px-3.5 py-2 bg-white/80 hover:bg-white border border-slate-200 rounded-full text-sm text-slate-600 transition-all duration-[180ms]">
-                Search
-              </button>
-            </form>
-            <label className="flex items-center gap-2 text-sm text-slate-500">
-              Rows per page
-              <select
-                value={pageSize}
-                onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}
-                className="bg-white/80 border border-slate-200 rounded-xl px-2 py-1.5 text-sm text-slate-600 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/40"
-              >
-                {PAGE_SIZE_OPTIONS.map((n) => <option key={n} value={n}>{n}</option>)}
-              </select>
-            </label>
+        <div className="flex items-center gap-3">
+          <div className="relative max-w-sm flex-1">
+            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+            <input
+              type="text"
+              placeholder={tab === 'joining' ? 'Search by name or mobile' : 'Search by name or employee ID'}
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              className="w-full h-11 pl-10 pr-3 bg-white/80 border border-slate-200 rounded-full text-sm focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/40"
+            />
           </div>
-        )}
+          <label className="flex items-center gap-2 text-sm text-slate-500">
+            Rows per page
+            <select
+              value={pageSize}
+              onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}
+              className="bg-white/80 border border-slate-200 rounded-xl px-2 py-1.5 text-sm text-slate-600 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/40"
+            >
+              {PAGE_SIZE_OPTIONS.map((n) => <option key={n} value={n}>{n}</option>)}
+            </select>
+          </label>
+        </div>
       </div>
 
       {tab === 'all' ? (
-        <EmployeesPage embedded />
+        <EmployeesPage embedded search={search} pageSize={pageSize} />
       ) : (
         <DataTable
           key={pageSize}
@@ -305,8 +299,20 @@ export default function EmployeeJoinPage() {
           totalRows={data?.total ?? 0}
           onPageChange={(p) => setPage(p)}
           isLoading={isLoading}
-          onRowClick={(row) => router.push(`/employees/join/${row.emp_join_pkey}`)}
+          onRowClick={(row) => setSelectedJoinId((prev) => (prev === row.emp_join_pkey ? null : row.emp_join_pkey))}
+          isRowSelected={(row) => selectedJoinId === row.emp_join_pkey}
         />
+      )}
+
+      {tab === 'joining' && (
+        <>
+          <FloatingActionPanel visible={selectedJoinId !== null} actions={joinPanelActions} />
+          <Modal open={modalOpen} onClose={() => setModalOpen(false)}>
+            {selectedJoinId !== null && (
+              <JoinDetail id={String(selectedJoinId)} onBack={() => setModalOpen(false)} showBackLink={false} />
+            )}
+          </Modal>
+        </>
       )}
     </div>
   );

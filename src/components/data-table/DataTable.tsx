@@ -25,6 +25,8 @@ interface DataTableProps<TData> {
   isLoading?: boolean;
   className?: string;
   onRowClick?: (row: TData) => void;
+  /** Highlights a row (e.g. for single-select) when it returns true. */
+  isRowSelected?: (row: TData) => boolean;
 }
 
 function getPageNumbers(current: number, total: number): (number | '…')[] {
@@ -50,6 +52,7 @@ export function DataTable<TData>({
   isLoading,
   className,
   onRowClick,
+  isRowSelected,
 }: DataTableProps<TData>) {
   const [sorting, setSorting] = useState<SortingState>([]);
   const [pagination, setPagination] = useState<PaginationState>({
@@ -87,10 +90,10 @@ export function DataTable<TData>({
 
   return (
     <div className={cn('space-y-4', className)}>
-      <div className="glass-card rounded-2xl overflow-hidden">
+      <div className="surface-card rounded-2xl overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm border-separate border-spacing-0">
-            <thead className="sticky top-0 z-10 bg-white/80 backdrop-blur-xl border-b border-slate-200/70">
+            <thead className="sticky top-0 z-10 bg-white border-b border-slate-100">
               {table.getHeaderGroups().map((headerGroup) => (
                 <tr key={headerGroup.id}>
                   {headerGroup.headers.map((header) => (
@@ -135,13 +138,17 @@ export function DataTable<TData>({
                   </td>
                 </tr>
               ) : (
-                table.getRowModel().rows.map((row, i) => (
+                table.getRowModel().rows.map((row, i) => {
+                  const selected = isRowSelected?.(row.original) ?? false;
+                  return (
                   <tr
                     key={row.id}
                     className={cn(
-                      'group/row relative h-14 transition-all duration-[180ms] border-b border-slate-100',
-                      i % 2 === 1 && 'bg-slate-900/[0.02]',
-                      'hover:bg-[color:var(--color-primary)]/[0.04] hover:shadow-[0_4px_16px_-6px_rgba(15,23,42,0.12)] hover:-translate-y-px hover:relative hover:z-[1]',
+                      'group/row h-14 transition-colors duration-[180ms] border-b border-slate-50',
+                      i % 2 === 1 && !selected && 'bg-slate-900/[0.015]',
+                      selected
+                        ? 'bg-[color:var(--color-primary)]/[0.07] shadow-[inset_2px_0_0_var(--color-primary)]'
+                        : 'hover:bg-[color:var(--color-primary)]/[0.035]',
                       onRowClick && 'cursor-pointer'
                     )}
                     onClick={() => onRowClick?.(row.original)}
@@ -152,14 +159,15 @@ export function DataTable<TData>({
                       </td>
                     ))}
                   </tr>
-                ))
+                  );
+                })
               )}
             </tbody>
           </table>
         </div>
 
         {/* Pagination */}
-        <div className="flex items-center justify-between text-sm text-slate-500 border-t border-slate-200/70 px-4 py-3">
+        <div className="flex items-center justify-between text-sm text-slate-500 border-t border-slate-100 px-4 py-3">
           <span>
             Page {pageIndex + 1} of {pageCount}
             {isServerSide && totalRows !== undefined && (

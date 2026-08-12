@@ -248,7 +248,7 @@ export function Sidebar() {
       )}
 
       {/* Nav */}
-      <nav className={cn('flex-1 flex flex-col gap-1.5 w-full overflow-y-auto overflow-x-visible', expanded ? 'items-stretch px-3' : 'items-center px-2.5')}>
+      <nav className={cn('flex-1 flex flex-col gap-1.5 w-full overflow-y-auto overflow-x-visible scroll-fade', expanded ? 'items-stretch px-3' : 'items-center px-2.5')}>
         {visibleItems.map((item) => {
           const Icon = item.icon;
 
@@ -331,7 +331,7 @@ export function Sidebar() {
               </button>
               <div className="absolute left-full top-0 ml-3 min-w-[220px] glass-card-strong rounded-2xl p-2 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-[180ms] z-50">
                 <p className="px-2.5 pt-1 pb-2 text-xs font-semibold text-slate-400 uppercase tracking-wide font-heading">{item.label}</p>
-                <div className="space-y-0.5 max-h-[70vh] overflow-y-auto">
+                <div className="space-y-0.5 max-h-[70vh] overflow-y-auto scroll-fade">
                   {item.children?.map((child) => (
                     <Link
                       key={child.href}
