@@ -25,6 +25,11 @@ interface JoinRow {
   profile_image_url: string | null;
 }
 
+interface BranchOption {
+  branch_code: string;
+  branch_name: string;
+}
+
 const PAGE_SIZE_OPTIONS = [10, 20, 30, 40, 50];
 
 export default function EmployeeJoinPage() {
@@ -39,6 +44,14 @@ export default function EmployeeJoinPage() {
   const [pageSize, setPageSize] = useState(10);
   const [selectedJoinId, setSelectedJoinId] = useState<number | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
+  const [allStatus, setAllStatus] = useState('1');
+  const [allBranch, setAllBranch] = useState('');
+
+  const { data: branches = [] } = useQuery<BranchOption[]>({
+    queryKey: ['setup/branches'],
+    queryFn: () => fetch('/api/setup/branches').then((r) => r.json()),
+    enabled: tab === 'all',
+  });
 
   useEffect(() => {
     setPage(1);
@@ -188,7 +201,7 @@ export default function EmployeeJoinPage() {
                   <k.icon className="w-4 h-4" strokeWidth={1.75} />
                 </span>
                 <div>
-                  <p className="text-base font-semibold text-[#0F172A] leading-none">{k.value ?? '—'}</p>
+                  <p className="text-lg font-bold text-[#0F172A] leading-none">{k.value ?? '—'}</p>
                   <p className="text-[11px] text-[#64748B] mt-1">{k.label}</p>
                 </div>
               </div>
@@ -199,14 +212,14 @@ export default function EmployeeJoinPage() {
           <div className="flex items-center gap-2">
             <a
               href="/api/employees/join/template"
-              className="flex items-center gap-1.5 text-sm text-slate-600 hover:text-slate-900 px-3 py-2 rounded-xl glass-panel transition-all duration-[180ms]"
+              className="flex items-center gap-1.5 text-sm text-slate-600 hover:text-[color:var(--color-primary)] px-3 py-2 rounded-xl glass-panel transition-all duration-[180ms]"
             >
               <Download className="w-4 h-4" /> Download Template
             </a>
             <button
               onClick={() => fileInputRef.current?.click()}
               disabled={upload.isPending}
-              className="flex items-center gap-1.5 text-sm text-slate-600 hover:text-slate-900 px-3 py-2 rounded-xl glass-panel transition-all duration-[180ms] disabled:opacity-50"
+              className="flex items-center gap-1.5 text-sm text-slate-600 hover:text-[color:var(--color-primary)] px-3 py-2 rounded-xl glass-panel transition-all duration-[180ms] disabled:opacity-50"
             >
               <Upload className="w-4 h-4" /> {upload.isPending ? 'Uploading…' : 'Upload File'}
             </button>
@@ -264,32 +277,79 @@ export default function EmployeeJoinPage() {
           ))}
         </div>
 
-        <div className="flex items-center gap-3">
-          <div className="relative max-w-sm flex-1">
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="relative max-w-sm flex-1 min-w-[220px]">
             <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
             <input
               type="text"
-              placeholder={tab === 'joining' ? 'Search by name or mobile' : 'Search by name or employee ID'}
+              placeholder={tab === 'joining' ? 'Search employees by name or mobile' : 'Search employees by name or ID'}
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
-              className="w-full h-11 pl-10 pr-3 bg-white/80 border border-slate-200 rounded-full text-sm focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/40"
+              className="w-full h-10 pl-10 pr-3 bg-white/80 border border-slate-200 rounded-full text-sm focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/40"
             />
           </div>
-          <label className="flex items-center gap-2 text-sm text-slate-500">
-            Rows per page
-            <select
-              value={pageSize}
-              onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}
-              className="bg-white/80 border border-slate-200 rounded-xl px-2 py-1.5 text-sm text-slate-600 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/40"
-            >
-              {PAGE_SIZE_OPTIONS.map((n) => <option key={n} value={n}>{n}</option>)}
-            </select>
-          </label>
+
+          {tab === 'all' && (
+            <>
+              <div className="flex items-center gap-1 text-sm">
+                {[
+                  { value: '1', label: 'Active' },
+                  { value: '0', label: 'Inactive' },
+                  { value: '2', label: 'Resigned' },
+                ].map((opt) => (
+                  <button
+                    key={opt.value}
+                    onClick={() => setAllStatus(opt.value)}
+                    className={cn(
+                      'px-3 py-2 rounded-xl transition-all duration-[180ms] font-medium',
+                      allStatus === opt.value
+                        ? 'bg-[color:var(--color-success)]/10 text-[color:var(--color-success)]'
+                        : 'bg-white/80 text-slate-500 hover:bg-white border border-slate-200'
+                    )}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+
+              <select
+                value={allBranch}
+                onChange={(e) => setAllBranch(e.target.value)}
+                className="px-3 py-2 bg-white/80 border border-slate-200 rounded-xl text-sm text-slate-600 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/40"
+              >
+                <option value="">All Branches</option>
+                {branches.map((b) => (
+                  <option key={b.branch_code} value={b.branch_code}>{b.branch_name}</option>
+                ))}
+              </select>
+            </>
+          )}
+
+          {tab === 'joining' && (
+            <label className="flex items-center gap-2 text-sm text-slate-500">
+              Rows per page
+              <select
+                value={pageSize}
+                onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}
+                className="bg-white/80 border border-slate-200 rounded-xl px-2 py-1.5 text-sm text-slate-600 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/40"
+              >
+                {PAGE_SIZE_OPTIONS.map((n) => <option key={n} value={n}>{n}</option>)}
+              </select>
+            </label>
+          )}
         </div>
       </div>
 
       {tab === 'all' ? (
-        <EmployeesPage embedded search={search} pageSize={pageSize} />
+        <EmployeesPage
+          embedded
+          search={search}
+          pageSize={pageSize}
+          status={allStatus}
+          onStatusChange={setAllStatus}
+          branch={allBranch}
+          onBranchChange={setAllBranch}
+        />
       ) : (
         <DataTable
           key={pageSize}

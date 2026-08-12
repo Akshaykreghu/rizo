@@ -38,21 +38,39 @@ interface EmployeesPageProps {
   search?: string;
   /** When embedded, rows-per-page is controlled by the parent's shared toolbar. */
   pageSize?: number;
+  /** When embedded, the status filter is controlled by the parent's shared toolbar. */
+  status?: string;
+  onStatusChange?: (status: string) => void;
+  /** When embedded, the branch filter is controlled by the parent's shared toolbar. */
+  branch?: string;
+  onBranchChange?: (branch: string) => void;
 }
 
-export default function EmployeesPage({ embedded = false, search: searchProp, pageSize: pageSizeProp }: EmployeesPageProps) {
+export default function EmployeesPage({
+  embedded = false,
+  search: searchProp,
+  pageSize: pageSizeProp,
+  status: statusProp,
+  onStatusChange,
+  branch: branchProp,
+  onBranchChange,
+}: EmployeesPageProps) {
   const router = useRouter();
   const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
   const [searchInput, setSearchInput] = useState('');
   const debouncedSearchInput = useDebouncedValue(searchInput, 300);
-  const [status, setStatus] = useState('1');
-  const [branch, setBranch] = useState('');
+  const [internalStatus, setInternalStatus] = useState('1');
+  const [internalBranch, setInternalBranch] = useState('');
   const [selectedEmpPkey, setSelectedEmpPkey] = useState<number | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
 
   const search = embedded ? (searchProp ?? '') : debouncedSearchInput;
   const pageSize = embedded ? (pageSizeProp ?? 25) : 25;
+  const status = embedded ? (statusProp ?? '1') : internalStatus;
+  const branch = embedded ? (branchProp ?? '') : internalBranch;
+  const setStatus = embedded ? (onStatusChange ?? (() => {})) : setInternalStatus;
+  const setBranch = embedded ? (onBranchChange ?? (() => {})) : setInternalBranch;
 
   useEffect(() => {
     setPage(1);
@@ -61,6 +79,7 @@ export default function EmployeesPage({ embedded = false, search: searchProp, pa
   const { data: branches = [] } = useQuery<BranchOption[]>({
     queryKey: ['setup/branches'],
     queryFn: () => fetch('/api/setup/branches').then((r) => r.json()),
+    enabled: !embedded,
   });
 
   const { data, isLoading } = useQuery({
@@ -84,6 +103,7 @@ export default function EmployeesPage({ embedded = false, search: searchProp, pa
     {
       id: 'slNo',
       header: 'Sl No',
+      meta: { className: 'w-12' },
       cell: ({ row, table }) => {
         const { pageIndex, pageSize } = table.getState().pagination;
         return <span className="text-slate-400">{pageIndex * pageSize + row.index + 1}</span>;
@@ -93,11 +113,12 @@ export default function EmployeesPage({ embedded = false, search: searchProp, pa
       id: 'name',
       header: 'Employee',
       accessorFn: (row) => `${row.first_name} ${row.last_name}`,
+      meta: { className: 'w-[26%]' },
       cell: ({ row }) => (
         <div className="flex items-center gap-2.5">
           <Avatar name={`${row.original.first_name} ${row.original.last_name}`} />
           <div className="leading-tight">
-            <p className="font-medium text-[#0F172A]">
+            <p className="font-semibold text-sm text-[#0F172A]">
               {row.original.first_name} {row.original.last_name}
             </p>
             <p className="text-xs text-slate-400 mt-0.5">EMP {row.original.emp_id}</p>
@@ -105,23 +126,36 @@ export default function EmployeesPage({ embedded = false, search: searchProp, pa
         </div>
       ),
     },
-    { accessorKey: 'branch_name', header: 'Branch' },
+    {
+      accessorKey: 'branch_name',
+      header: 'Branch',
+      meta: { className: 'w-[14%]' },
+      cell: ({ getValue }) => <span className="text-slate-600">{String(getValue() ?? '')}</span>,
+    },
     {
       accessorKey: 'dept_name',
       header: 'Department',
-      cell: ({ getValue }) => <span className="font-medium text-[#0F172A]">{String(getValue() ?? '')}</span>,
+      meta: { className: 'w-[15%]' },
+      cell: ({ getValue }) => <span className="text-slate-600">{String(getValue() ?? '')}</span>,
     },
     {
       accessorKey: 'desig_name',
       header: 'Designation',
+      meta: { className: 'w-[15%]' },
       cell: ({ getValue }) => <span className="text-[#64748B]">{String(getValue() ?? '')}</span>,
     },
     {
       accessorKey: 'joining_date',
       header: 'Joining Date',
-      cell: ({ getValue }) => formatDate(String(getValue() ?? '')),
+      meta: { className: 'w-[13%]' },
+      cell: ({ getValue }) => <span className="text-slate-600">{formatDate(String(getValue() ?? ''))}</span>,
     },
-    { accessorKey: 'mobile_no', header: 'Mobile' },
+    {
+      accessorKey: 'mobile_no',
+      header: 'Mobile',
+      meta: { className: 'w-[12%]' },
+      cell: ({ getValue }) => <span className="text-[#64748B]">{String(getValue() ?? '')}</span>,
+    },
   ];
 
   const selectedEmployee = data?.data?.find((e: Employee) => e.emp_pkey === selectedEmpPkey);
@@ -165,52 +199,52 @@ export default function EmployeesPage({ embedded = false, search: searchProp, pa
         </div>
       )}
 
-      <div className="sticky top-0 z-20 glass-card-strong rounded-2xl p-3 mb-4 flex flex-wrap items-center gap-3">
-        {!embedded && (
+      {!embedded && (
+        <div className="sticky top-0 z-20 glass-card-strong rounded-2xl p-3 mb-4 flex flex-wrap items-center gap-3">
           <div className="relative max-w-sm flex-1 min-w-[220px]">
             <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
             <input
               type="text"
-              placeholder="Search by name or employee ID"
+              placeholder="Search employees by name or ID"
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
-              className="w-full h-11 pl-10 pr-3 bg-white/80 border border-slate-200 rounded-full text-sm focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/40"
+              className="w-full h-10 pl-10 pr-3 bg-white/80 border border-slate-200 rounded-full text-sm focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/40"
             />
           </div>
-        )}
 
-        <div className="flex items-center gap-1 text-sm">
-          {[
-            { value: '1', label: 'Active' },
-            { value: '0', label: 'Inactive' },
-            { value: '2', label: 'Resigned' },
-          ].map((opt) => (
-            <button
-              key={opt.value}
-              onClick={() => setStatus(opt.value)}
-              className={cn(
-                'px-3 py-2 rounded-xl transition-all duration-[180ms] font-medium',
-                status === opt.value
-                  ? 'bg-[color:var(--color-success)]/10 text-[color:var(--color-success)]'
-                  : 'bg-white/80 text-slate-500 hover:bg-white border border-slate-200'
-              )}
-            >
-              {opt.label}
-            </button>
-          ))}
+          <div className="flex items-center gap-1 text-sm">
+            {[
+              { value: '1', label: 'Active' },
+              { value: '0', label: 'Inactive' },
+              { value: '2', label: 'Resigned' },
+            ].map((opt) => (
+              <button
+                key={opt.value}
+                onClick={() => setStatus(opt.value)}
+                className={cn(
+                  'px-3 py-2 rounded-xl transition-all duration-[180ms] font-medium',
+                  status === opt.value
+                    ? 'bg-[color:var(--color-success)]/10 text-[color:var(--color-success)]'
+                    : 'bg-white/80 text-slate-500 hover:bg-white border border-slate-200'
+                )}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+
+          <select
+            value={branch}
+            onChange={(e) => setBranch(e.target.value)}
+            className="px-3 py-2 bg-white/80 border border-slate-200 rounded-xl text-sm text-slate-600 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/40"
+          >
+            <option value="">All Branches</option>
+            {branches.map((b) => (
+              <option key={b.branch_code} value={b.branch_code}>{b.branch_name}</option>
+            ))}
+          </select>
         </div>
-
-        <select
-          value={branch}
-          onChange={(e) => setBranch(e.target.value)}
-          className="px-3 py-2 bg-white/80 border border-slate-200 rounded-xl text-sm text-slate-600 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/40"
-        >
-          <option value="">All Branches</option>
-          {branches.map((b) => (
-            <option key={b.branch_code} value={b.branch_code}>{b.branch_name}</option>
-          ))}
-        </select>
-      </div>
+      )}
 
       <DataTable
         key={pageSize}

@@ -36,9 +36,12 @@ body {
   color: var(--foreground);
 }
 
-/* App shell — near-white at a glance, no gradient wash */
+/* App shell — near-white at a glance; corner gradient is deliberately almost imperceptible */
 .app-shell-bg {
-  background: var(--background);
+  background:
+    radial-gradient(680px circle at 4% -4%, rgba(33, 150, 243, 0.035), transparent 60%),
+    radial-gradient(680px circle at 100% 0%, rgba(139, 92, 246, 0.03), transparent 60%),
+    var(--background);
 }
 
 /* Plain surface — for content that should NOT read as glass (e.g. tables) */
@@ -120,8 +123,8 @@ body {
 }
 
 @keyframes float-in {
-  from { opacity: 0; transform: translate(-50%, 8px); }
-  to { opacity: 1; transform: translate(-50%, 0); }
+  from { opacity: 0; translate: -50% 8px; }
+  to { opacity: 1; translate: -50% 0; }
 }
 
 .animate-fade-in {

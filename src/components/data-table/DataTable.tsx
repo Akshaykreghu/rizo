@@ -101,7 +101,8 @@ export function DataTable<TData>({
                       key={header.id}
                       className={cn(
                         'px-4 py-3 text-left text-[12px] font-semibold text-[#64748B] uppercase tracking-wide whitespace-nowrap',
-                        header.column.getCanSort() && 'cursor-pointer select-none hover:text-[#0F172A]'
+                        header.column.getCanSort() && 'cursor-pointer select-none hover:text-[#0F172A]',
+                        (header.column.columnDef.meta as { className?: string } | undefined)?.className
                       )}
                       onClick={header.column.getToggleSortingHandler()}
                     >
@@ -154,7 +155,13 @@ export function DataTable<TData>({
                     onClick={() => onRowClick?.(row.original)}
                   >
                     {row.getVisibleCells().map((cell) => (
-                      <td key={cell.id} className="px-4 py-3 text-[#0F172A]">
+                      <td
+                        key={cell.id}
+                        className={cn(
+                          'px-4 py-3 text-[#0F172A]',
+                          (cell.column.columnDef.meta as { className?: string } | undefined)?.className
+                        )}
+                      >
                         {flexRender(cell.column.columnDef.cell, cell.getContext())}
                       </td>
                     ))}
