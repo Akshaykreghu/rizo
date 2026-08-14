@@ -151,7 +151,7 @@ export async function POST(
 
     await connection.execute(
       `INSERT INTO qualifcations (emp_fkey, course, university, duration, mark, status)
-       SELECT ?, course, university, duration, mark, 1 FROM education WHERE emp_join_fkey = ? AND status = 1`,
+       SELECT ?, course, university, duration, mark, 1 FROM Education WHERE emp_join_fkey = ? AND status = 1`,
       [empPkey, id]
     );
     await connection.execute(

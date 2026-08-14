@@ -29,7 +29,7 @@ export async function GET(
   const [[joinRows], [documents], [education], [experience], [family]] = await Promise.all([
     pool.execute<RowDataPacket[]>('SELECT * FROM emp_join WHERE emp_join_pkey = ?', [id]),
     pool.execute<RowDataPacket[]>('SELECT * FROM emp_documents WHERE emp_join_fkey = ? AND status = 1', [id]),
-    pool.execute<RowDataPacket[]>('SELECT * FROM education WHERE emp_join_fkey = ? AND status = 1', [id]),
+    pool.execute<RowDataPacket[]>('SELECT * FROM Education WHERE emp_join_fkey = ? AND status = 1', [id]),
     pool.execute<RowDataPacket[]>('SELECT * FROM work_experience WHERE emp_join_fkey = ? AND status = 1', [id]),
     pool.execute<RowDataPacket[]>("SELECT * FROM family WHERE emp_join_fkey = ? AND status = 'Y'", [id]),
   ]);

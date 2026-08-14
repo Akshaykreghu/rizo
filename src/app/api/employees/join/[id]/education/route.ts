@@ -18,7 +18,7 @@ export async function POST(
   const pool = await getCompanyPool(session.user.companyCode);
 
   const [result] = await pool.execute<ResultSetHeader>(
-    `INSERT INTO education (emp_join_fkey, course, university, duration, mark, status)
+    `INSERT INTO Education (emp_join_fkey, course, university, duration, mark, status)
      VALUES (?, ?, ?, ?, ?, 1)`,
     [id, body.course, body.university, body.duration, body.mark]
   );

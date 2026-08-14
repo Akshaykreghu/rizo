@@ -16,7 +16,7 @@ export async function DELETE(
   const pool = await getCompanyPool(session.user.companyCode);
 
   await pool.execute(
-    'DELETE FROM education WHERE education_pkey = ? AND emp_join_fkey = ?',
+    'DELETE FROM Education WHERE education_pkey = ? AND emp_join_fkey = ?',
     [rowId, id]
   );
 
