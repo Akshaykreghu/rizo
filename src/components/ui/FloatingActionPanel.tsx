@@ -7,7 +7,7 @@ type ActionVariant = 'primary' | 'success' | 'danger' | 'default';
 const VARIANT_CLASSES: Record<ActionVariant, string> = {
   primary: 'bg-[color:var(--color-primary)] text-white hover:scale-[1.03] shadow-sm',
   success: 'bg-[color:var(--color-success)] text-white hover:opacity-90',
-  danger: 'text-[color:var(--color-danger)] hover:bg-[color:var(--color-danger)]/10',
+  danger: 'text-[#94A3B8] hover:text-[color:var(--color-danger)] hover:bg-[color:var(--color-danger)]/10',
   default: 'text-slate-600 hover:bg-slate-100',
 };
 

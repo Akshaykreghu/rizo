@@ -264,7 +264,7 @@ export function Sidebar() {
                     expanded
                       ? 'w-full gap-3 px-3 py-2.5 rounded-xl text-sm font-medium'
                       : 'w-11 h-11 rounded-2xl justify-center',
-                    active ? 'nav-pill-active text-[color:var(--color-primary)]' : 'text-slate-400 hover:bg-slate-100/80 hover:text-slate-700'
+                    active ? 'nav-pill-active text-[#1687E8]' : 'text-slate-400 hover:bg-slate-100/80 hover:text-slate-700'
                   )}
                 >
                   <Icon className="w-[22px] h-[22px] flex-shrink-0" strokeWidth={1.75} />
@@ -289,7 +289,7 @@ export function Sidebar() {
                   onClick={() => toggleGroup(item.label)}
                   className={cn(
                     'w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-[180ms]',
-                    hasActiveChild ? 'nav-pill-active text-[color:var(--color-primary)]' : 'text-slate-400 hover:bg-slate-100/80 hover:text-slate-700'
+                    hasActiveChild ? 'nav-pill-active text-[#1687E8]' : 'text-slate-400 hover:bg-slate-100/80 hover:text-slate-700'
                   )}
                 >
                   <Icon className="w-[22px] h-[22px] flex-shrink-0" strokeWidth={1.75} />
@@ -324,7 +324,7 @@ export function Sidebar() {
                 aria-label={item.label}
                 className={cn(
                   'w-11 h-11 rounded-2xl flex items-center justify-center transition-all duration-[180ms]',
-                  hasActiveChild ? 'nav-pill-active text-[color:var(--color-primary)]' : 'text-slate-400 hover:bg-slate-100/80 hover:text-slate-700'
+                  hasActiveChild ? 'nav-pill-active text-[#1687E8]' : 'text-slate-400 hover:bg-slate-100/80 hover:text-slate-700'
                 )}
               >
                 <Icon className="w-[22px] h-[22px]" strokeWidth={1.75} />

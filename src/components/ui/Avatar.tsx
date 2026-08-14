@@ -1,11 +1,11 @@
 import { cn } from '@/lib/utils';
 
 const PALETTE = [
-  'bg-[#2196F3]/12 text-[#1976D2]',
-  'bg-[#22C55E]/12 text-[#16A34A]',
-  'bg-[#8B5CF6]/12 text-[#7C3AED]',
-  'bg-[#FACC15]/18 text-[#A16207]',
-  'bg-[#EC4899]/12 text-[#DB2777]',
+  'bg-[#E8F4FF] text-[#1687E8]',
+  'bg-[#E9F9F1] text-[#16945B]',
+  'bg-[#FFF8DC] text-[#C89B00]',
+  'bg-[#F1ECFF] text-[#7041D8]',
+  'bg-[#FFF0F6] text-[#C93673]',
 ];
 
 function hashSeed(seed: string) {

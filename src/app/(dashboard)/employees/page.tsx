@@ -11,6 +11,7 @@ import { FloatingActionPanel, type FloatingAction } from '@/components/ui/Floati
 import { EmployeeDetail } from '@/components/employees/EmployeeDetail';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { cn, formatDate } from '@/lib/utils';
+import { STATUS_FILTERS } from '@/lib/statusFilters';
 import type { ColumnDef } from '@tanstack/react-table';
 
 interface Employee {
@@ -213,18 +214,14 @@ export default function EmployeesPage({
           </div>
 
           <div className="flex items-center gap-1 text-sm">
-            {[
-              { value: '1', label: 'Active' },
-              { value: '0', label: 'Inactive' },
-              { value: '2', label: 'Resigned' },
-            ].map((opt) => (
+            {STATUS_FILTERS.map((opt) => (
               <button
                 key={opt.value}
                 onClick={() => setStatus(opt.value)}
                 className={cn(
                   'px-3 py-2 rounded-xl transition-all duration-[180ms] font-medium',
                   status === opt.value
-                    ? 'bg-[color:var(--color-success)]/10 text-[color:var(--color-success)]'
+                    ? opt.selectedClass
                     : 'bg-white/80 text-slate-500 hover:bg-white border border-slate-200'
                 )}
               >

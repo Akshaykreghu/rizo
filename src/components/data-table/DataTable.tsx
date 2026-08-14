@@ -93,7 +93,7 @@ export function DataTable<TData>({
       <div className="surface-card rounded-2xl overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm border-separate border-spacing-0">
-            <thead className="sticky top-0 z-10 bg-white border-b border-slate-100">
+            <thead className="sticky top-0 z-10 bg-[#F8FAFC]/80 backdrop-blur-sm border-b border-slate-200/50">
               {table.getHeaderGroups().map((headerGroup) => (
                 <tr key={headerGroup.id}>
                   {headerGroup.headers.map((header) => (
@@ -149,7 +149,7 @@ export function DataTable<TData>({
                       i % 2 === 1 && !selected && 'bg-slate-900/[0.015]',
                       selected
                         ? 'bg-[color:var(--color-primary)]/[0.07] shadow-[inset_2px_0_0_var(--color-primary)]'
-                        : 'hover:bg-[color:var(--color-primary)]/[0.035]',
+                        : 'hover:bg-[color:var(--color-primary)]/[0.025]',
                       onRowClick && 'cursor-pointer'
                     )}
                     onClick={() => onRowClick?.(row.original)}
@@ -209,7 +209,7 @@ export function DataTable<TData>({
                     'w-8 h-8 rounded-lg text-sm font-medium transition-all duration-[180ms]',
                     n === pageIndex + 1
                       ? 'bg-[color:var(--color-primary)] text-white shadow-sm'
-                      : 'text-slate-500 hover:bg-slate-100'
+                      : 'text-slate-500 hover:bg-[color:var(--color-primary-light)] hover:text-[#1687E8]'
                   )}
                 >
                   {n}

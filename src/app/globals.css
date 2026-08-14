@@ -1,22 +1,49 @@
 @import "tailwindcss";
 
 :root {
-  --background: #f7fafc;
+  --background: #f6f9fc;
   --foreground: #0f172a;
 
+  /* Primary — logo blue */
   --color-primary: #2196f3;
-  --color-success: #22c55e;
+  --color-primary-dark: #1478d4;
+  --color-primary-light: #e8f4ff;
+  --color-primary-soft: rgba(33, 150, 243, 0.10);
+
+  /* Success — logo green */
+  --color-success: #22b573;
+  --color-success-dark: #16945b;
+  --color-success-light: #e9f9f1;
+  --color-success-soft: rgba(34, 181, 115, 0.10);
+
+  /* Secondary — logo purple */
   --color-accent: #8b5cf6;
-  --color-highlight: #facc15;
-  --color-danger: #ec4899;
-  --color-text-secondary: #64748b;
+  --color-accent-dark: #7041d8;
+  --color-accent-light: #f1ecff;
+  --color-accent-soft: rgba(139, 92, 246, 0.08);
+
+  /* Logo yellow — warnings / highlights only */
+  --color-highlight: #f5c842;
+  --color-highlight-dark: #c89b00;
+  --color-highlight-light: #fff8dc;
+
+  /* Logo pink/magenta — sparing accent + destructive-on-hover */
+  --color-danger: #e83e8c;
+  --color-danger-dark: #c93673;
+  --color-danger-light: #fff0f6;
+  --color-danger-soft: rgba(232, 62, 140, 0.08);
+
+  --color-text-primary: #0f172a;
+  --color-text-secondary: #475569;
+  --color-text-muted: #94a3b8;
+  --color-text-disabled: #cbd5e1;
 
   --glass-surface: rgba(255, 255, 255, 0.72);
   --glass-surface-strong: rgba(255, 255, 255, 0.85);
-  --glass-border: rgba(255, 255, 255, 0.55);
+  --glass-border: rgba(255, 255, 255, 0.65);
 
   --surface: #ffffff;
-  --surface-border: rgba(15, 23, 42, 0.06);
+  --surface-border: #e2e8f0;
 }
 
 @theme inline {
@@ -36,11 +63,12 @@ body {
   color: var(--foreground);
 }
 
-/* App shell — near-white at a glance; corner gradient is deliberately almost imperceptible */
+/* App shell — near-white at a glance; ambient brand glow is deliberately almost imperceptible */
 .app-shell-bg {
   background:
-    radial-gradient(680px circle at 4% -4%, rgba(33, 150, 243, 0.035), transparent 60%),
-    radial-gradient(680px circle at 100% 0%, rgba(139, 92, 246, 0.03), transparent 60%),
+    radial-gradient(680px circle at 4% -4%, rgba(33, 150, 243, 0.045), transparent 60%),
+    radial-gradient(680px circle at 100% 0%, rgba(139, 92, 246, 0.035), transparent 60%),
+    radial-gradient(620px circle at 50% 100%, rgba(34, 181, 115, 0.025), transparent 60%),
     var(--background);
 }
 
@@ -81,7 +109,7 @@ body {
 
 /* Active nav pill — soft brand gradient at low opacity */
 .nav-pill-active {
-  background: linear-gradient(90deg, rgba(33, 150, 243, 0.08), rgba(139, 92, 246, 0.08));
+  background: linear-gradient(135deg, rgba(33, 150, 243, 0.10), rgba(139, 92, 246, 0.06));
   box-shadow: 0 0 0 1px rgba(33, 150, 243, 0.12), 0 0 16px -4px rgba(33, 150, 243, 0.25);
 }
 

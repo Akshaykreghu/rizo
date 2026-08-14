@@ -12,6 +12,7 @@ import { JoinDetail } from '@/components/employees/JoinDetail';
 import { NewJoinForm } from '@/components/employees/NewJoinForm';
 import { OnboardForm } from '@/components/employees/OnboardForm';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
+import { STATUS_FILTERS } from '@/lib/statusFilters';
 import type { ColumnDef } from '@tanstack/react-table';
 import EmployeesPage from '../page';
 
@@ -248,9 +249,9 @@ export default function EmployeeJoinPage() {
     { label: 'Joining', value: joiningCount?.total, icon: UserPlus, color: 'accent' as const },
   ];
   const kpiColorClass: Record<'primary' | 'success' | 'accent', string> = {
-    primary: 'bg-[color:var(--color-primary)]/10 text-[color:var(--color-primary)]',
-    success: 'bg-[color:var(--color-success)]/10 text-[color:var(--color-success)]',
-    accent: 'bg-[color:var(--color-accent)]/10 text-[color:var(--color-accent)]',
+    primary: 'bg-[color:var(--color-primary-light)] text-[color:var(--color-primary)]',
+    success: 'bg-[color:var(--color-success-light)] text-[color:var(--color-success)]',
+    accent: 'bg-[color:var(--color-accent-light)] text-[color:var(--color-accent)]',
   };
 
   return (
@@ -356,18 +357,14 @@ export default function EmployeeJoinPage() {
           {tab === 'all' && (
             <>
               <div className="flex items-center gap-1 text-sm">
-                {[
-                  { value: '1', label: 'Active' },
-                  { value: '0', label: 'Inactive' },
-                  { value: '2', label: 'Resigned' },
-                ].map((opt) => (
+                {STATUS_FILTERS.map((opt) => (
                   <button
                     key={opt.value}
                     onClick={() => setAllStatus(opt.value)}
                     className={cn(
                       'px-3 py-2 rounded-xl transition-all duration-[180ms] font-medium',
                       allStatus === opt.value
-                        ? 'bg-[color:var(--color-success)]/10 text-[color:var(--color-success)]'
+                        ? opt.selectedClass
                         : 'bg-white/80 text-slate-500 hover:bg-white border border-slate-200'
                     )}
                   >
