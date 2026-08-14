@@ -1,9 +1,10 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, ArrowRightCircle } from 'lucide-react';
+import { Check } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import { Avatar } from '@/components/ui/Avatar';
 import { RepeatableRows } from '@/components/employees/RepeatableRows';
 import { DocumentUploadField } from '@/components/employees/DocumentUploadField';
 import { FileUploadField } from '@/components/employees/FileUploadField';
@@ -23,6 +24,17 @@ const DATE_KEYS = new Set(['date_of_birth']);
 
 const DOCUMENT_TYPES = ['Aadhaar', 'PAN', 'Passport', 'Driving License', 'Voter ID', 'Educational Certificate', 'Offer Letter', 'Relieving Letter', 'Other'];
 
+const STEPS = [
+  { key: 'personal', label: 'Personal', title: 'Personal Details', subtitle: 'Basic personal information about the employee.' },
+  { key: 'statutory', label: 'Statutory', title: 'Statutory Details', subtitle: 'PF, ESI, tax and compliance information.' },
+  { key: 'bank', label: 'Bank', title: 'Bank Details', subtitle: 'Employee banking and payment information.' },
+  { key: 'additional', label: 'Additional', title: 'Additional Details', subtitle: 'Documents, education, experience and family information.' },
+] as const;
+
+const INPUT_CLASS = 'w-full px-3.5 py-2.5 border border-slate-200 rounded-xl text-sm text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/40 focus:border-[color:var(--color-primary)]/40 transition-colors duration-[180ms]';
+const ERROR_INPUT_CLASS = 'border-[color:var(--color-danger)] focus:ring-[color:var(--color-danger)]/25 focus:border-[color:var(--color-danger)]';
+const LABEL_CLASS = 'block text-[13.5px] font-medium text-slate-600 mb-2';
+
 function toFormState(join: Record<string, string>): Record<string, string> {
   const form: Record<string, string> = { ...join };
   for (const key of DATE_KEYS) {
@@ -37,14 +49,22 @@ interface JoinDetailProps {
   onBack: () => void;
   /** Set to false to hide the "Back" link, e.g. when a modal already provides a close control. */
   showBackLink?: boolean;
+  /** Reports whether there are unsaved changes, so a host modal can guard against closing. */
+  onDirtyChange?: (dirty: boolean) => void;
+  /** Called once the final step has been saved successfully. Defaults to onBack. */
+  onFinished?: () => void;
 }
 
-export function JoinDetail({ id, onBack, showBackLink = true }: JoinDetailProps) {
-  const router = useRouter();
+export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onFinished }: JoinDetailProps) {
   const queryClient = useQueryClient();
   const [form, setForm] = useState<Record<string, string>>({});
+  const [savedSnapshot, setSavedSnapshot] = useState('');
   const [docFile, setDocFile] = useState('');
-  const [validationError, setValidationError] = useState('');
+  const [step, setStep] = useState(0);
+  const [completed, setCompleted] = useState<Set<number>>(new Set());
+  const [direction, setDirection] = useState<'forward' | 'back'>('forward');
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const stepRef = useRef<HTMLDivElement>(null);
 
   const { data, isLoading, isError } = useQuery<JoinDetailData>({
     queryKey: ['employees/join', id],
@@ -61,8 +81,23 @@ export function JoinDetail({ id, onBack, showBackLink = true }: JoinDetailProps)
   });
 
   useEffect(() => {
-    if (data?.join) setForm(toFormState(data.join));
+    if (data?.join) {
+      const initial = toFormState(data.join);
+      setForm(initial);
+      setSavedSnapshot(JSON.stringify(initial));
+    }
   }, [data]);
+
+  const isDirty = savedSnapshot !== '' && JSON.stringify(form) !== savedSnapshot;
+
+  useEffect(() => {
+    onDirtyChange?.(isDirty);
+  }, [isDirty, onDirtyChange]);
+
+  useEffect(() => {
+    const el = stepRef.current?.querySelector<HTMLElement>('input, select, textarea, button');
+    el?.focus();
+  }, [step]);
 
   const savePersonal = useMutation({
     mutationFn: () => fetch(`/api/employees/join/${id}`, {
@@ -83,11 +118,12 @@ export function JoinDetail({ id, onBack, showBackLink = true }: JoinDetailProps)
 
   function checkbox(key: string, label: string) {
     return (
-      <label key={key} className="flex items-center gap-2 text-sm text-gray-700">
+      <label key={key} className="flex items-center gap-2 text-sm text-slate-600">
         <input
           type="checkbox"
           checked={form[key] === 'Y'}
           onChange={(e) => setForm((prev) => ({ ...prev, [key]: e.target.checked ? 'Y' : 'N' }))}
+          className="accent-[color:var(--color-primary)]"
         />
         {label}
       </label>
@@ -113,6 +149,48 @@ export function JoinDetail({ id, onBack, showBackLink = true }: JoinDetailProps)
     };
   }
 
+  function goToStep(target: number) {
+    setDirection(target > step ? 'forward' : 'back');
+    setStep(target);
+  }
+
+  function saveAndContinue() {
+    if (step === 0) {
+      const errors = {
+        date_of_birth: dobError(form.date_of_birth ?? '') ?? '',
+        mobile_no: mobileError(form.mobile_no ?? '') ?? '',
+        id_card: aadhaarError(form.id_card ?? '') ?? '',
+      };
+      if (errors.date_of_birth || errors.mobile_no || errors.id_card) {
+        setFieldErrors(errors);
+        return;
+      }
+    }
+    setFieldErrors({});
+    savePersonal.mutate(undefined, {
+      onSuccess: () => {
+        setSavedSnapshot(JSON.stringify(form));
+        setCompleted((prev) => new Set(prev).add(step));
+        if (step < STEPS.length - 1) goToStep(step + 1);
+      },
+    });
+  }
+
+  function finish() {
+    savePersonal.mutate(undefined, {
+      onSuccess: () => {
+        setSavedSnapshot(JSON.stringify(form));
+        setCompleted((prev) => new Set(prev).add(step));
+        (onFinished ?? onBack)();
+      },
+    });
+  }
+
+  function FieldError({ children }: { children?: string }) {
+    if (!children) return null;
+    return <p className="text-xs text-[color:var(--color-danger)] mt-1.5">{children}</p>;
+  }
+
   if (isError) {
     return (
       <div className="text-sm">
@@ -125,301 +203,392 @@ export function JoinDetail({ id, onBack, showBackLink = true }: JoinDetailProps)
   }
   if (isLoading || !data) return <p className="text-sm text-gray-500">Loading…</p>;
 
+  const currentStep = STEPS[step];
+  const isFirst = step === 0;
+  const isLast = step === STEPS.length - 1;
+  const embedded = !showBackLink;
+
   return (
-    <div>
-      {showBackLink && (
-        <button
-          onClick={onBack}
-          className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 mb-5 transition-colors"
-        >
-          <ArrowLeft className="w-4 h-4" /> Back
-        </button>
-      )}
-
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-semibold text-gray-900">
-          {data.join.first_name} {data.join.last_name}
-        </h1>
-        <button
-          onClick={() => router.push(`/employees/join/${id}/onboard`)}
-          className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
-        >
-          <ArrowRightCircle className="w-4 h-4" /> Continue Onboarding
-        </button>
-      </div>
-
-      <div className="bg-white rounded-xl border border-gray-200 p-6 max-w-3xl space-y-6">
-        <section>
-          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Personal Details</h2>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="label">First Name</label>
-              <input className="input" {...f('first_name')} />
-            </div>
-            <div>
-              <label className="label">Last Name</label>
-              <input className="input" {...f('last_name')} />
-            </div>
-            <div>
-              <label className="label">Date of Birth</label>
-              <input type="date" max={new Date().toISOString().slice(0, 10)} className="input" {...f('date_of_birth')} />
-            </div>
-            <div>
-              <label className="label">Gender</label>
-              <select className="input" {...f('classification')}>
-                <option value="">Select gender</option>
-                <option value="male">Male</option>
-                <option value="female">Female</option>
-                <option value="others">Other</option>
-              </select>
-            </div>
-            <div>
-              <label className="label">Mobile</label>
-              <input type="tel" maxLength={10} className="input" {...f('mobile_no')} />
-            </div>
-            <div>
-              <label className="label">Email</label>
-              <input type="email" className="input" {...f('email')} />
-            </div>
-            <div>
-              <label className="label">Aadhaar / ID Card</label>
-              <input maxLength={12} className="input" {...f('id_card')} />
-            </div>
-            <div>
-              <label className="label">Blood Group</label>
-              <select className="input" {...f('blood')}>
-                <option value="">Select blood group</option>
-                {['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'].map((bg) => (
-                  <option key={bg} value={bg}>{bg}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="label">Marital Status</label>
-              <select className="input" {...f('maritual_status')}>
-                <option value="">Select status</option>
-                <option value="Single">Single</option>
-                <option value="Married">Married</option>
-                <option value="Divorced">Divorced</option>
-                <option value="Widowed">Widowed</option>
-              </select>
-            </div>
-            <div>
-              <label className="label">Nationality</label>
-              <select className="input" {...f('nationality_id')}>
-                <option value="">Select nationality</option>
-                {nationalities.map((n) => <option key={n.id} value={n.id}>{n.country_name}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="label">Country of Origin</label>
-              <select className="input" {...f('country_origin')}>
-                <option value="">Select country</option>
-                {nationalities.map((n) => <option key={n.id} value={n.id}>{n.country_name}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="label">Guardian Name</label>
-              <input className="input" {...f('guradian')} />
-            </div>
-            <div>
-              <label className="label">Relation to Guardian</label>
-              <input className="input" {...f('relation_guardian')} />
-            </div>
-          </div>
-          <div className="mt-4">
-            <label className="label">Address</label>
-            <textarea className="input" rows={2} value={form.address ?? ''} onChange={(e) => setForm((p) => ({ ...p, address: e.target.value }))} />
-          </div>
-          <div className="grid grid-cols-3 gap-4 mt-4">
-            <div>
-              <label className="label">District</label>
-              <input className="input" {...f('district')} />
-            </div>
-            <div>
-              <label className="label">State</label>
-              <input className="input" {...f('state')} />
-            </div>
-            <div>
-              <label className="label">Pincode</label>
-              <input className="input" {...f('pincode')} />
-            </div>
-          </div>
-          <div className="mt-4">
-            <FileUploadField
-              label="Photo"
-              value={form.profile_image_url ?? ''}
-              onChange={(path) => setForm((prev) => ({ ...prev, profile_image_url: path }))}
-            />
-          </div>
-        </section>
-
-        <section>
-          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Statutory Details</h2>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="label">PAN Number</label>
-              <input className="input" {...f('pan_no')} placeholder="ABCDE1234D" />
-            </div>
-            <div>
-              <label className="label">PF Number</label>
-              <input className="input" {...f('pf')} />
-            </div>
-            <div>
-              <label className="label">UAN (Company PF)</label>
-              <input className="input" {...f('company_pf')} />
-            </div>
-            <div>
-              <label className="label">Previous PF Member ID</label>
-              <input className="input" {...f('previous_member_id')} />
-            </div>
-            <div>
-              <label className="label">ESIC Number</label>
-              <input className="input" {...f('esi')} />
-            </div>
-            <div>
-              <label className="label">ESI Dispensary</label>
-              <input className="input" {...f('esi_dispensary')} />
-            </div>
-            <div>
-              <label className="label">LWF Code</label>
-              <input className="input" {...f('lwf_code')} />
-            </div>
-            <div>
-              <label className="label">WPS Code</label>
-              <input className="input" {...f('wps_code')} />
-            </div>
-          </div>
-          <div className="grid grid-cols-4 gap-4 mt-4">
-            {checkbox('eps', 'EPS Eligibility')}
-            {checkbox('international_worker', 'International Worker')}
-            {checkbox('physical_handicap', 'Physical Handicap')}
-            {checkbox('locomotive', 'Locomotive Disability')}
-            {checkbox('hearing', 'Hearing Disability')}
-            {checkbox('visual', 'Visual Disability')}
-          </div>
-        </section>
-
-        <section>
-          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Bank Details</h2>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="label">Bank Name</label>
-              <input className="input" {...f('bank')} />
-            </div>
-            <div>
-              <label className="label">Bank Branch</label>
-              <input className="input" {...f('bank_branch')} />
-            </div>
-            <div>
-              <label className="label">IFSC Code</label>
-              <input className="input" {...f('ifsc_code')} />
-            </div>
-            <div>
-              <label className="label">Account Number</label>
-              <input className="input" {...f('account_no')} />
-            </div>
-          </div>
-          {validationError && <p className="text-red-500 text-sm mt-3">{validationError}</p>}
+    <div className={cn('flex flex-col -m-6', embedded && 'max-h-[calc(90vh-3rem)]')}>
+      {/* Sticky header + stepper */}
+      <div className="flex-shrink-0 bg-white/95 backdrop-blur-sm border-b border-slate-100 px-6 pt-6 pb-4 rounded-t-2xl">
+        {showBackLink && (
           <button
-            onClick={() => {
-              const err = dobError(form.date_of_birth ?? '') || mobileError(form.mobile_no ?? '') || aadhaarError(form.id_card ?? '');
-              if (err) { setValidationError(err); return; }
-              setValidationError('');
-              savePersonal.mutate();
-            }}
-            disabled={savePersonal.isPending}
-            className="mt-5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+            onClick={onBack}
+            className="text-sm text-slate-500 hover:text-slate-800 mb-3 transition-colors duration-[180ms]"
           >
-            {savePersonal.isPending ? 'Saving…' : 'Save Details'}
+            ← Back
           </button>
-        </section>
-
-        <section>
-          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Documents</h2>
-          <div className="mb-3">
-            <label className="label">Upload file (attach before adding a row below)</label>
-            <DocumentUploadField value={docFile} onChange={setDocFile} />
+        )}
+        <div className="flex items-center gap-3 pr-14">
+          <Avatar name={`${data.join.first_name} ${data.join.last_name ?? ''}`} className="w-10 h-10 flex-shrink-0" />
+          <div className="min-w-0">
+            <h1 className="font-heading text-[20px] font-bold text-[#0F172A] tracking-tight leading-tight truncate">
+              {data.join.first_name} {data.join.last_name}
+            </h1>
+            <p className="text-[13px] text-slate-500 mt-0.5">Employee onboarding</p>
           </div>
-          <RepeatableRows
-            pkeyField="emp_doc_pkey"
-            rows={data.documents}
-            addLabel="Add document"
-            onAdd={addChild('documents')}
-            onRemove={removeChild('documents')}
-            fields={[
-              { key: 'document_type', label: 'Type', type: 'select', options: DOCUMENT_TYPES.map((d) => ({ value: d, label: d })) },
-              { key: 'document_number', label: 'Number' },
-              { key: 'name', label: 'Name on Document' },
-              { key: 'relation', label: 'Relation' },
-              { key: 'nationality', label: 'Nationality' },
-              { key: 'valid_from', label: 'Valid From', type: 'date' },
-              { key: 'valid_till', label: 'Valid Till', type: 'date' },
-            ]}
-          />
-        </section>
+        </div>
 
-        <section>
-          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Education</h2>
-          <RepeatableRows
-            pkeyField="education_pkey"
-            rows={data.education}
-            addLabel="Add education"
-            onAdd={addChild('education')}
-            onRemove={removeChild('education')}
-            fields={[
-              { key: 'course', label: 'Course' },
-              { key: 'university', label: 'University' },
-              { key: 'duration', label: 'Duration' },
-              { key: 'mark', label: 'Marks' },
-            ]}
-          />
-        </section>
-
-        <section>
-          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Work Experience</h2>
-          <RepeatableRows
-            pkeyField="experience_pkey"
-            rows={data.experience}
-            addLabel="Add experience"
-            onAdd={addChild('experience')}
-            onRemove={removeChild('experience')}
-            fields={[
-              { key: 'company', label: 'Company' },
-              { key: 'designation', label: 'Designation' },
-              { key: 'department', label: 'Department' },
-              { key: 'from_date', label: 'From', type: 'date' },
-              { key: 'to_date', label: 'To', type: 'date' },
-              { key: 'salary', label: 'Salary', type: 'number' },
-            ]}
-          />
-        </section>
-
-        <section>
-          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Family</h2>
-          <RepeatableRows
-            pkeyField="emp_family_pkey"
-            rows={data.family}
-            addLabel="Add family member"
-            onAdd={addChild('family')}
-            onRemove={removeChild('family')}
-            fields={[
-              { key: 'name', label: 'Name' },
-              { key: 'relation', label: 'Relation' },
-              { key: 'gender', label: 'Gender' },
-              { key: 'DOB', label: 'Date of Birth', type: 'date' },
-              { key: 'nationality', label: 'Nationality' },
-              { key: 'contact_number', label: 'Contact Number' },
-            ]}
-          />
-        </section>
+        <div className="flex items-center gap-1.5 mt-5 overflow-x-auto scroll-fade">
+          {STEPS.map((s, i) => {
+            const isCompleted = completed.has(i);
+            const isActive = i === step;
+            const clickable = isCompleted || isActive;
+            return (
+              <div key={s.key} className="flex items-center gap-1.5 flex-shrink-0">
+                <button
+                  type="button"
+                  disabled={!clickable}
+                  onClick={() => clickable && goToStep(i)}
+                  className={cn(
+                    'flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-[13px] font-medium whitespace-nowrap transition-colors duration-[180ms]',
+                    isActive
+                      ? 'bg-[color:var(--color-primary)]/10 text-[color:var(--color-primary)]'
+                      : isCompleted
+                        ? 'text-[color:var(--color-success)] hover:bg-[color:var(--color-success)]/10 cursor-pointer'
+                        : 'text-slate-400 cursor-default'
+                  )}
+                >
+                  <span
+                    className={cn(
+                      'w-[18px] h-[18px] rounded-full flex items-center justify-center text-[10px] font-semibold flex-shrink-0 transition-colors duration-[180ms]',
+                      isCompleted
+                        ? 'bg-[color:var(--color-success)] text-white'
+                        : isActive
+                          ? 'bg-[color:var(--color-primary)] text-white'
+                          : 'bg-slate-200 text-slate-500'
+                    )}
+                  >
+                    {isCompleted ? <Check className="w-2.5 h-2.5" strokeWidth={3} /> : i + 1}
+                  </span>
+                  {s.label}
+                </button>
+                {i < STEPS.length - 1 && <span className="w-4 h-px bg-slate-200 flex-shrink-0" />}
+              </div>
+            );
+          })}
+        </div>
       </div>
 
-      <style jsx>{`
-        .label { display: block; font-size: 0.875rem; font-weight: 500; color: #374151; margin-bottom: 0.25rem; }
-        .input { width: 100%; padding: 0.5rem 0.75rem; border: 1px solid #d1d5db; border-radius: 0.5rem; font-size: 0.875rem; outline: none; }
-        .input:focus { box-shadow: 0 0 0 2px #6366f1; border-color: transparent; }
-      `}</style>
+      {/* Step content */}
+      <div className="flex-1 overflow-y-auto scroll-fade px-6 py-6">
+        <div key={step} ref={stepRef} className={direction === 'forward' ? 'animate-step-right' : 'animate-step-left'}>
+          <h2 className="font-heading text-[20px] font-bold text-[#0F172A] tracking-tight">{currentStep.title}</h2>
+          <p className="text-[13.5px] text-slate-500 mt-1 mb-6">{currentStep.subtitle}</p>
+
+          {step === 0 && (
+            <div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-5">
+                <div>
+                  <label className={LABEL_CLASS}>First Name</label>
+                  <input className={INPUT_CLASS} {...f('first_name')} />
+                </div>
+                <div>
+                  <label className={LABEL_CLASS}>Last Name</label>
+                  <input className={INPUT_CLASS} {...f('last_name')} />
+                </div>
+                <div>
+                  <label className={LABEL_CLASS}>Date of Birth</label>
+                  <input
+                    type="date"
+                    max={new Date().toISOString().slice(0, 10)}
+                    className={cn(INPUT_CLASS, fieldErrors.date_of_birth && ERROR_INPUT_CLASS)}
+                    {...f('date_of_birth')}
+                  />
+                  <FieldError>{fieldErrors.date_of_birth}</FieldError>
+                </div>
+                <div>
+                  <label className={LABEL_CLASS}>Gender</label>
+                  <select className={INPUT_CLASS} {...f('classification')}>
+                    <option value="">Select gender</option>
+                    <option value="male">Male</option>
+                    <option value="female">Female</option>
+                    <option value="others">Other</option>
+                  </select>
+                </div>
+                <div>
+                  <label className={LABEL_CLASS}>Mobile</label>
+                  <input
+                    type="tel"
+                    maxLength={10}
+                    className={cn(INPUT_CLASS, fieldErrors.mobile_no && ERROR_INPUT_CLASS)}
+                    {...f('mobile_no')}
+                  />
+                  <FieldError>{fieldErrors.mobile_no}</FieldError>
+                </div>
+                <div>
+                  <label className={LABEL_CLASS}>Email</label>
+                  <input type="email" className={INPUT_CLASS} {...f('email')} />
+                </div>
+                <div>
+                  <label className={LABEL_CLASS}>Aadhaar / ID Card</label>
+                  <input
+                    maxLength={12}
+                    className={cn(INPUT_CLASS, fieldErrors.id_card && ERROR_INPUT_CLASS)}
+                    {...f('id_card')}
+                  />
+                  <FieldError>{fieldErrors.id_card}</FieldError>
+                </div>
+                <div>
+                  <label className={LABEL_CLASS}>Blood Group</label>
+                  <select className={INPUT_CLASS} {...f('blood')}>
+                    <option value="">Select blood group</option>
+                    {['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'].map((bg) => (
+                      <option key={bg} value={bg}>{bg}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className={LABEL_CLASS}>Marital Status</label>
+                  <select className={INPUT_CLASS} {...f('maritual_status')}>
+                    <option value="">Select status</option>
+                    <option value="Single">Single</option>
+                    <option value="Married">Married</option>
+                    <option value="Divorced">Divorced</option>
+                    <option value="Widowed">Widowed</option>
+                  </select>
+                </div>
+                <div>
+                  <label className={LABEL_CLASS}>Nationality</label>
+                  <select className={INPUT_CLASS} {...f('nationality_id')}>
+                    <option value="">Select nationality</option>
+                    {nationalities.map((n) => <option key={n.id} value={n.id}>{n.country_name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className={LABEL_CLASS}>Country of Origin</label>
+                  <select className={INPUT_CLASS} {...f('country_origin')}>
+                    <option value="">Select country</option>
+                    {nationalities.map((n) => <option key={n.id} value={n.id}>{n.country_name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className={LABEL_CLASS}>Guardian Name</label>
+                  <input className={INPUT_CLASS} {...f('guradian')} />
+                </div>
+                <div>
+                  <label className={LABEL_CLASS}>Relation to Guardian</label>
+                  <input className={INPUT_CLASS} {...f('relation_guardian')} />
+                </div>
+              </div>
+              <div className="mt-5">
+                <label className={LABEL_CLASS}>Address</label>
+                <textarea className={INPUT_CLASS} rows={2} value={form.address ?? ''} onChange={(e) => setForm((p) => ({ ...p, address: e.target.value }))} />
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-6 gap-y-5 mt-5">
+                <div>
+                  <label className={LABEL_CLASS}>District</label>
+                  <input className={INPUT_CLASS} {...f('district')} />
+                </div>
+                <div>
+                  <label className={LABEL_CLASS}>State</label>
+                  <input className={INPUT_CLASS} {...f('state')} />
+                </div>
+                <div>
+                  <label className={LABEL_CLASS}>Pincode</label>
+                  <input className={INPUT_CLASS} {...f('pincode')} />
+                </div>
+              </div>
+              <div className="mt-5">
+                <FileUploadField
+                  label="Photo"
+                  value={form.profile_image_url ?? ''}
+                  onChange={(path) => setForm((prev) => ({ ...prev, profile_image_url: path }))}
+                />
+              </div>
+            </div>
+          )}
+
+          {step === 1 && (
+            <div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-5">
+                <div>
+                  <label className={LABEL_CLASS}>PAN Number</label>
+                  <input className={INPUT_CLASS} {...f('pan_no')} placeholder="ABCDE1234D" />
+                </div>
+                <div>
+                  <label className={LABEL_CLASS}>PF Number</label>
+                  <input className={INPUT_CLASS} {...f('pf')} />
+                </div>
+                <div>
+                  <label className={LABEL_CLASS}>UAN (Company PF)</label>
+                  <input className={INPUT_CLASS} {...f('company_pf')} />
+                </div>
+                <div>
+                  <label className={LABEL_CLASS}>Previous PF Member ID</label>
+                  <input className={INPUT_CLASS} {...f('previous_member_id')} />
+                </div>
+                <div>
+                  <label className={LABEL_CLASS}>ESIC Number</label>
+                  <input className={INPUT_CLASS} {...f('esi')} />
+                </div>
+                <div>
+                  <label className={LABEL_CLASS}>ESI Dispensary</label>
+                  <input className={INPUT_CLASS} {...f('esi_dispensary')} />
+                </div>
+                <div>
+                  <label className={LABEL_CLASS}>LWF Code</label>
+                  <input className={INPUT_CLASS} {...f('lwf_code')} />
+                </div>
+                <div>
+                  <label className={LABEL_CLASS}>WPS Code</label>
+                  <input className={INPUT_CLASS} {...f('wps_code')} />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mt-5">
+                {checkbox('eps', 'EPS Eligibility')}
+                {checkbox('international_worker', 'International Worker')}
+                {checkbox('physical_handicap', 'Physical Handicap')}
+                {checkbox('locomotive', 'Locomotive Disability')}
+                {checkbox('hearing', 'Hearing Disability')}
+                {checkbox('visual', 'Visual Disability')}
+              </div>
+            </div>
+          )}
+
+          {step === 2 && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-5">
+              <div>
+                <label className={LABEL_CLASS}>Bank Name</label>
+                <input className={INPUT_CLASS} {...f('bank')} />
+              </div>
+              <div>
+                <label className={LABEL_CLASS}>Bank Branch</label>
+                <input className={INPUT_CLASS} {...f('bank_branch')} />
+              </div>
+              <div>
+                <label className={LABEL_CLASS}>IFSC Code</label>
+                <input className={INPUT_CLASS} {...f('ifsc_code')} />
+              </div>
+              <div>
+                <label className={LABEL_CLASS}>Account Number</label>
+                <input className={INPUT_CLASS} {...f('account_no')} />
+              </div>
+            </div>
+          )}
+
+          {step === 3 && (
+            <div className="space-y-8">
+              <section>
+                <h3 className="text-[12px] font-semibold text-slate-500 uppercase tracking-wider mb-3">Documents</h3>
+                <div className="mb-3 max-w-sm">
+                  <label className={LABEL_CLASS}>Upload file (attach before adding a row below)</label>
+                  <DocumentUploadField value={docFile} onChange={setDocFile} />
+                </div>
+                <RepeatableRows
+                  pkeyField="emp_doc_pkey"
+                  rows={data.documents}
+                  addLabel="Add document"
+                  onAdd={addChild('documents')}
+                  onRemove={removeChild('documents')}
+                  fields={[
+                    { key: 'document_type', label: 'Type', type: 'select', options: DOCUMENT_TYPES.map((d) => ({ value: d, label: d })) },
+                    { key: 'document_number', label: 'Number' },
+                    { key: 'name', label: 'Name on Document' },
+                    { key: 'relation', label: 'Relation' },
+                    { key: 'nationality', label: 'Nationality' },
+                    { key: 'valid_from', label: 'Valid From', type: 'date' },
+                    { key: 'valid_till', label: 'Valid Till', type: 'date' },
+                  ]}
+                />
+              </section>
+
+              <section>
+                <h3 className="text-[12px] font-semibold text-slate-500 uppercase tracking-wider mb-3">Education</h3>
+                <RepeatableRows
+                  pkeyField="education_pkey"
+                  rows={data.education}
+                  addLabel="Add education"
+                  onAdd={addChild('education')}
+                  onRemove={removeChild('education')}
+                  fields={[
+                    { key: 'course', label: 'Course' },
+                    { key: 'university', label: 'University' },
+                    { key: 'duration', label: 'Duration' },
+                    { key: 'mark', label: 'Marks' },
+                  ]}
+                />
+              </section>
+
+              <section>
+                <h3 className="text-[12px] font-semibold text-slate-500 uppercase tracking-wider mb-3">Work Experience</h3>
+                <RepeatableRows
+                  pkeyField="experience_pkey"
+                  rows={data.experience}
+                  addLabel="Add experience"
+                  onAdd={addChild('experience')}
+                  onRemove={removeChild('experience')}
+                  fields={[
+                    { key: 'company', label: 'Company' },
+                    { key: 'designation', label: 'Designation' },
+                    { key: 'department', label: 'Department' },
+                    { key: 'from_date', label: 'From', type: 'date' },
+                    { key: 'to_date', label: 'To', type: 'date' },
+                    { key: 'salary', label: 'Salary', type: 'number' },
+                  ]}
+                />
+              </section>
+
+              <section>
+                <h3 className="text-[12px] font-semibold text-slate-500 uppercase tracking-wider mb-3">Family</h3>
+                <RepeatableRows
+                  pkeyField="emp_family_pkey"
+                  rows={data.family}
+                  addLabel="Add family member"
+                  onAdd={addChild('family')}
+                  onRemove={removeChild('family')}
+                  fields={[
+                    { key: 'name', label: 'Name' },
+                    { key: 'relation', label: 'Relation' },
+                    { key: 'gender', label: 'Gender' },
+                    { key: 'DOB', label: 'Date of Birth', type: 'date' },
+                    { key: 'nationality', label: 'Nationality' },
+                    { key: 'contact_number', label: 'Contact Number' },
+                  ]}
+                />
+              </section>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Sticky footer */}
+      <div className="flex-shrink-0 flex items-center justify-between gap-2 px-6 py-4 border-t border-slate-100 bg-white/95 backdrop-blur-sm rounded-b-2xl">
+        {isFirst ? (
+          <button
+            onClick={onBack}
+            className="px-4 py-2.5 rounded-xl text-sm font-medium text-slate-500 hover:bg-slate-100 transition-colors duration-[180ms]"
+          >
+            Cancel
+          </button>
+        ) : (
+          <button
+            onClick={() => goToStep(step - 1)}
+            className="px-4 py-2.5 rounded-xl text-sm font-medium text-slate-500 hover:bg-slate-100 transition-colors duration-[180ms]"
+          >
+            ← Back
+          </button>
+        )}
+
+        {isLast ? (
+          <button
+            onClick={finish}
+            disabled={savePersonal.isPending}
+            className="px-5 py-2.5 rounded-xl text-sm font-semibold bg-[color:var(--color-primary)] hover:scale-[1.03] disabled:opacity-50 disabled:hover:scale-100 text-white shadow-lg shadow-[color:var(--color-primary)]/20 transition-all duration-[180ms]"
+          >
+            {savePersonal.isPending ? 'Saving…' : 'Done'}
+          </button>
+        ) : (
+          <button
+            onClick={saveAndContinue}
+            disabled={savePersonal.isPending}
+            className="px-5 py-2.5 rounded-xl text-sm font-semibold bg-[color:var(--color-primary)] hover:scale-[1.03] disabled:opacity-50 disabled:hover:scale-100 text-white shadow-lg shadow-[color:var(--color-primary)]/20 transition-all duration-[180ms]"
+          >
+            {savePersonal.isPending ? 'Saving…' : 'Save & Continue →'}
+          </button>
+        )}
+      </div>
     </div>
   );
 }

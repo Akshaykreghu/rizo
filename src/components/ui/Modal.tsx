@@ -33,7 +33,7 @@ export function Modal({ open, onClose, children, className }: ModalProps) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-8">
       <div
-        className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm animate-fade-in"
+        className="absolute inset-0 bg-slate-900/35 backdrop-blur-md animate-fade-in"
         onClick={onClose}
         aria-hidden="true"
       />
@@ -48,7 +48,7 @@ export function Modal({ open, onClose, children, className }: ModalProps) {
         <button
           onClick={onClose}
           aria-label="Close"
-          className="absolute right-4 top-4 z-10 p-2 rounded-full bg-white border border-slate-200 text-slate-500 hover:text-slate-800 hover:bg-slate-50 shadow-sm transition-colors duration-[180ms]"
+          className="absolute right-4 top-4 z-10 p-2.5 rounded-full bg-slate-50 border border-slate-200 text-slate-500 hover:text-slate-800 hover:bg-slate-100 shadow-sm transition-colors duration-[180ms]"
         >
           <X className="w-4 h-4" />
         </button>

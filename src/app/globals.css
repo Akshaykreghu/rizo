@@ -127,6 +127,16 @@ body {
   to { opacity: 1; translate: -50% 0; }
 }
 
+@keyframes step-in-right {
+  from { opacity: 0; translate: 20px 0; }
+  to { opacity: 1; translate: 0 0; }
+}
+
+@keyframes step-in-left {
+  from { opacity: 0; translate: -20px 0; }
+  to { opacity: 1; translate: 0 0; }
+}
+
 .animate-fade-in {
   animation: fade-in 180ms ease;
 }
@@ -135,4 +145,10 @@ body {
 }
 .animate-float-in {
   animation: float-in 200ms ease;
+}
+.animate-step-right {
+  animation: step-in-right 300ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.animate-step-left {
+  animation: step-in-left 300ms cubic-bezier(0.22, 1, 0.36, 1);
 }

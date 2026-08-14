@@ -2,8 +2,9 @@
 
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft } from 'lucide-react';
-import { formatDate } from '@/lib/utils';
+import { ArrowLeft, Pencil, User, Briefcase, Wallet, Landmark } from 'lucide-react';
+import { cn, formatDate } from '@/lib/utils';
+import { Avatar } from '@/components/ui/Avatar';
 import { FileUploadField } from '@/components/employees/FileUploadField';
 import { EmployeeSearch } from '@/components/employees/EmployeeSearch';
 import { RepeatableRows } from '@/components/employees/RepeatableRows';
@@ -12,6 +13,16 @@ import { DocumentUploadField } from '@/components/employees/DocumentUploadField'
 interface SelectOption { value: string; label: string }
 
 const DOCUMENT_TYPES = ['Aadhaar', 'PAN', 'Passport', 'Driving License', 'Voter ID', 'Educational Certificate', 'Offer Letter', 'Relieving Letter', 'Other'];
+
+const INPUT_CLASS = 'w-full px-3 py-2 border border-slate-200 rounded-xl text-sm text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/40';
+const LABEL_CLASS = 'block text-xs text-slate-500 mb-1.5';
+const SECTION_CLASS = 'rounded-2xl border border-slate-100 bg-slate-50/50 p-5';
+
+const SECTION_ACCENT = {
+  primary: 'bg-[color:var(--color-primary)]/10 text-[color:var(--color-primary)]',
+  accent: 'bg-[color:var(--color-accent)]/10 text-[color:var(--color-accent)]',
+  success: 'bg-[color:var(--color-success)]/10 text-[color:var(--color-success)]',
+} as const;
 
 function useSetupOptions(path: string, codeKey: string, nameKey: string) {
   return useQuery<SelectOption[]>({
@@ -126,8 +137,8 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
     queryClient.invalidateQueries({ queryKey: ['employee', id, 'documents'] });
   }
 
-  if (isLoading) return <div className="text-gray-500 text-sm">Loading...</div>;
-  if (!data?.employee) return <div className="text-red-500">Employee not found.</div>;
+  if (isLoading) return <div className="text-slate-500 text-sm">Loading...</div>;
+  if (!data?.employee) return <div className="text-[color:var(--color-danger)]">Employee not found.</div>;
 
   const emp = data.employee;
   const prof = data.professional;
@@ -145,122 +156,139 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
   function InfoRow({ label, value }: { label: string; value?: string | number | null }) {
     return (
       <div>
-        <p className="text-xs text-gray-500 mb-0.5">{label}</p>
-        <p className="text-sm text-gray-900 font-medium">{value || '—'}</p>
+        <p className="text-[12.5px] text-slate-500 mb-1">{label}</p>
+        <p className={cn('text-[14px] font-medium text-[#0F172A]', !value && 'text-slate-300 font-normal')}>
+          {value || '—'}
+        </p>
+      </div>
+    );
+  }
+
+  function SectionHeader({ icon: Icon, accent, children }: { icon: React.ComponentType<{ className?: string; strokeWidth?: number }>; accent: keyof typeof SECTION_ACCENT; children: React.ReactNode }) {
+    return (
+      <div className="flex items-center gap-2 mb-4">
+        <span className={cn('w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0', SECTION_ACCENT[accent])}>
+          <Icon className="w-3.5 h-3.5" strokeWidth={1.75} />
+        </span>
+        <h2 className="text-[12px] font-semibold text-slate-500 uppercase tracking-wider">{children}</h2>
       </div>
     );
   }
 
   return (
     <div>
-      {showBackLink && (
-        <button
-          onClick={onBack}
-          className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 mb-5 transition-colors"
-        >
-          <ArrowLeft className="w-4 h-4" /> Back to Employees
-        </button>
-      )}
-
-      <div className="flex items-start justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-semibold text-gray-900">
-            {emp.first_name} {emp.last_name}
-          </h1>
-          <p className="text-gray-500 text-sm mt-0.5">
-            {emp.emp_id} · {emp.desig_name ?? '—'}
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
-          {saved && <span className="text-green-600 text-sm">Saved.</span>}
-          {editing ? (
-            <>
+      <div className="sticky top-0 z-[5] -mx-6 -mt-6 mb-6 rounded-t-2xl bg-white/95 backdrop-blur-sm border-b border-slate-100 px-6 pt-6 pb-5">
+        {showBackLink && (
+          <button
+            onClick={onBack}
+            className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800 mb-4 transition-colors duration-[180ms]"
+          >
+            <ArrowLeft className="w-4 h-4" /> Back to Employees
+          </button>
+        )}
+        <div className="flex items-start justify-between gap-4 pr-14">
+          <div className="flex items-center gap-3.5 min-w-0">
+            <Avatar name={`${emp.first_name} ${emp.last_name}`} className="w-11 h-11 text-sm flex-shrink-0" />
+            <div className="min-w-0">
+              <h1 className="font-heading text-[22px] font-bold text-[#0F172A] tracking-tight leading-tight truncate">
+                {emp.first_name} {emp.last_name}
+              </h1>
+              <p className="text-[13px] text-slate-500 mt-0.5">
+                EMP {emp.emp_id} · {emp.desig_name ?? '—'}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2.5 flex-shrink-0">
+            {saved && <span className="text-xs font-medium text-[color:var(--color-success)]">Saved</span>}
+            {editing ? (
+              <>
+                <button
+                  onClick={() => setEditing(false)}
+                  className="px-3.5 py-2 text-sm font-medium text-slate-500 hover:bg-slate-100 rounded-xl transition-colors duration-[180ms]"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => update.mutate()}
+                  disabled={update.isPending}
+                  className="px-4 py-2 text-sm font-medium bg-[color:var(--color-primary)] hover:scale-[1.03] disabled:opacity-50 disabled:hover:scale-100 text-white rounded-xl shadow-lg shadow-[color:var(--color-primary)]/20 transition-all duration-[180ms]"
+                >
+                  {update.isPending ? 'Saving…' : 'Save Changes'}
+                </button>
+              </>
+            ) : (
               <button
-                onClick={() => setEditing(false)}
-                className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                onClick={() => setEditing(true)}
+                className="flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium bg-white border border-slate-200 hover:border-[color:var(--color-primary)]/40 hover:text-[color:var(--color-primary)] text-slate-700 rounded-xl transition-colors duration-[180ms]"
               >
-                Cancel
+                <Pencil className="w-3.5 h-3.5" /> Edit
               </button>
-              <button
-                onClick={() => update.mutate()}
-                disabled={update.isPending}
-                className="px-4 py-2 text-sm font-medium bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white rounded-lg transition-colors"
-              >
-                {update.isPending ? 'Saving…' : 'Save Changes'}
-              </button>
-            </>
-          ) : (
-            <button
-              onClick={() => setEditing(true)}
-              className="px-4 py-2 text-sm font-medium bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 rounded-lg transition-colors"
-            >
-              Edit
-            </button>
-          )}
+            )}
+          </div>
         </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         {/* Personal Details */}
-        <div className="bg-white rounded-xl border border-gray-200 p-5">
-          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-4">Personal Details</h2>
+        <div className={SECTION_CLASS}>
+          <SectionHeader icon={User} accent="primary">Personal Details</SectionHeader>
           {editing ? (
-            <div className="space-y-3">
-              <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-3.5">
+              <div className="grid grid-cols-2 gap-3.5">
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">First Name</label>
-                  <input className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" {...f('first_name')} />
+                  <label className={LABEL_CLASS}>First Name</label>
+                  <input className={INPUT_CLASS} {...f('first_name')} />
                 </div>
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">Last Name</label>
-                  <input className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" {...f('last_name')} />
+                  <label className={LABEL_CLASS}>Last Name</label>
+                  <input className={INPUT_CLASS} {...f('last_name')} />
                 </div>
               </div>
               <div>
-                <label className="block text-xs text-gray-500 mb-1">Date of Birth</label>
-                <input type="date" className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" {...f('date_of_birth')} />
+                <label className={LABEL_CLASS}>Date of Birth</label>
+                <input type="date" className={INPUT_CLASS} {...f('date_of_birth')} />
               </div>
               <div>
-                <label className="block text-xs text-gray-500 mb-1">Mobile</label>
-                <input type="tel" className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" {...f('mobile_no')} />
+                <label className={LABEL_CLASS}>Mobile</label>
+                <input type="tel" className={INPUT_CLASS} {...f('mobile_no')} />
               </div>
               <div>
-                <label className="block text-xs text-gray-500 mb-1">Email</label>
-                <input type="email" className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" {...f('email')} />
+                <label className={LABEL_CLASS}>Email</label>
+                <input type="email" className={INPUT_CLASS} {...f('email')} />
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-2 gap-3.5">
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">Gender</label>
-                  <select className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" {...f('classification')}>
+                  <label className={LABEL_CLASS}>Gender</label>
+                  <select className={INPUT_CLASS} {...f('classification')}>
                     <option value="">Select</option>
                     <option value="male">Male</option>
                     <option value="female">Female</option>
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">Blood Group</label>
-                  <select className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" {...f('blood')}>
+                  <label className={LABEL_CLASS}>Blood Group</label>
+                  <select className={INPUT_CLASS} {...f('blood')}>
                     <option value="">Select</option>
                     {['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'].map((bg) => <option key={bg} value={bg}>{bg}</option>)}
                   </select>
                 </div>
               </div>
               <div>
-                <label className="block text-xs text-gray-500 mb-1">Marital Status</label>
-                <select className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" {...f('maritual_status')}>
+                <label className={LABEL_CLASS}>Marital Status</label>
+                <select className={INPUT_CLASS} {...f('maritual_status')}>
                   <option value="">Select</option>
                   <option value="Single">Single</option>
                   <option value="Married">Married</option>
                 </select>
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-2 gap-3.5">
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">ID Card Number</label>
-                  <input className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" {...f('id_card')} />
+                  <label className={LABEL_CLASS}>ID Card Number</label>
+                  <input className={INPUT_CLASS} {...f('id_card')} />
                 </div>
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">LWF Code</label>
-                  <input className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" {...f('lwf_code')} />
+                  <label className={LABEL_CLASS}>LWF Code</label>
+                  <input className={INPUT_CLASS} {...f('lwf_code')} />
                 </div>
               </div>
               <FileUploadField
@@ -270,7 +298,7 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
               />
             </div>
           ) : (
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-2 gap-x-6 gap-y-5">
               <InfoRow label="Employee ID" value={emp.emp_id} />
               <InfoRow label="Date of Birth" value={formatDate(emp.date_of_birth)} />
               <InfoRow label="Mobile" value={emp.mobile_no} />
@@ -285,17 +313,17 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
         </div>
 
         {/* Professional Details */}
-        <div className="bg-white rounded-xl border border-gray-200 p-5">
-          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-4">Professional Details</h2>
+        <div className={SECTION_CLASS}>
+          <SectionHeader icon={Briefcase} accent="accent">Professional Details</SectionHeader>
           {editing ? (
-            <div className="space-y-3">
+            <div className="space-y-3.5">
               <div>
-                <label className="block text-xs text-gray-500 mb-1">Joining Date</label>
-                <input type="date" className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" {...f('joining_date')} />
+                <label className={LABEL_CLASS}>Joining Date</label>
+                <input type="date" className={INPUT_CLASS} {...f('joining_date')} />
               </div>
               <div>
-                <label className="block text-xs text-gray-500 mb-1">Employment Type</label>
-                <select className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" {...f('emp_type')}>
+                <label className={LABEL_CLASS}>Employment Type</label>
+                <select className={INPUT_CLASS} {...f('emp_type')}>
                   <option value="">Select</option>
                   <option value="Permanent">Permanent</option>
                   <option value="Contract">Contract</option>
@@ -310,19 +338,19 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                 { key: 'emp_grade', label: 'Grade', opts: grades },
               ].map(({ key, label, opts }) => (
                 <div key={key}>
-                  <label className="block text-xs text-gray-500 mb-1">{label}</label>
-                  <select className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" {...f(key)}>
+                  <label className={LABEL_CLASS}>{label}</label>
+                  <select className={INPUT_CLASS} {...f(key)}>
                     <option value="">Select {label.toLowerCase()}</option>
                     {opts.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                   </select>
                 </div>
               ))}
               <div>
-                <label className="block text-xs text-gray-500 mb-1">Probation Period (days)</label>
-                <input type="number" className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" {...f('probation')} />
+                <label className={LABEL_CLASS}>Probation Period (days)</label>
+                <input type="number" className={INPUT_CLASS} {...f('probation')} />
               </div>
               <div>
-                <label className="block text-xs text-gray-500 mb-1">Reporting Manager</label>
+                <label className={LABEL_CLASS}>Reporting Manager</label>
                 <EmployeeSearch
                   value={form.attr1 ?? ''}
                   onChange={(empPkey) => setForm((prev) => ({ ...prev, attr1: empPkey }))}
@@ -330,7 +358,7 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
               </div>
             </div>
           ) : (
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-2 gap-x-6 gap-y-5">
               <InfoRow label="Joining Date" value={formatDate(prof?.joining_date)} />
               <InfoRow label="Branch" value={emp.emp_branch_name} />
               <InfoRow label="Department" value={emp.dept_name} />
@@ -344,64 +372,64 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
         </div>
 
         {/* Salary & Statutory */}
-        <div className="bg-white rounded-xl border border-gray-200 p-5">
-          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-4">Salary &amp; Statutory</h2>
+        <div className={SECTION_CLASS}>
+          <SectionHeader icon={Wallet} accent="success">Salary &amp; Statutory</SectionHeader>
           {editing ? (
-            <div className="space-y-3">
+            <div className="space-y-3.5">
               <div>
-                <label className="block text-xs text-gray-500 mb-1">Salary Structure</label>
-                <select className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" {...f('structure_id')}>
+                <label className={LABEL_CLASS}>Salary Structure</label>
+                <select className={INPUT_CLASS} {...f('structure_id')}>
                   <option value="">Select structure</option>
                   {structures.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
                 </select>
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-2 gap-3.5">
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">Annual CTC</label>
-                  <input type="number" className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" {...f('emp_anual_ctc')} />
+                  <label className={LABEL_CLASS}>Annual CTC</label>
+                  <input type="number" className={INPUT_CLASS} {...f('emp_anual_ctc')} />
                 </div>
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">Monthly CTC</label>
-                  <input type="number" className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" {...f('emp_monthly_ctc')} />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs text-gray-500 mb-1">PAN Number</label>
-                  <input className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" {...f('pan_no')} />
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-500 mb-1">Name as on PAN</label>
-                  <input className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" {...f('name_as_on_pan')} />
+                  <label className={LABEL_CLASS}>Monthly CTC</label>
+                  <input type="number" className={INPUT_CLASS} {...f('emp_monthly_ctc')} />
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-2 gap-3.5">
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">PF Number</label>
-                  <input className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" {...f('pf')} />
+                  <label className={LABEL_CLASS}>PAN Number</label>
+                  <input className={INPUT_CLASS} {...f('pan_no')} />
                 </div>
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">Company PF</label>
-                  <input className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" {...f('company_pf')} />
+                  <label className={LABEL_CLASS}>Name as on PAN</label>
+                  <input className={INPUT_CLASS} {...f('name_as_on_pan')} />
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-2 gap-3.5">
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">EPS</label>
-                  <input className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" {...f('eps')} />
+                  <label className={LABEL_CLASS}>PF Number</label>
+                  <input className={INPUT_CLASS} {...f('pf')} />
                 </div>
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">ESIC Number</label>
-                  <input className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" {...f('esi')} />
+                  <label className={LABEL_CLASS}>Company PF</label>
+                  <input className={INPUT_CLASS} {...f('company_pf')} />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3.5">
+                <div>
+                  <label className={LABEL_CLASS}>EPS</label>
+                  <input className={INPUT_CLASS} {...f('eps')} />
+                </div>
+                <div>
+                  <label className={LABEL_CLASS}>ESIC Number</label>
+                  <input className={INPUT_CLASS} {...f('esi')} />
                 </div>
               </div>
               <div>
-                <label className="block text-xs text-gray-500 mb-1">ESI Dispensary</label>
-                <input className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" {...f('esi_dispensary')} />
+                <label className={LABEL_CLASS}>ESI Dispensary</label>
+                <input className={INPUT_CLASS} {...f('esi_dispensary')} />
               </div>
             </div>
           ) : (
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-2 gap-x-6 gap-y-5">
               <InfoRow label="Salary Structure" value={structures.find((s) => s.value === String(prof?.structure_id))?.label} />
               <InfoRow label="Annual CTC" value={ctc?.emp_anual_ctc} />
               <InfoRow label="Monthly CTC" value={ctc?.emp_monthly_ctc} />
@@ -413,37 +441,37 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
         </div>
 
         {/* Bank Details */}
-        <div className="bg-white rounded-xl border border-gray-200 p-5">
-          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-4">Bank Details</h2>
+        <div className={SECTION_CLASS}>
+          <SectionHeader icon={Landmark} accent="primary">Bank Details</SectionHeader>
           {editing ? (
-            <div className="space-y-3">
-              <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-3.5">
+              <div className="grid grid-cols-2 gap-3.5">
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">Bank Name</label>
-                  <input className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" {...f('bank_name')} />
+                  <label className={LABEL_CLASS}>Bank Name</label>
+                  <input className={INPUT_CLASS} {...f('bank_name')} />
                 </div>
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">Bank Branch</label>
-                  <input className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" {...f('bank_branch_name')} />
+                  <label className={LABEL_CLASS}>Bank Branch</label>
+                  <input className={INPUT_CLASS} {...f('bank_branch_name')} />
                 </div>
               </div>
               <div>
-                <label className="block text-xs text-gray-500 mb-1">Name as per Bank</label>
-                <input className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" {...f('name_as_per_bank')} />
+                <label className={LABEL_CLASS}>Name as per Bank</label>
+                <input className={INPUT_CLASS} {...f('name_as_per_bank')} />
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-2 gap-3.5">
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">IFSC Code</label>
-                  <input className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" {...f('ifsc_code')} />
+                  <label className={LABEL_CLASS}>IFSC Code</label>
+                  <input className={INPUT_CLASS} {...f('ifsc_code')} />
                 </div>
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">Account Number</label>
-                  <input className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" {...f('account_no')} />
+                  <label className={LABEL_CLASS}>Account Number</label>
+                  <input className={INPUT_CLASS} {...f('account_no')} />
                 </div>
               </div>
             </div>
           ) : (
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-2 gap-x-6 gap-y-5">
               <InfoRow label="Bank Name" value={emp.bank_name} />
               <InfoRow label="Bank Branch" value={emp.branch_name} />
               <InfoRow label="Name as per Bank" value={emp.name_as_per_bank} />
@@ -454,10 +482,10 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
         </div>
       </div>
 
-      <div className="bg-white rounded-xl border border-gray-200 p-5 mt-5">
-        <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-4">Documents</h2>
+      <div className={cn(SECTION_CLASS, 'mt-5')}>
+        <h2 className="text-[12px] font-semibold text-slate-500 uppercase tracking-wider mb-4">Documents</h2>
         <div className="mb-3 max-w-sm">
-          <label className="block text-xs text-gray-500 mb-1">Upload file (attach before adding a row below)</label>
+          <label className={LABEL_CLASS}>Upload file (attach before adding a row below)</label>
           <DocumentUploadField value={docFile} onChange={setDocFile} />
         </div>
         <RepeatableRows
