@@ -180,3 +180,69 @@ body {
 .animate-step-left {
   animation: step-in-left 300ms cubic-bezier(0.22, 1, 0.36, 1);
 }
+
+/* Page-turn transition — employee onboarding step navigation */
+.page-turn-container {
+  perspective: 1600px;
+  transform-style: preserve-3d;
+}
+.page-turn-layer {
+  backface-visibility: hidden;
+  transform-style: preserve-3d;
+  will-change: transform, opacity;
+}
+
+@keyframes page-turn-out-forward {
+  0% { transform: rotateY(0deg); opacity: 1; box-shadow: 0 0 0 rgba(15, 23, 42, 0); }
+  100% {
+    transform: rotateY(-82deg);
+    opacity: 0.45;
+    box-shadow: -28px 0 48px -16px color-mix(in srgb, var(--turn-glow, #0f172a) 30%, rgba(15, 23, 42, 0.20));
+  }
+}
+@keyframes page-turn-in-forward {
+  0% { transform: rotateY(9deg); opacity: 0.65; }
+  100% { transform: rotateY(0deg); opacity: 1; }
+}
+@keyframes page-turn-out-back {
+  0% { transform: rotateY(0deg); opacity: 1; box-shadow: 0 0 0 rgba(15, 23, 42, 0); }
+  100% {
+    transform: rotateY(82deg);
+    opacity: 0.45;
+    box-shadow: 28px 0 48px -16px color-mix(in srgb, var(--turn-glow, #0f172a) 30%, rgba(15, 23, 42, 0.20));
+  }
+}
+@keyframes page-turn-in-back {
+  0% { transform: rotateY(-9deg); opacity: 0.65; }
+  100% { transform: rotateY(0deg); opacity: 1; }
+}
+
+.page-turn-out-forward {
+  transform-origin: left center;
+  animation: page-turn-out-forward 620ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+.page-turn-in-forward {
+  transform-origin: right center;
+  animation: page-turn-in-forward 620ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+.page-turn-out-back {
+  transform-origin: right center;
+  animation: page-turn-out-back 620ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+.page-turn-in-back {
+  transform-origin: left center;
+  animation: page-turn-in-back 620ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+
+@keyframes page-turn-reduced-out-forward { from { opacity: 1; translate: 0 0; } to { opacity: 0; translate: -16px 0; } }
+@keyframes page-turn-reduced-in-forward  { from { opacity: 0; translate: 16px 0; } to { opacity: 1; translate: 0 0; } }
+@keyframes page-turn-reduced-out-back    { from { opacity: 1; translate: 0 0; } to { opacity: 0; translate: 16px 0; } }
+@keyframes page-turn-reduced-in-back     { from { opacity: 0; translate: -16px 0; } to { opacity: 1; translate: 0 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .page-turn-container { perspective: none; }
+  .page-turn-out-forward { animation: page-turn-reduced-out-forward 200ms ease both; box-shadow: none; }
+  .page-turn-in-forward { animation: page-turn-reduced-in-forward 200ms ease both; }
+  .page-turn-out-back { animation: page-turn-reduced-out-back 200ms ease both; box-shadow: none; }
+  .page-turn-in-back { animation: page-turn-reduced-in-back 200ms ease both; }
+}

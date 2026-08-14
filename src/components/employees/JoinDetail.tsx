@@ -23,11 +23,13 @@ const DATE_KEYS = new Set(['date_of_birth']);
 
 const DOCUMENT_TYPES = ['Aadhaar', 'PAN', 'Passport', 'Driving License', 'Voter ID', 'Educational Certificate', 'Offer Letter', 'Relieving Letter', 'Other'];
 
+const PAGE_TURN_MS = 620;
+
 const STEPS = [
-  { key: 'personal', label: 'Personal', title: 'Personal Details', subtitle: 'Basic personal information about the employee.' },
-  { key: 'statutory', label: 'Statutory', title: 'Statutory Details', subtitle: 'PF, ESI, tax and compliance information.' },
-  { key: 'bank', label: 'Bank', title: 'Bank Details', subtitle: 'Employee banking and payment information.' },
-  { key: 'additional', label: 'Additional', title: 'Additional Details', subtitle: 'Documents, education, experience and family information.' },
+  { key: 'personal', label: 'Personal', title: 'Personal Details', subtitle: 'Basic personal information about the employee.', accent: 'var(--color-primary)', accentSoft: 'var(--color-primary-soft)' },
+  { key: 'statutory', label: 'Statutory', title: 'Statutory Details', subtitle: 'PF, ESI, tax and compliance information.', accent: 'var(--color-accent)', accentSoft: 'var(--color-accent-soft)' },
+  { key: 'bank', label: 'Bank', title: 'Bank Details', subtitle: 'Employee banking and payment information.', accent: 'var(--color-success)', accentSoft: 'var(--color-success-soft)' },
+  { key: 'additional', label: 'Additional', title: 'Additional Details', subtitle: 'Documents, education, experience and family information.', accent: 'var(--color-highlight-dark)', accentSoft: 'var(--color-highlight-light)' },
 ] as const;
 
 const INPUT_CLASS = 'w-full px-3.5 py-2.5 border border-slate-200 rounded-xl text-sm text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/40 focus:border-[color:var(--color-primary)]/40 transition-colors duration-[180ms]';
@@ -61,9 +63,18 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
   const [docFile, setDocFile] = useState('');
   const [step, setStep] = useState(0);
   const [completed, setCompleted] = useState<Set<number>>(new Set());
-  const [direction, setDirection] = useState<'forward' | 'back'>('forward');
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [transitioning, setTransitioning] = useState<{ from: number; to: number; direction: 'forward' | 'back' } | null>(null);
+  const [transitionHeight, setTransitionHeight] = useState<number | null>(null);
   const stepRef = useRef<HTMLDivElement>(null);
+  const contentWrapperRef = useRef<HTMLDivElement>(null);
+  const transitionTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (transitionTimeout.current) clearTimeout(transitionTimeout.current);
+    };
+  }, []);
 
   const { data, isLoading, isError } = useQuery<JoinDetailData>({
     queryKey: ['employees/join', id],
@@ -149,8 +160,18 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
   }
 
   function goToStep(target: number) {
-    setDirection(target > step ? 'forward' : 'back');
-    setStep(target);
+    if (target === step) return;
+    const dir: 'forward' | 'back' = target > step ? 'forward' : 'back';
+    if (contentWrapperRef.current) {
+      setTransitionHeight(contentWrapperRef.current.getBoundingClientRect().height);
+    }
+    setTransitioning({ from: step, to: target, direction: dir });
+    if (transitionTimeout.current) clearTimeout(transitionTimeout.current);
+    transitionTimeout.current = setTimeout(() => {
+      setStep(target);
+      setTransitioning(null);
+      setTransitionHeight(null);
+    }, PAGE_TURN_MS);
   }
 
   function saveAndContinue() {
@@ -202,10 +223,298 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
   }
   if (isLoading || !data) return <p className="text-sm text-gray-500">Loading…</p>;
 
-  const currentStep = STEPS[step];
   const isFirst = step === 0;
   const isLast = step === STEPS.length - 1;
   const embedded = !showBackLink;
+  const activeStepForUI = transitioning ? transitioning.to : step;
+
+  function renderStepFields(idx: number) {
+    if (idx === 0) {
+      return (
+        <div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-5">
+            <div>
+              <label className={LABEL_CLASS}>First Name</label>
+              <input className={INPUT_CLASS} {...f('first_name')} />
+            </div>
+            <div>
+              <label className={LABEL_CLASS}>Last Name</label>
+              <input className={INPUT_CLASS} {...f('last_name')} />
+            </div>
+            <div>
+              <label className={LABEL_CLASS}>Date of Birth</label>
+              <input
+                type="date"
+                max={new Date().toISOString().slice(0, 10)}
+                className={cn(INPUT_CLASS, fieldErrors.date_of_birth && ERROR_INPUT_CLASS)}
+                {...f('date_of_birth')}
+              />
+              <FieldError>{fieldErrors.date_of_birth}</FieldError>
+            </div>
+            <div>
+              <label className={LABEL_CLASS}>Gender</label>
+              <select className={INPUT_CLASS} {...f('classification')}>
+                <option value="">Select gender</option>
+                <option value="male">Male</option>
+                <option value="female">Female</option>
+                <option value="others">Other</option>
+              </select>
+            </div>
+            <div>
+              <label className={LABEL_CLASS}>Mobile</label>
+              <input
+                type="tel"
+                maxLength={10}
+                className={cn(INPUT_CLASS, fieldErrors.mobile_no && ERROR_INPUT_CLASS)}
+                {...f('mobile_no')}
+              />
+              <FieldError>{fieldErrors.mobile_no}</FieldError>
+            </div>
+            <div>
+              <label className={LABEL_CLASS}>Email</label>
+              <input type="email" className={INPUT_CLASS} {...f('email')} />
+            </div>
+            <div>
+              <label className={LABEL_CLASS}>Aadhaar / ID Card</label>
+              <input
+                maxLength={12}
+                className={cn(INPUT_CLASS, fieldErrors.id_card && ERROR_INPUT_CLASS)}
+                {...f('id_card')}
+              />
+              <FieldError>{fieldErrors.id_card}</FieldError>
+            </div>
+            <div>
+              <label className={LABEL_CLASS}>Blood Group</label>
+              <select className={INPUT_CLASS} {...f('blood')}>
+                <option value="">Select blood group</option>
+                {['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'].map((bg) => (
+                  <option key={bg} value={bg}>{bg}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className={LABEL_CLASS}>Marital Status</label>
+              <select className={INPUT_CLASS} {...f('maritual_status')}>
+                <option value="">Select status</option>
+                <option value="Single">Single</option>
+                <option value="Married">Married</option>
+                <option value="Divorced">Divorced</option>
+                <option value="Widowed">Widowed</option>
+              </select>
+            </div>
+            <div>
+              <label className={LABEL_CLASS}>Nationality</label>
+              <select className={INPUT_CLASS} {...f('nationality_id')}>
+                <option value="">Select nationality</option>
+                {nationalities.map((n) => <option key={n.id} value={n.id}>{n.country_name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className={LABEL_CLASS}>Country of Origin</label>
+              <select className={INPUT_CLASS} {...f('country_origin')}>
+                <option value="">Select country</option>
+                {nationalities.map((n) => <option key={n.id} value={n.id}>{n.country_name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className={LABEL_CLASS}>Guardian Name</label>
+              <input className={INPUT_CLASS} {...f('guradian')} />
+            </div>
+            <div>
+              <label className={LABEL_CLASS}>Relation to Guardian</label>
+              <input className={INPUT_CLASS} {...f('relation_guardian')} />
+            </div>
+          </div>
+          <div className="mt-5">
+            <label className={LABEL_CLASS}>Address</label>
+            <textarea className={INPUT_CLASS} rows={2} value={form.address ?? ''} onChange={(e) => setForm((p) => ({ ...p, address: e.target.value }))} />
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-6 gap-y-5 mt-5">
+            <div>
+              <label className={LABEL_CLASS}>District</label>
+              <input className={INPUT_CLASS} {...f('district')} />
+            </div>
+            <div>
+              <label className={LABEL_CLASS}>State</label>
+              <input className={INPUT_CLASS} {...f('state')} />
+            </div>
+            <div>
+              <label className={LABEL_CLASS}>Pincode</label>
+              <input className={INPUT_CLASS} {...f('pincode')} />
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    if (idx === 1) {
+      return (
+        <div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-5">
+            <div>
+              <label className={LABEL_CLASS}>PAN Number</label>
+              <input className={INPUT_CLASS} {...f('pan_no')} placeholder="ABCDE1234D" />
+            </div>
+            <div>
+              <label className={LABEL_CLASS}>PF Number</label>
+              <input className={INPUT_CLASS} {...f('pf')} />
+            </div>
+            <div>
+              <label className={LABEL_CLASS}>UAN (Company PF)</label>
+              <input className={INPUT_CLASS} {...f('company_pf')} />
+            </div>
+            <div>
+              <label className={LABEL_CLASS}>Previous PF Member ID</label>
+              <input className={INPUT_CLASS} {...f('previous_member_id')} />
+            </div>
+            <div>
+              <label className={LABEL_CLASS}>ESIC Number</label>
+              <input className={INPUT_CLASS} {...f('esi')} />
+            </div>
+            <div>
+              <label className={LABEL_CLASS}>ESI Dispensary</label>
+              <input className={INPUT_CLASS} {...f('esi_dispensary')} />
+            </div>
+            <div>
+              <label className={LABEL_CLASS}>LWF Code</label>
+              <input className={INPUT_CLASS} {...f('lwf_code')} />
+            </div>
+            <div>
+              <label className={LABEL_CLASS}>WPS Code</label>
+              <input className={INPUT_CLASS} {...f('wps_code')} />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mt-5">
+            {checkbox('eps', 'EPS Eligibility')}
+            {checkbox('international_worker', 'International Worker')}
+            {checkbox('physical_handicap', 'Physical Handicap')}
+            {checkbox('locomotive', 'Locomotive Disability')}
+            {checkbox('hearing', 'Hearing Disability')}
+            {checkbox('visual', 'Visual Disability')}
+          </div>
+        </div>
+      );
+    }
+
+    if (idx === 2) {
+      return (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-5">
+          <div>
+            <label className={LABEL_CLASS}>Bank Name</label>
+            <input className={INPUT_CLASS} {...f('bank')} />
+          </div>
+          <div>
+            <label className={LABEL_CLASS}>Bank Branch</label>
+            <input className={INPUT_CLASS} {...f('bank_branch')} />
+          </div>
+          <div>
+            <label className={LABEL_CLASS}>IFSC Code</label>
+            <input className={INPUT_CLASS} {...f('ifsc_code')} />
+          </div>
+          <div>
+            <label className={LABEL_CLASS}>Account Number</label>
+            <input className={INPUT_CLASS} {...f('account_no')} />
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="space-y-8">
+        <section>
+          <h3 className="text-[12px] font-semibold text-slate-500 uppercase tracking-wider mb-3">Documents</h3>
+          <div className="mb-3 max-w-sm">
+            <label className={LABEL_CLASS}>Upload file (attach before adding a row below)</label>
+            <DocumentUploadField value={docFile} onChange={setDocFile} />
+          </div>
+          <RepeatableRows
+            pkeyField="emp_doc_pkey"
+            rows={data!.documents}
+            addLabel="Add document"
+            onAdd={addChild('documents')}
+            onRemove={removeChild('documents')}
+            fields={[
+              { key: 'document_type', label: 'Type', type: 'select', options: DOCUMENT_TYPES.map((d) => ({ value: d, label: d })) },
+              { key: 'document_number', label: 'Number' },
+              { key: 'name', label: 'Name on Document' },
+              { key: 'relation', label: 'Relation' },
+              { key: 'nationality', label: 'Nationality' },
+              { key: 'valid_from', label: 'Valid From', type: 'date' },
+              { key: 'valid_till', label: 'Valid Till', type: 'date' },
+            ]}
+          />
+        </section>
+
+        <section>
+          <h3 className="text-[12px] font-semibold text-slate-500 uppercase tracking-wider mb-3">Education</h3>
+          <RepeatableRows
+            pkeyField="education_pkey"
+            rows={data!.education}
+            addLabel="Add education"
+            onAdd={addChild('education')}
+            onRemove={removeChild('education')}
+            fields={[
+              { key: 'course', label: 'Course' },
+              { key: 'university', label: 'University' },
+              { key: 'duration', label: 'Duration' },
+              { key: 'mark', label: 'Marks' },
+            ]}
+          />
+        </section>
+
+        <section>
+          <h3 className="text-[12px] font-semibold text-slate-500 uppercase tracking-wider mb-3">Work Experience</h3>
+          <RepeatableRows
+            pkeyField="experience_pkey"
+            rows={data!.experience}
+            addLabel="Add experience"
+            onAdd={addChild('experience')}
+            onRemove={removeChild('experience')}
+            fields={[
+              { key: 'company', label: 'Company' },
+              { key: 'designation', label: 'Designation' },
+              { key: 'department', label: 'Department' },
+              { key: 'from_date', label: 'From', type: 'date' },
+              { key: 'to_date', label: 'To', type: 'date' },
+              { key: 'salary', label: 'Salary', type: 'number' },
+            ]}
+          />
+        </section>
+
+        <section>
+          <h3 className="text-[12px] font-semibold text-slate-500 uppercase tracking-wider mb-3">Family</h3>
+          <RepeatableRows
+            pkeyField="emp_family_pkey"
+            rows={data!.family}
+            addLabel="Add family member"
+            onAdd={addChild('family')}
+            onRemove={removeChild('family')}
+            fields={[
+              { key: 'name', label: 'Name' },
+              { key: 'relation', label: 'Relation' },
+              { key: 'gender', label: 'Gender' },
+              { key: 'DOB', label: 'Date of Birth', type: 'date' },
+              { key: 'nationality', label: 'Nationality' },
+              { key: 'contact_number', label: 'Contact Number' },
+            ]}
+          />
+        </section>
+      </div>
+    );
+  }
+
+  function renderStepContent(idx: number) {
+    const s = STEPS[idx];
+    return (
+      <div>
+        <h2 className="font-heading text-[20px] font-bold text-[#0F172A] tracking-tight">{s.title}</h2>
+        <p className="text-[13.5px] text-slate-500 mt-1 mb-6">{s.subtitle}</p>
+        {renderStepFields(idx)}
+      </div>
+    );
+  }
+
+  const turnGlow = transitioning ? STEPS[transitioning.to].accent : undefined;
 
   return (
     <div className={cn('flex flex-col -m-6', embedded && 'max-h-[calc(90vh-3rem)]')}>
@@ -237,7 +546,7 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
         <div className="flex items-center gap-1.5 mt-5 overflow-x-auto scroll-fade">
           {STEPS.map((s, i) => {
             const isCompleted = completed.has(i);
-            const isActive = i === step;
+            const isActive = i === activeStepForUI;
             const clickable = isCompleted || isActive;
             return (
               <div key={s.key} className="flex items-center gap-1.5 flex-shrink-0">
@@ -245,22 +554,22 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
                   type="button"
                   disabled={!clickable}
                   onClick={() => clickable && goToStep(i)}
+                  style={isActive ? { backgroundColor: s.accentSoft, color: s.accent } : undefined}
                   className={cn(
-                    'flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-[13px] font-medium whitespace-nowrap transition-colors duration-[180ms]',
-                    isActive
-                      ? 'bg-[color:var(--color-primary)]/10 text-[color:var(--color-primary)]'
-                      : isCompleted
-                        ? 'text-[color:var(--color-success)] hover:bg-[color:var(--color-success)]/10 cursor-pointer'
-                        : 'text-slate-400 cursor-default'
+                    'flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-[13px] font-medium whitespace-nowrap transition-colors duration-[220ms]',
+                    !isActive && (isCompleted
+                      ? 'text-[color:var(--color-success)] hover:bg-[color:var(--color-success)]/10 cursor-pointer'
+                      : 'text-slate-400 cursor-default')
                   )}
                 >
                   <span
+                    style={isActive && !isCompleted ? { backgroundColor: s.accent } : undefined}
                     className={cn(
-                      'w-[18px] h-[18px] rounded-full flex items-center justify-center text-[10px] font-semibold flex-shrink-0 transition-colors duration-[180ms]',
+                      'w-[18px] h-[18px] rounded-full flex items-center justify-center text-[10px] font-semibold flex-shrink-0 transition-colors duration-[220ms]',
                       isCompleted
                         ? 'bg-[color:var(--color-success)] text-white'
                         : isActive
-                          ? 'bg-[color:var(--color-primary)] text-white'
+                          ? 'text-white'
                           : 'bg-slate-200 text-slate-500'
                     )}
                   >
@@ -275,279 +584,44 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
         </div>
       </div>
 
-      {/* Step content */}
-      <div className="flex-1 overflow-y-auto scroll-fade px-6 py-6">
-        <div key={step} ref={stepRef} className={direction === 'forward' ? 'animate-step-right' : 'animate-step-left'}>
-          <h2 className="font-heading text-[20px] font-bold text-[#0F172A] tracking-tight">{currentStep.title}</h2>
-          <p className="text-[13.5px] text-slate-500 mt-1 mb-6">{currentStep.subtitle}</p>
-
-          {step === 0 && (
-            <div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-5">
-                <div>
-                  <label className={LABEL_CLASS}>First Name</label>
-                  <input className={INPUT_CLASS} {...f('first_name')} />
-                </div>
-                <div>
-                  <label className={LABEL_CLASS}>Last Name</label>
-                  <input className={INPUT_CLASS} {...f('last_name')} />
-                </div>
-                <div>
-                  <label className={LABEL_CLASS}>Date of Birth</label>
-                  <input
-                    type="date"
-                    max={new Date().toISOString().slice(0, 10)}
-                    className={cn(INPUT_CLASS, fieldErrors.date_of_birth && ERROR_INPUT_CLASS)}
-                    {...f('date_of_birth')}
-                  />
-                  <FieldError>{fieldErrors.date_of_birth}</FieldError>
-                </div>
-                <div>
-                  <label className={LABEL_CLASS}>Gender</label>
-                  <select className={INPUT_CLASS} {...f('classification')}>
-                    <option value="">Select gender</option>
-                    <option value="male">Male</option>
-                    <option value="female">Female</option>
-                    <option value="others">Other</option>
-                  </select>
-                </div>
-                <div>
-                  <label className={LABEL_CLASS}>Mobile</label>
-                  <input
-                    type="tel"
-                    maxLength={10}
-                    className={cn(INPUT_CLASS, fieldErrors.mobile_no && ERROR_INPUT_CLASS)}
-                    {...f('mobile_no')}
-                  />
-                  <FieldError>{fieldErrors.mobile_no}</FieldError>
-                </div>
-                <div>
-                  <label className={LABEL_CLASS}>Email</label>
-                  <input type="email" className={INPUT_CLASS} {...f('email')} />
-                </div>
-                <div>
-                  <label className={LABEL_CLASS}>Aadhaar / ID Card</label>
-                  <input
-                    maxLength={12}
-                    className={cn(INPUT_CLASS, fieldErrors.id_card && ERROR_INPUT_CLASS)}
-                    {...f('id_card')}
-                  />
-                  <FieldError>{fieldErrors.id_card}</FieldError>
-                </div>
-                <div>
-                  <label className={LABEL_CLASS}>Blood Group</label>
-                  <select className={INPUT_CLASS} {...f('blood')}>
-                    <option value="">Select blood group</option>
-                    {['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'].map((bg) => (
-                      <option key={bg} value={bg}>{bg}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className={LABEL_CLASS}>Marital Status</label>
-                  <select className={INPUT_CLASS} {...f('maritual_status')}>
-                    <option value="">Select status</option>
-                    <option value="Single">Single</option>
-                    <option value="Married">Married</option>
-                    <option value="Divorced">Divorced</option>
-                    <option value="Widowed">Widowed</option>
-                  </select>
-                </div>
-                <div>
-                  <label className={LABEL_CLASS}>Nationality</label>
-                  <select className={INPUT_CLASS} {...f('nationality_id')}>
-                    <option value="">Select nationality</option>
-                    {nationalities.map((n) => <option key={n.id} value={n.id}>{n.country_name}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className={LABEL_CLASS}>Country of Origin</label>
-                  <select className={INPUT_CLASS} {...f('country_origin')}>
-                    <option value="">Select country</option>
-                    {nationalities.map((n) => <option key={n.id} value={n.id}>{n.country_name}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className={LABEL_CLASS}>Guardian Name</label>
-                  <input className={INPUT_CLASS} {...f('guradian')} />
-                </div>
-                <div>
-                  <label className={LABEL_CLASS}>Relation to Guardian</label>
-                  <input className={INPUT_CLASS} {...f('relation_guardian')} />
-                </div>
-              </div>
-              <div className="mt-5">
-                <label className={LABEL_CLASS}>Address</label>
-                <textarea className={INPUT_CLASS} rows={2} value={form.address ?? ''} onChange={(e) => setForm((p) => ({ ...p, address: e.target.value }))} />
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-6 gap-y-5 mt-5">
-                <div>
-                  <label className={LABEL_CLASS}>District</label>
-                  <input className={INPUT_CLASS} {...f('district')} />
-                </div>
-                <div>
-                  <label className={LABEL_CLASS}>State</label>
-                  <input className={INPUT_CLASS} {...f('state')} />
-                </div>
-                <div>
-                  <label className={LABEL_CLASS}>Pincode</label>
-                  <input className={INPUT_CLASS} {...f('pincode')} />
-                </div>
-              </div>
+      {/* Step content — a document that "turns pages" between sections */}
+      <div
+        ref={contentWrapperRef}
+        className={cn(
+          'relative',
+          transitioning ? 'overflow-hidden page-turn-container' : 'flex-1 overflow-y-auto scroll-fade'
+        )}
+        style={{
+          ...(transitioning && transitionHeight ? { height: transitionHeight } : undefined),
+          ...(turnGlow ? ({ '--turn-glow': turnGlow } as React.CSSProperties) : undefined),
+        }}
+      >
+        {transitioning ? (
+          <>
+            <div
+              className={cn(
+                'absolute inset-0 overflow-y-auto scroll-fade px-6 py-6 bg-white page-turn-layer',
+                transitioning.direction === 'forward' ? 'page-turn-out-forward' : 'page-turn-out-back'
+              )}
+              style={{ zIndex: 2 }}
+            >
+              {renderStepContent(transitioning.from)}
             </div>
-          )}
-
-          {step === 1 && (
-            <div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-5">
-                <div>
-                  <label className={LABEL_CLASS}>PAN Number</label>
-                  <input className={INPUT_CLASS} {...f('pan_no')} placeholder="ABCDE1234D" />
-                </div>
-                <div>
-                  <label className={LABEL_CLASS}>PF Number</label>
-                  <input className={INPUT_CLASS} {...f('pf')} />
-                </div>
-                <div>
-                  <label className={LABEL_CLASS}>UAN (Company PF)</label>
-                  <input className={INPUT_CLASS} {...f('company_pf')} />
-                </div>
-                <div>
-                  <label className={LABEL_CLASS}>Previous PF Member ID</label>
-                  <input className={INPUT_CLASS} {...f('previous_member_id')} />
-                </div>
-                <div>
-                  <label className={LABEL_CLASS}>ESIC Number</label>
-                  <input className={INPUT_CLASS} {...f('esi')} />
-                </div>
-                <div>
-                  <label className={LABEL_CLASS}>ESI Dispensary</label>
-                  <input className={INPUT_CLASS} {...f('esi_dispensary')} />
-                </div>
-                <div>
-                  <label className={LABEL_CLASS}>LWF Code</label>
-                  <input className={INPUT_CLASS} {...f('lwf_code')} />
-                </div>
-                <div>
-                  <label className={LABEL_CLASS}>WPS Code</label>
-                  <input className={INPUT_CLASS} {...f('wps_code')} />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mt-5">
-                {checkbox('eps', 'EPS Eligibility')}
-                {checkbox('international_worker', 'International Worker')}
-                {checkbox('physical_handicap', 'Physical Handicap')}
-                {checkbox('locomotive', 'Locomotive Disability')}
-                {checkbox('hearing', 'Hearing Disability')}
-                {checkbox('visual', 'Visual Disability')}
-              </div>
+            <div
+              className={cn(
+                'absolute inset-0 overflow-y-auto scroll-fade px-6 py-6 bg-white page-turn-layer',
+                transitioning.direction === 'forward' ? 'page-turn-in-forward' : 'page-turn-in-back'
+              )}
+              style={{ zIndex: 1 }}
+            >
+              {renderStepContent(transitioning.to)}
             </div>
-          )}
-
-          {step === 2 && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-5">
-              <div>
-                <label className={LABEL_CLASS}>Bank Name</label>
-                <input className={INPUT_CLASS} {...f('bank')} />
-              </div>
-              <div>
-                <label className={LABEL_CLASS}>Bank Branch</label>
-                <input className={INPUT_CLASS} {...f('bank_branch')} />
-              </div>
-              <div>
-                <label className={LABEL_CLASS}>IFSC Code</label>
-                <input className={INPUT_CLASS} {...f('ifsc_code')} />
-              </div>
-              <div>
-                <label className={LABEL_CLASS}>Account Number</label>
-                <input className={INPUT_CLASS} {...f('account_no')} />
-              </div>
-            </div>
-          )}
-
-          {step === 3 && (
-            <div className="space-y-8">
-              <section>
-                <h3 className="text-[12px] font-semibold text-slate-500 uppercase tracking-wider mb-3">Documents</h3>
-                <div className="mb-3 max-w-sm">
-                  <label className={LABEL_CLASS}>Upload file (attach before adding a row below)</label>
-                  <DocumentUploadField value={docFile} onChange={setDocFile} />
-                </div>
-                <RepeatableRows
-                  pkeyField="emp_doc_pkey"
-                  rows={data.documents}
-                  addLabel="Add document"
-                  onAdd={addChild('documents')}
-                  onRemove={removeChild('documents')}
-                  fields={[
-                    { key: 'document_type', label: 'Type', type: 'select', options: DOCUMENT_TYPES.map((d) => ({ value: d, label: d })) },
-                    { key: 'document_number', label: 'Number' },
-                    { key: 'name', label: 'Name on Document' },
-                    { key: 'relation', label: 'Relation' },
-                    { key: 'nationality', label: 'Nationality' },
-                    { key: 'valid_from', label: 'Valid From', type: 'date' },
-                    { key: 'valid_till', label: 'Valid Till', type: 'date' },
-                  ]}
-                />
-              </section>
-
-              <section>
-                <h3 className="text-[12px] font-semibold text-slate-500 uppercase tracking-wider mb-3">Education</h3>
-                <RepeatableRows
-                  pkeyField="education_pkey"
-                  rows={data.education}
-                  addLabel="Add education"
-                  onAdd={addChild('education')}
-                  onRemove={removeChild('education')}
-                  fields={[
-                    { key: 'course', label: 'Course' },
-                    { key: 'university', label: 'University' },
-                    { key: 'duration', label: 'Duration' },
-                    { key: 'mark', label: 'Marks' },
-                  ]}
-                />
-              </section>
-
-              <section>
-                <h3 className="text-[12px] font-semibold text-slate-500 uppercase tracking-wider mb-3">Work Experience</h3>
-                <RepeatableRows
-                  pkeyField="experience_pkey"
-                  rows={data.experience}
-                  addLabel="Add experience"
-                  onAdd={addChild('experience')}
-                  onRemove={removeChild('experience')}
-                  fields={[
-                    { key: 'company', label: 'Company' },
-                    { key: 'designation', label: 'Designation' },
-                    { key: 'department', label: 'Department' },
-                    { key: 'from_date', label: 'From', type: 'date' },
-                    { key: 'to_date', label: 'To', type: 'date' },
-                    { key: 'salary', label: 'Salary', type: 'number' },
-                  ]}
-                />
-              </section>
-
-              <section>
-                <h3 className="text-[12px] font-semibold text-slate-500 uppercase tracking-wider mb-3">Family</h3>
-                <RepeatableRows
-                  pkeyField="emp_family_pkey"
-                  rows={data.family}
-                  addLabel="Add family member"
-                  onAdd={addChild('family')}
-                  onRemove={removeChild('family')}
-                  fields={[
-                    { key: 'name', label: 'Name' },
-                    { key: 'relation', label: 'Relation' },
-                    { key: 'gender', label: 'Gender' },
-                    { key: 'DOB', label: 'Date of Birth', type: 'date' },
-                    { key: 'nationality', label: 'Nationality' },
-                    { key: 'contact_number', label: 'Contact Number' },
-                  ]}
-                />
-              </section>
-            </div>
-          )}
-        </div>
+          </>
+        ) : (
+          <div key={step} ref={stepRef} className="px-6 py-6">
+            {renderStepContent(step)}
+          </div>
+        )}
       </div>
 
       {/* Sticky footer */}
