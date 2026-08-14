@@ -6,7 +6,7 @@ import type { RowDataPacket, ResultSetHeader } from 'mysql2';
 import { generateNextEmpId } from '@/lib/empId';
 
 const LIST_SELECT = `
-  SELECT e.emp_pkey, e.emp_id, e.first_name, e.last_name, e.status,
+  SELECT e.emp_pkey, e.emp_id, e.first_name, e.last_name, e.status, e.profile_pic,
          e.mobile_no, e.email, e.date_of_birth,
          p.joining_date, p.emp_branch, p.emp_dept, p.designation,
          b.branch_name, d.dept_name, ds.desig_name

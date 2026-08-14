@@ -215,8 +215,9 @@ export function Sidebar() {
       {/* Logo + collapse toggle */}
       <div className={cn('flex items-center flex-shrink-0 mb-5', expanded ? 'justify-between px-4' : 'justify-center')}>
         <div className={cn('flex items-center', expanded && 'gap-2.5')}>
-          <div className="w-11 h-11 rounded-full brand-ring flex items-center justify-center flex-shrink-0">
-            <span className="text-sm font-bold text-[color:var(--color-primary)] font-heading">R</span>
+          <div className="w-11 h-11 rounded-full bg-white border border-slate-200 shadow-sm flex items-center justify-center flex-shrink-0 overflow-hidden">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/branding/rizo-logo.jpg" alt="RIZO" className="w-full h-full object-contain" />
           </div>
           {expanded && (
             <div>

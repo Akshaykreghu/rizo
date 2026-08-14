@@ -4,8 +4,7 @@ import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Pencil, User, Briefcase, Wallet, Landmark } from 'lucide-react';
 import { cn, formatDate } from '@/lib/utils';
-import { Avatar } from '@/components/ui/Avatar';
-import { FileUploadField } from '@/components/employees/FileUploadField';
+import { AvatarUpload } from '@/components/ui/AvatarUpload';
 import { EmployeeSearch } from '@/components/employees/EmployeeSearch';
 import { RepeatableRows } from '@/components/employees/RepeatableRows';
 import { DocumentUploadField } from '@/components/employees/DocumentUploadField';
@@ -116,6 +115,7 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
       }).then((r) => r.json()),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['employee', id] });
+      queryClient.invalidateQueries({ queryKey: ['employees'] });
       setEditing(false);
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
@@ -188,7 +188,14 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
         )}
         <div className="flex items-start justify-between gap-4 pr-14">
           <div className="flex items-center gap-3.5 min-w-0">
-            <Avatar name={`${emp.first_name} ${emp.last_name}`} className="w-11 h-11 text-sm flex-shrink-0" />
+            <AvatarUpload
+              name={`${emp.first_name} ${emp.last_name}`}
+              imageUrl={form.profile_pic || emp.profile_pic}
+              onUploaded={(path) => setForm((prev) => ({ ...prev, profile_pic: path }))}
+              disabled={!editing}
+              className="w-11 h-11 flex-shrink-0"
+              avatarClassName="text-sm"
+            />
             <div className="min-w-0">
               <h1 className="font-heading text-[22px] font-bold text-[#0F172A] tracking-tight leading-tight truncate">
                 {emp.first_name} {emp.last_name}
@@ -291,11 +298,6 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                   <input className={INPUT_CLASS} {...f('lwf_code')} />
                 </div>
               </div>
-              <FileUploadField
-                label="Photo"
-                value={form.profile_pic ?? ''}
-                onChange={(path) => setForm((prev) => ({ ...prev, profile_pic: path }))}
-              />
             </div>
           ) : (
             <div className="grid grid-cols-2 gap-x-6 gap-y-5">

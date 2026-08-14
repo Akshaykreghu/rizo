@@ -9,7 +9,7 @@ interface SelectOption { value: string; label: string }
 interface JoinDetail { join: Record<string, string> }
 
 const EMPTY_FORM = {
-  emp_id: '', emp_company_id: '', username: '', password: '',
+  emp_company_id: '', username: '', password: '',
   joining_date: '', emp_branch: '', emp_dept: '', designation: '', emp_grade: '',
   emp_type: '', attr1: '', probation: '',
   structure_id: '', emp_anual_ctc: '', emp_monthly_ctc: '',
@@ -133,11 +133,7 @@ export function OnboardForm({ id, onBack, onOnboarded, showBackLink = true }: On
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="label">Employee ID</label>
-              <input className="input" {...f('emp_id')} placeholder="Leave blank to auto-generate" />
-            </div>
-            <div>
-              <label className="label">Employee Company ID <span className="text-red-500">*</span></label>
-              <input required className="input" {...f('emp_company_id')} placeholder="e.g. 100024" />
+              <input className="input" {...f('emp_company_id')} placeholder="Leave as blanks if no ID" />
             </div>
             <div>
               <label className="label">Login Username <span className="text-red-500">*</span></label>

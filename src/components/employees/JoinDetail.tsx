@@ -4,10 +4,9 @@ import { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { Avatar } from '@/components/ui/Avatar';
+import { AvatarUpload } from '@/components/ui/AvatarUpload';
 import { RepeatableRows } from '@/components/employees/RepeatableRows';
 import { DocumentUploadField } from '@/components/employees/DocumentUploadField';
-import { FileUploadField } from '@/components/employees/FileUploadField';
 import { dobError, mobileError, aadhaarError } from '@/lib/validation';
 
 interface JoinDetailData {
@@ -105,7 +104,7 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(form),
     }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['employees/join', id] }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['employees/join'] }),
   });
 
   function f(key: string) {
@@ -221,7 +220,12 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
           </button>
         )}
         <div className="flex items-center gap-3 pr-14">
-          <Avatar name={`${data.join.first_name} ${data.join.last_name ?? ''}`} className="w-10 h-10 flex-shrink-0" />
+          <AvatarUpload
+            name={`${data.join.first_name} ${data.join.last_name ?? ''}`}
+            imageUrl={form.profile_image_url || data.join.profile_image_url}
+            onUploaded={(path) => setForm((prev) => ({ ...prev, profile_image_url: path }))}
+            className="w-10 h-10 flex-shrink-0"
+          />
           <div className="min-w-0">
             <h1 className="font-heading text-[20px] font-bold text-[#0F172A] tracking-tight leading-tight truncate">
               {data.join.first_name} {data.join.last_name}
@@ -389,13 +393,6 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
                   <label className={LABEL_CLASS}>Pincode</label>
                   <input className={INPUT_CLASS} {...f('pincode')} />
                 </div>
-              </div>
-              <div className="mt-5">
-                <FileUploadField
-                  label="Photo"
-                  value={form.profile_image_url ?? ''}
-                  onChange={(path) => setForm((prev) => ({ ...prev, profile_image_url: path }))}
-                />
               </div>
             </div>
           )}

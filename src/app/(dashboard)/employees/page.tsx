@@ -25,6 +25,7 @@ interface Employee {
   desig_name: string;
   joining_date: string;
   status: number;
+  profile_pic: string | null;
 }
 
 interface BranchOption {
@@ -117,7 +118,7 @@ export default function EmployeesPage({
       meta: { className: 'w-[26%]' },
       cell: ({ row }) => (
         <div className="flex items-center gap-2.5">
-          <Avatar name={`${row.original.first_name} ${row.original.last_name}`} />
+          <Avatar name={`${row.original.first_name} ${row.original.last_name}`} imageUrl={row.original.profile_pic} />
           <div className="leading-tight">
             <p className="font-semibold text-sm text-[#0F172A]">
               {row.original.first_name} {row.original.last_name}

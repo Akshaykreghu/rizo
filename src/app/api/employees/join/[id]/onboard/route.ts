@@ -34,9 +34,9 @@ export async function POST(
   }
   const join = joinRows[0];
 
-  if (!body.emp_company_id || !body.username || !body.password) {
+  if (!body.username || !body.password) {
     return NextResponse.json(
-      { error: 'Employee Company ID, username, and password are all required' },
+      { error: 'Username and password are required' },
       { status: 400 }
     );
   }
