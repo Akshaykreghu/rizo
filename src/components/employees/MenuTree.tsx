@@ -18,7 +18,12 @@ export function MenuTree({ nodes, checked, onToggle }: MenuTreeProps) {
       {nodes.map((node) => (
         <li key={node.menu_id}>
           <label className="flex items-center gap-2 text-sm py-1 hover:bg-gray-50 rounded px-1 cursor-pointer">
-            <input type="checkbox" checked={checked.has(node.menu_id)} onChange={() => onToggle(node.menu_id)} />
+            <input
+              type="checkbox"
+              checked={checked.has(node.menu_id)}
+              onChange={() => onToggle(node.menu_id)}
+              className="accent-[color:var(--color-primary)]"
+            />
             <span className={node.children.length ? 'font-medium text-gray-900' : 'text-gray-700'}>{node.menu_title}</span>
           </label>
           {node.children.length > 0 && (

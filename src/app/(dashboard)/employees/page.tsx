@@ -3,13 +3,14 @@
 import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
-import { Plus, Search, UserX, UserCheck, Eye, KeyRound } from 'lucide-react';
+import { Plus, Search, UserX, UserCheck, Eye, KeyRound, ListTree } from 'lucide-react';
 import { DataTable } from '@/components/data-table/DataTable';
 import { Avatar } from '@/components/ui/Avatar';
 import { Modal } from '@/components/ui/Modal';
 import { FloatingActionPanel, type FloatingAction } from '@/components/ui/FloatingActionPanel';
 import { EmployeeDetail } from '@/components/employees/EmployeeDetail';
 import { AccessManageModal } from '@/components/employees/AccessManageModal';
+import { MenuAllocationModal } from '@/components/employees/MenuAllocationModal';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { cn, formatDate } from '@/lib/utils';
 import { STATUS_FILTERS } from '@/lib/statusFilters';
@@ -68,6 +69,7 @@ export default function EmployeesPage({
   const [selectedEmpPkey, setSelectedEmpPkey] = useState<number | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [accessModalOpen, setAccessModalOpen] = useState(false);
+  const [menuAllocationOpen, setMenuAllocationOpen] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
   const search = embedded ? (searchProp ?? '') : debouncedSearchInput;
@@ -174,6 +176,7 @@ export default function EmployeesPage({
     ? [
         { key: 'view', label: 'View', icon: Eye, variant: 'primary', onClick: () => setModalOpen(true) },
         { key: 'access', label: 'Manage Access', icon: KeyRound, variant: 'default', onClick: () => setAccessModalOpen(true) },
+        { key: 'menu-allocation', label: 'Menu Allocation', icon: ListTree, variant: 'default', onClick: () => setMenuAllocationOpen(true) },
         ...(selectedEmployee.status === 2
           ? []
           : [
@@ -281,6 +284,12 @@ export default function EmployeesPage({
             onSaved={() => setAccessModalOpen(false)}
             onNotify={(message, type) => setToast({ message, type })}
           />
+        )}
+      </Modal>
+
+      <Modal open={menuAllocationOpen} onClose={() => setMenuAllocationOpen(false)} className="max-w-[760px] rounded-[22px]">
+        {selectedEmpPkey !== null && (
+          <MenuAllocationModal empPkey={selectedEmpPkey} onClose={() => setMenuAllocationOpen(false)} />
         )}
       </Modal>
 
