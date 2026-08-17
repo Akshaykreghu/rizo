@@ -3,12 +3,13 @@
 import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
-import { Plus, Search, UserX, UserCheck, Eye } from 'lucide-react';
+import { Plus, Search, UserX, UserCheck, Eye, KeyRound } from 'lucide-react';
 import { DataTable } from '@/components/data-table/DataTable';
 import { Avatar } from '@/components/ui/Avatar';
 import { Modal } from '@/components/ui/Modal';
 import { FloatingActionPanel, type FloatingAction } from '@/components/ui/FloatingActionPanel';
 import { EmployeeDetail } from '@/components/employees/EmployeeDetail';
+import { AccessManageModal } from '@/components/employees/AccessManageModal';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { cn, formatDate } from '@/lib/utils';
 import { STATUS_FILTERS } from '@/lib/statusFilters';
@@ -66,6 +67,8 @@ export default function EmployeesPage({
   const [internalBranch, setInternalBranch] = useState('');
   const [selectedEmpPkey, setSelectedEmpPkey] = useState<number | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
+  const [accessModalOpen, setAccessModalOpen] = useState(false);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
   const search = embedded ? (searchProp ?? '') : debouncedSearchInput;
   const pageSize = embedded ? (pageSizeProp ?? 25) : 25;
@@ -77,6 +80,12 @@ export default function EmployeesPage({
   useEffect(() => {
     setPage(1);
   }, [search, status, branch, pageSize]);
+
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 4000);
+    return () => clearTimeout(t);
+  }, [toast]);
 
   const { data: branches = [] } = useQuery<BranchOption[]>({
     queryKey: ['setup/branches'],
@@ -164,6 +173,7 @@ export default function EmployeesPage({
   const panelActions: FloatingAction[] = selectedEmployee
     ? [
         { key: 'view', label: 'View', icon: Eye, variant: 'primary', onClick: () => setModalOpen(true) },
+        { key: 'access', label: 'Manage Access', icon: KeyRound, variant: 'default', onClick: () => setAccessModalOpen(true) },
         ...(selectedEmployee.status === 2
           ? []
           : [
@@ -263,6 +273,27 @@ export default function EmployeesPage({
           <EmployeeDetail id={String(selectedEmpPkey)} onBack={() => setModalOpen(false)} showBackLink={false} />
         )}
       </Modal>
+
+      <Modal open={accessModalOpen} onClose={() => setAccessModalOpen(false)} className="max-w-[560px] rounded-[22px]">
+        {selectedEmpPkey !== null && (
+          <AccessManageModal
+            empPkey={selectedEmpPkey}
+            onSaved={() => setAccessModalOpen(false)}
+            onNotify={(message, type) => setToast({ message, type })}
+          />
+        )}
+      </Modal>
+
+      {toast && (
+        <div
+          className={cn(
+            'fixed top-4 right-4 z-[60] px-4 py-3 rounded-xl shadow-lg text-sm font-medium text-white',
+            toast.type === 'success' ? 'bg-[color:var(--color-success)]' : 'bg-[color:var(--color-danger)]'
+          )}
+        >
+          {toast.message}
+        </div>
+      )}
     </div>
   );
 }

@@ -7,6 +7,37 @@ import bcrypt from 'bcryptjs';
 
 const MIN_PASSWORD_LENGTH = 8;
 
+export async function GET(
+  _request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const session = await getServerSession(authOptions);
+  if (!session || session.user.userGroup !== 1) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  const { id } = await params;
+  const pool = await getCompanyPool(session.user.companyCode);
+
+  const [rows] = await pool.execute<RowDataPacket[]>(
+    `SELECT e.emp_pkey, e.first_name, e.last_name, e.mobile_no, uc.email,
+            p.emp_company_id,
+            uc.user_pkey, uc.user_id, uc.access_allowed, uc.locked, uc.reset_login_flag,
+            uc.incorrect_login_attempt,
+            mc.locked AS mobile_locked, mc.punchtype
+     FROM emp_details e
+     LEFT JOIN emp_proff p ON p.emp_fkey = e.emp_pkey
+     LEFT JOIN user_credentials uc ON uc.emp_fkey = e.emp_pkey
+     LEFT JOIN mob_user_credentials mc ON mc.user_id = uc.user_id
+     WHERE e.emp_pkey = ?`,
+    [id]
+  );
+
+  if (!rows.length) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+
+  return NextResponse.json(rows[0]);
+}
+
 export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
