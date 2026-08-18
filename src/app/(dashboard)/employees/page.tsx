@@ -115,7 +115,7 @@ export default function EmployeesPage({
   const columns: ColumnDef<Employee, unknown>[] = [
     {
       id: 'slNo',
-      header: 'Sl No',
+      header: '',
       meta: { className: 'w-12' },
       cell: ({ row, table }) => {
         const { pageIndex, pageSize } = table.getState().pagination;

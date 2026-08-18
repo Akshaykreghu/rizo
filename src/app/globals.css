@@ -121,6 +121,19 @@ body {
   box-shadow: 0 12px 24px -10px rgba(15, 23, 42, 0.14);
 }
 
+/* Brief, gentle glow pulse for a primary CTA — plays a few times on mount, then settles back
+   to the element's normal shadow (default animation-fill-mode reverts on finish, so no JS
+   cleanup is needed). Shadow-only, no movement, so it doesn't read as layout jitter. */
+@keyframes cta-pulse-glow {
+  0%, 100% { box-shadow: 0 8px 20px -6px rgba(33, 150, 243, 0.35); }
+  50% { box-shadow: 0 10px 28px -4px rgba(33, 150, 243, 0.7); }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .cta-pulse {
+    animation: cta-pulse-glow 1.6s ease-in-out 3;
+  }
+}
+
 /* Scrollbar hidden until the user scrolls or hovers */
 .scroll-fade {
   scrollbar-width: thin;

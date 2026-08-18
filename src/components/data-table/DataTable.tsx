@@ -22,6 +22,8 @@ interface DataTableProps<TData> {
   totalRows?: number;
   /** Server-side pagination callback */
   onPageChange?: (page: number, pageSize: number) => void;
+  /** If provided, shows a "Rows per page" selector in the pagination footer with these choices. */
+  pageSizeOptions?: number[];
   isLoading?: boolean;
   className?: string;
   onRowClick?: (row: TData) => void;
@@ -49,6 +51,7 @@ export function DataTable<TData>({
   pageSize: initialPageSize = 25,
   totalRows,
   onPageChange,
+  pageSizeOptions,
   isLoading,
   className,
   onRowClick,
@@ -145,8 +148,8 @@ export function DataTable<TData>({
                   <tr
                     key={row.id}
                     className={cn(
-                      'group/row h-14 transition-colors duration-[180ms] border-b border-slate-50',
-                      i % 2 === 1 && !selected && 'bg-slate-900/[0.015]',
+                      'group/row h-11 transition-colors duration-[180ms] border-b border-slate-50',
+                      i % 2 === 1 && !selected && 'bg-slate-900/[0.035]',
                       selected
                         ? 'bg-[color:var(--color-primary)]/[0.07] shadow-[inset_2px_0_0_var(--color-primary)]'
                         : 'hover:bg-[color:var(--color-primary)]/[0.025]',
@@ -158,7 +161,7 @@ export function DataTable<TData>({
                       <td
                         key={cell.id}
                         className={cn(
-                          'px-4 py-3 text-[#0F172A]',
+                          'px-4 py-2 text-[#0F172A]',
                           (cell.column.columnDef.meta as { className?: string } | undefined)?.className
                         )}
                       >
@@ -175,12 +178,26 @@ export function DataTable<TData>({
 
         {/* Pagination */}
         <div className="flex items-center justify-between text-sm text-slate-500 border-t border-slate-100 px-4 py-3">
-          <span>
-            Page {pageIndex + 1} of {pageCount}
-            {isServerSide && totalRows !== undefined && (
-              <span className="text-slate-400 ml-2">({totalRows} total)</span>
+          <div className="flex items-center gap-4">
+            {pageSizeOptions && (
+              <label className="flex items-center gap-2 text-sm text-slate-500">
+                Rows per page
+                <select
+                  value={pagination.pageSize}
+                  onChange={(e) => table.setPageSize(Number(e.target.value))}
+                  className="bg-white border border-slate-200 rounded-lg px-2 py-1 text-sm text-slate-600 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/40"
+                >
+                  {pageSizeOptions.map((n) => <option key={n} value={n}>{n}</option>)}
+                </select>
+              </label>
             )}
-          </span>
+            <span>
+              Page {pageIndex + 1} of {pageCount}
+              {isServerSide && totalRows !== undefined && (
+                <span className="text-slate-400 ml-2">({totalRows} total)</span>
+              )}
+            </span>
+          </div>
           <div className="flex items-center gap-1">
             <button
               onClick={() => table.setPageIndex(0)}

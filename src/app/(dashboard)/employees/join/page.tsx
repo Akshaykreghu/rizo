@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Trash2, Pencil, ArrowRightCircle, Search, Download, UploadCloud, Users, UserCheck, UserPlus, FileSpreadsheet, X, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { cn, formatDate } from '@/lib/utils';
@@ -12,6 +13,7 @@ import { JoinDetail } from '@/components/employees/JoinDetail';
 import { NewJoinForm } from '@/components/employees/NewJoinForm';
 import { OnboardForm } from '@/components/employees/OnboardForm';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
+import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
 import { STATUS_FILTERS } from '@/lib/statusFilters';
 import type { ColumnDef } from '@tanstack/react-table';
 import EmployeesPage from '../page';
@@ -25,6 +27,7 @@ interface JoinRow {
   date_of_birth: string;
   district: string;
   profile_image_url: string | null;
+  completion_pct: number;
 }
 
 interface BranchOption {
@@ -32,17 +35,18 @@ interface BranchOption {
   branch_name: string;
 }
 
-const PAGE_SIZE_OPTIONS = [10, 20, 30, 40, 50];
+const PAGE_SIZE_OPTIONS = [7, 10, 20, 30, 40, 50];
 
 export default function EmployeeJoinPage() {
   const queryClient = useQueryClient();
+  const { slotEl } = useHeaderSlot();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [tab, setTab] = useState<'joining' | 'all'>('joining');
   const [page, setPage] = useState(1);
   const [searchInput, setSearchInput] = useState('');
   const search = useDebouncedValue(searchInput, 300);
   const [uploadResult, setUploadResult] = useState<{ inserted: number; errors: { row: number; message: string }[] } | null>(null);
-  const [pageSize, setPageSize] = useState(10);
+  const [pageSize, setPageSize] = useState(7);
   const [selectedJoinId, setSelectedJoinId] = useState<number | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [allStatus, setAllStatus] = useState('1');
@@ -181,7 +185,7 @@ export default function EmployeeJoinPage() {
   const columns: ColumnDef<JoinRow, unknown>[] = [
     {
       id: 'slNo',
-      header: 'Sl No',
+      header: '',
       cell: ({ row, table }) => {
         const { pageIndex, pageSize } = table.getState().pagination;
         return <span className="text-slate-400">{pageIndex * pageSize + row.index + 1}</span>;
@@ -208,7 +212,40 @@ export default function EmployeeJoinPage() {
       header: 'Date of Birth',
       cell: ({ getValue }) => formatDate(String(getValue() ?? '')),
     },
-    { accessorKey: 'district', header: 'District' },
+    {
+      accessorKey: 'completion_pct',
+      header: 'Completion',
+      cell: ({ getValue }) => {
+        const pct = Number(getValue() ?? 0);
+        const colorVar = pct === 100 ? '--color-success' : pct >= 50 ? '--color-primary' : '--color-highlight-dark';
+        return (
+          <div className="flex items-center gap-2 min-w-[90px]">
+            <div className="w-14 h-1.5 rounded-full bg-slate-100 overflow-hidden">
+              <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: `var(${colorVar})` }} />
+            </div>
+            <span className="text-xs font-medium" style={{ color: `var(${colorVar})` }}>{pct}%</span>
+          </div>
+        );
+      },
+    },
+    {
+      id: 'onboard',
+      header: '',
+      cell: ({ row }) => (
+        <div className="flex justify-end">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setOnboardId(row.original.emp_join_pkey);
+            }}
+            className="flex items-center gap-1.5 text-xs font-medium text-[color:var(--color-success)] hover:bg-[color:var(--color-success)]/10 px-2.5 py-1.5 rounded-lg transition-colors duration-[180ms]"
+          >
+            <ArrowRightCircle className="w-3.5 h-3.5" />
+            Continue Onboarding
+          </button>
+        </div>
+      ),
+    },
   ];
 
   const selectedJoinRow = data?.data?.find((r) => r.emp_join_pkey === selectedJoinId);
@@ -220,13 +257,6 @@ export default function EmployeeJoinPage() {
           icon: Pencil,
           variant: 'primary',
           onClick: () => setModalOpen(true),
-        },
-        {
-          key: 'onboard',
-          label: 'Continue Onboarding',
-          icon: ArrowRightCircle,
-          variant: 'success',
-          onClick: () => setOnboardId(selectedJoinRow.emp_join_pkey),
         },
         {
           key: 'delete',
@@ -256,49 +286,69 @@ export default function EmployeeJoinPage() {
 
   return (
     <div>
-      <div className="flex items-start justify-between gap-6 mb-6 flex-wrap">
-        <div className="flex items-center gap-5 flex-wrap">
-          <div>
-            <h1 className="font-heading text-2xl font-bold text-[#0F172A] tracking-tight">
-              {tab === 'joining' ? 'Employee Join' : 'All Employees'}
-            </h1>
-            <p className="text-sm text-[#64748B] mt-0.5">
-              {tab === 'joining' ? 'Manage and track employee joining details' : 'Browse and manage all employees'}
-            </p>
-          </div>
-          <div className="flex items-center gap-2.5">
-            {kpis.map((k) => (
-              <div key={k.label} className="glass-card lift-on-hover rounded-2xl px-3.5 py-2.5 flex items-center gap-2.5 min-w-[120px]">
-                <span className={cn('w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0', kpiColorClass[k.color])}>
-                  <k.icon className="w-4 h-4" strokeWidth={1.75} />
-                </span>
-                <div>
-                  <p className="text-lg font-bold text-[#0F172A] leading-none">{k.value ?? '—'}</p>
-                  <p className="text-[11px] text-[#64748B] mt-1">{k.label}</p>
-                </div>
-              </div>
-            ))}
-          </div>
+      <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-4 mb-6">
+        <div>
+          <h1 className="font-heading text-2xl font-bold text-[#0F172A] tracking-tight">
+            Employee
+          </h1>
+          <p className="text-sm text-[#64748B] mt-0.5">
+            Onboard new hires and manage your workforce
+          </p>
         </div>
-        {tab === 'joining' ? (
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setBulkUploadOpen(true)}
-              className="flex items-center gap-1.5 text-sm text-slate-600 hover:text-[color:var(--color-primary)] px-3 py-2 rounded-xl glass-panel transition-all duration-[180ms]"
-            >
-              <UploadCloud className="w-4 h-4" /> Bulk Upload
-            </button>
-            <input ref={fileInputRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleFileSelected} />
-            <button
-              onClick={() => setNewJoinOpen(true)}
-              className="flex items-center gap-2 bg-[color:var(--color-primary)] hover:scale-[1.03] text-white px-4 py-2.5 rounded-xl text-sm font-medium shadow-lg shadow-[color:var(--color-primary)]/20 transition-all duration-[180ms]"
-            >
-              <Plus className="w-4 h-4" />
-              New Join
-            </button>
-          </div>
-        ) : null}
+
+        <div className="flex items-center gap-2.5 justify-self-center">
+          {kpis.map((k) => (
+            <div key={k.label} className="glass-card lift-on-hover rounded-2xl px-3.5 py-2.5 flex items-center gap-2.5 min-w-[120px]">
+              <span className={cn('w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0', kpiColorClass[k.color])}>
+                <k.icon className="w-4 h-4" strokeWidth={1.75} />
+              </span>
+              <div>
+                <p className="text-lg font-bold text-[#0F172A] leading-none">{k.value ?? '—'}</p>
+                <p className="text-[11px] text-[#64748B] mt-1">{k.label}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="flex items-center gap-2 justify-self-end">
+          <input ref={fileInputRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleFileSelected} />
+          {tab === 'joining' && (
+            <>
+              <button
+                key={`new-join-${tab}`}
+                onClick={() => setNewJoinOpen(true)}
+                className="cta-pulse flex items-center gap-2 bg-[color:var(--color-primary)] hover:bg-[#1E88E5] active:bg-[#1976D2] hover:scale-[1.03] active:scale-100 text-white px-4 py-2.5 rounded-xl text-sm font-medium shadow-lg shadow-[color:var(--color-primary)]/20 transition-all duration-[180ms]"
+              >
+                <Plus className="w-4 h-4" />
+                New Join
+              </button>
+              <button
+                onClick={() => setBulkUploadOpen(true)}
+                className="flex items-center gap-1.5 text-sm text-slate-600 hover:text-[color:var(--color-primary)] px-3 py-2 rounded-xl glass-panel transition-all duration-[180ms]"
+              >
+                <UploadCloud className="w-4 h-4" /> Bulk Upload
+              </button>
+            </>
+          )}
+        </div>
       </div>
+
+      {/* Page-specific employee search — portaled into the global Header, between the page title and the account menu. */}
+      {slotEl &&
+        createPortal(
+          <div className="relative w-full max-w-[240px]">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+            <input
+              type="text"
+              placeholder={tab === 'joining' ? 'Search employees by name or mobile' : 'Search employees by name or ID'}
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              className="w-full h-8 pl-8 pr-2.5 bg-white border border-slate-200 rounded-full text-xs focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/40"
+              aria-label="Search employees"
+            />
+          </div>,
+          slotEl
+        )}
 
       {uploadResult && (
         <div className="mb-4 p-3 rounded-xl glass-panel text-sm">
@@ -331,10 +381,10 @@ export default function EmployeeJoinPage() {
               key={t.value}
               onClick={() => setTab(t.value)}
               className={cn(
-                'px-3.5 py-1.5 rounded-lg transition-all duration-[180ms] font-medium',
+                'px-3.5 py-1.5 rounded-lg transition-all duration-[180ms] font-medium border',
                 tab === t.value
-                  ? 'nav-pill-active text-[color:var(--color-primary)]'
-                  : 'text-slate-500 hover:bg-white/70'
+                  ? 'bg-[color:var(--color-primary-light)] text-[color:var(--color-primary)] border-[color:var(--color-primary)]/30'
+                  : 'bg-white text-slate-500 border-transparent hover:bg-white/70'
               )}
             >
               {t.label}
@@ -342,63 +392,37 @@ export default function EmployeeJoinPage() {
           ))}
         </div>
 
-        <div className="flex items-center gap-3 flex-wrap">
-          <div className="relative max-w-sm flex-1 min-w-[220px]">
-            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-            <input
-              type="text"
-              placeholder={tab === 'joining' ? 'Search employees by name or mobile' : 'Search employees by name or ID'}
-              value={searchInput}
-              onChange={(e) => setSearchInput(e.target.value)}
-              className="w-full h-10 pl-10 pr-3 bg-white/80 border border-slate-200 rounded-full text-sm focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/40"
-            />
+        {tab === 'all' && (
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="flex items-center gap-1 text-sm">
+              {STATUS_FILTERS.map((opt) => (
+                <button
+                  key={opt.value}
+                  onClick={() => setAllStatus(opt.value)}
+                  className={cn(
+                    'px-3 py-2 rounded-xl transition-all duration-[180ms] font-medium',
+                    allStatus === opt.value
+                      ? opt.selectedClass
+                      : 'bg-white/80 text-slate-500 hover:bg-white border border-slate-200'
+                  )}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+
+            <select
+              value={allBranch}
+              onChange={(e) => setAllBranch(e.target.value)}
+              className="px-3 py-2 bg-white/80 border border-slate-200 rounded-xl text-sm text-slate-600 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/40"
+            >
+              <option value="">All Branches</option>
+              {branches.map((b) => (
+                <option key={b.branch_code} value={b.branch_code}>{b.branch_name}</option>
+              ))}
+            </select>
           </div>
-
-          {tab === 'all' && (
-            <>
-              <div className="flex items-center gap-1 text-sm">
-                {STATUS_FILTERS.map((opt) => (
-                  <button
-                    key={opt.value}
-                    onClick={() => setAllStatus(opt.value)}
-                    className={cn(
-                      'px-3 py-2 rounded-xl transition-all duration-[180ms] font-medium',
-                      allStatus === opt.value
-                        ? opt.selectedClass
-                        : 'bg-white/80 text-slate-500 hover:bg-white border border-slate-200'
-                    )}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-
-              <select
-                value={allBranch}
-                onChange={(e) => setAllBranch(e.target.value)}
-                className="px-3 py-2 bg-white/80 border border-slate-200 rounded-xl text-sm text-slate-600 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/40"
-              >
-                <option value="">All Branches</option>
-                {branches.map((b) => (
-                  <option key={b.branch_code} value={b.branch_code}>{b.branch_name}</option>
-                ))}
-              </select>
-            </>
-          )}
-
-          {tab === 'joining' && (
-            <label className="flex items-center gap-2 text-sm text-slate-500">
-              Rows per page
-              <select
-                value={pageSize}
-                onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}
-                className="bg-white/80 border border-slate-200 rounded-xl px-2 py-1.5 text-sm text-slate-600 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/40"
-              >
-                {PAGE_SIZE_OPTIONS.map((n) => <option key={n} value={n}>{n}</option>)}
-              </select>
-            </label>
-          )}
-        </div>
+        )}
       </div>
 
       {tab === 'all' ? (
@@ -418,7 +442,8 @@ export default function EmployeeJoinPage() {
           columns={columns}
           pageSize={pageSize}
           totalRows={data?.total ?? 0}
-          onPageChange={(p) => setPage(p)}
+          onPageChange={(p, size) => { setPage(p); if (size !== pageSize) setPageSize(size); }}
+          pageSizeOptions={PAGE_SIZE_OPTIONS}
           isLoading={isLoading}
           onRowClick={(row) => setSelectedJoinId((prev) => (prev === row.emp_join_pkey ? null : row.emp_join_pkey))}
           isRowSelected={(row) => selectedJoinId === row.emp_join_pkey}

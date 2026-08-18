@@ -39,7 +39,7 @@ export const navItems: NavItem[] = [
     slug: 'employees',
     icon: Users,
     children: [
-      { label: 'Employee Join', href: '/employees/join', description: 'Onboard new hires and track in-progress joinings.' },
+      { label: 'Employee', href: '/employees/join', description: 'Onboard new hires and track in-progress joinings.' },
       { label: 'Import Employee', href: '/employees/import', description: 'Bulk-import employee records from a spreadsheet.' },
       { label: 'User Access', href: '/employees/access', description: 'Manage login access and permissions for employees.' },
       { label: 'Allocate Assets', href: '/employees/assets', description: 'Assign or reclaim company assets per employee.' },
