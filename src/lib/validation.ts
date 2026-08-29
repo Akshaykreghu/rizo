@@ -31,3 +31,50 @@ export function aadhaarError(value: string): string | null {
   if (!value) return null;
   return /^\d{12}$/.test(value) ? null : 'Aadhaar/ID Card must be exactly 12 digits';
 }
+
+// Statutory registration formats — shared by Company Setup and any future statutory forms.
+// Each returns null for an empty value so a blank field is never treated as invalid.
+
+export function panError(value: string): string | null {
+  if (!value) return null;
+  return /^[A-Z]{5}[0-9]{4}[A-Z]$/.test(value.toUpperCase())
+    ? null
+    : 'PAN must be 5 letters, 4 digits, 1 letter (e.g. ABCDE1234F)';
+}
+
+export function tanError(value: string): string | null {
+  if (!value) return null;
+  return /^[A-Z]{4}[0-9]{5}[A-Z]$/.test(value.toUpperCase())
+    ? null
+    : 'TAN must be 4 letters, 5 digits, 1 letter (e.g. ABCD12345E)';
+}
+
+export function cinError(value: string): string | null {
+  if (!value) return null;
+  return /^[LU][0-9]{5}[A-Z]{2}[0-9]{4}[A-Z]{3}[0-9]{6}$/.test(value.toUpperCase())
+    ? null
+    : 'CIN must be 21 characters (e.g. L12345MH2000PLC123456)';
+}
+
+export function pincodeError(value: string): string | null {
+  if (!value) return null;
+  return /^[1-9][0-9]{5}$/.test(value) ? null : 'PIN Code must be 6 digits';
+}
+
+export function emailError(value: string): string | null {
+  if (!value) return null;
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value) ? null : 'Enter a valid email address';
+}
+
+export function websiteError(value: string): string | null {
+  if (!value) return null;
+  return /^(https?:\/\/)?[^\s.]+\.[^\s]{2,}$/.test(value) ? null : 'Enter a valid website URL';
+}
+
+export function landlinePhoneError(value: string): string | null {
+  if (!value) return null;
+  const digits = value.replace(/[^\d]/g, '');
+  return /^[\d+\-()\s]+$/.test(value) && digits.length >= 8 && digits.length <= 15
+    ? null
+    : 'Enter a valid phone number';
+}

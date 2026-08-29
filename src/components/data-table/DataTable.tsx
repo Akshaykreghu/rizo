@@ -96,7 +96,7 @@ export function DataTable<TData>({
       <div className="surface-card rounded-2xl overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm border-separate border-spacing-0">
-            <thead className="sticky top-0 z-10 bg-[#F8FAFC]/80 backdrop-blur-sm border-b border-slate-200/50">
+            <thead className="sticky top-0 z-10 bg-slate-100 border-b border-slate-200">
               {table.getHeaderGroups().map((headerGroup) => (
                 <tr key={headerGroup.id}>
                   {headerGroup.headers.map((header) => (
@@ -148,7 +148,7 @@ export function DataTable<TData>({
                   <tr
                     key={row.id}
                     className={cn(
-                      'group/row h-11 transition-colors duration-[180ms] border-b border-slate-50',
+                      'group/row h-11 transition-colors duration-[180ms]',
                       i % 2 === 1 && !selected && 'bg-slate-900/[0.035]',
                       selected
                         ? 'bg-[color:var(--color-primary)]/[0.07] shadow-[inset_2px_0_0_var(--color-primary)]'
@@ -177,7 +177,7 @@ export function DataTable<TData>({
         </div>
 
         {/* Pagination */}
-        <div className="flex items-center justify-between text-sm text-slate-500 border-t border-slate-100 px-4 py-3">
+        <div className="flex items-center justify-between text-sm text-slate-500 bg-slate-100 border-t border-slate-200 px-4 py-3">
           <div className="flex items-center gap-4">
             {pageSizeOptions && (
               <label className="flex items-center gap-2 text-sm text-slate-500">

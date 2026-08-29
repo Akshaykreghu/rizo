@@ -1,9 +1,9 @@
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
-import { isLeaveAlreadyApplied, isLeaveCode, toISODate } from '@/lib/attendance';
+import { getRegisterDayContext, isLeaveAlreadyApplied, isLeaveCode, toISODate } from '@/lib/attendance';
 import { NextRequest, NextResponse } from 'next/server';
-import type { RowDataPacket, ResultSetHeader } from 'mysql2';
+import type { ResultSetHeader } from 'mysql2';
 
 // Ports chnagestatus() (parameterized — legacy's version had a real SQL-injection surface via raw
 // string concatenation). statusType: 'first' | 'second' | 'full' -> leave session 1 | 2 | 3.
@@ -43,18 +43,15 @@ export async function PUT(
   const pool = await getCompanyPool(session.user.companyCode);
   const fieldCol = `FIELD${dayIdx}`;
 
-  const [[reg]] = await pool.execute<RowDataPacket[]>(
-    `SELECT registerid, emp_fkey, month_year, branch_code, isdelete FROM attendance_register WHERE registerid = ?`,
-    [registerId]
-  );
-  if (!reg) return NextResponse.json({ error: 'Register row not found' }, { status: 404 });
-  if (reg.isdelete === 'N') {
+  const day = await getRegisterDayContext(pool, registerId, dayIdx);
+  if (!day) return NextResponse.json({ error: 'Register row not found' }, { status: 404 });
+  if (day.locked) {
     return NextResponse.json({ error: 'This month is verified/locked and cannot be edited' }, { status: 409 });
   }
 
-  const attDate = `${reg.month_year}-${String(dayIdx).padStart(2, '0')}`;
+  const attDate = day.attDate;
 
-  const alreadyApplied = await isLeaveAlreadyApplied(pool, reg.emp_fkey, attDate, leaveSession);
+  const alreadyApplied = await isLeaveAlreadyApplied(pool, day.empFkey, attDate, leaveSession);
   if (alreadyApplied) {
     return NextResponse.json(
       { error: 'A leave has already been applied for this date/session — change it via the Leave module instead' },
@@ -77,15 +74,15 @@ export async function PUT(
            (salary_head_item_fkey, applied_date, LEAVESTATUS, EMP_fkey, FROMDATE, FROMHALF, TODATE, TOHALF,
             ISAutherized, ISAutherizedby, ISAPPROVED, APPROVEDBY, Reason, leave_days)
          VALUES (?, CURDATE(), 'Approved', ?, ?, ?, ?, ?, 1, ?, 1, ?, 'Leave applied through status change', ?)`,
-        [salaryHeadItemFkey, reg.emp_fkey, attDate, fromHalf, attDate, toHalf, approverId, approverId, leaveDays]
+        [salaryHeadItemFkey, day.empFkey, attDate, fromHalf, attDate, toHalf, approverId, approverId, leaveDays]
       );
       const leaveEntryId = insertResult.insertId;
 
       await connection.query('CALL leave_transaction_prc(?, ?, ?, ?, ?, ?, ?, ?, @err)', [
-        leaveEntryId, reg.emp_fkey, attDate, fromHalf, attDate, toHalf, leaveDays, 'Applied',
+        leaveEntryId, day.empFkey, attDate, fromHalf, attDate, toHalf, leaveDays, 'Applied',
       ]);
       await connection.query('CALL leave_transaction_prc(?, ?, ?, ?, ?, ?, ?, ?, @err)', [
-        leaveEntryId, reg.emp_fkey, attDate, fromHalf, attDate, toHalf, leaveDays, 'Approved',
+        leaveEntryId, day.empFkey, attDate, fromHalf, attDate, toHalf, leaveDays, 'Approved',
       ]);
     }
 

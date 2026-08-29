@@ -158,3 +158,174 @@ const STANDARD_CODES = new Set(['P', 'A', 'WO', 'HO', 'NA', 'LOP', '']);
 export function isLeaveCode(code: string): boolean {
   return !STANDARD_CODES.has((code ?? '').trim().toUpperCase());
 }
+
+// Mirrors ot_duration_register_date()'s own shift resolution: the day's effective shift is an
+// emp_shift_planner override for that exact date (status=1) if one exists, else the employee's
+// standing emp_proff.day_time_seq. This is the OT function's real source of truth — deliberately not
+// the emp_config type='SHIFT' primary used elsewhere (shift-planner route) since that's a different
+// legacy concept (roster planning UI default) from what the OT engine itself actually reads.
+export async function isOtEligibleDay(pool: Pool, empFkey: number, date: string): Promise<boolean> {
+  const [[row]] = await pool.execute<RowDataPacket[]>(
+    `SELECT wdtp.working_time1, wdtp.min_aftr_off_dutty_cal_ot, wdtp.min_bfr_on_dutty_cal_ot, wdtp.work_time_day_off_cal_ot
+     FROM emp_proff ep
+     LEFT JOIN emp_shift_planner esp ON esp.emp_fkey = ep.emp_fkey AND esp.shift_date = ? AND esp.status = 1
+     JOIN working_day_time_procedures wdtp ON wdtp.day_time_seq = COALESCE(esp.shift_id, ep.day_time_seq)
+     WHERE ep.emp_fkey = ?`,
+    [date, empFkey]
+  );
+  if (!row) return false;
+  return (
+    Number(row.working_time1) > 10 &&
+    (Number(row.min_aftr_off_dutty_cal_ot) !== 0 ||
+      Number(row.min_bfr_on_dutty_cal_ot) !== 0 ||
+      Number(row.work_time_day_off_cal_ot) === 1)
+  );
+}
+
+export interface RegisterDayContext {
+  empFkey: number;
+  empId: string;
+  companyCode: string;
+  branchCode: string;
+  attDate: string;
+  locked: boolean;
+}
+
+// Shared register-row lookup + verified-month lock check used by every per-day sub-resource
+// (status, punches, OT) hung off attendance_register/[registerId]/day/[dayIndex].
+export async function getRegisterDayContext(
+  pool: Pool,
+  registerId: string,
+  dayIndex: number
+): Promise<RegisterDayContext | null> {
+  const [[reg]] = await pool.execute<RowDataPacket[]>(
+    `SELECT ar.emp_fkey, ar.month_year, ar.branch_code, ar.isdelete, ed.emp_id, ed.company_code
+     FROM attendance_register ar
+     JOIN emp_details ed ON ed.emp_pkey = ar.emp_fkey
+     WHERE ar.registerid = ?`,
+    [registerId]
+  );
+  if (!reg) return null;
+  return {
+    empFkey: reg.emp_fkey,
+    empId: reg.emp_id,
+    companyCode: reg.company_code,
+    branchCode: reg.branch_code,
+    attDate: `${reg.month_year}-${String(dayIndex).padStart(2, '0')}`,
+    locked: reg.isdelete === 'N',
+  };
+}
+
+export interface MonthlyOt {
+  pkey: number | null;
+  totalMin: number;
+  setMin: number | null;
+  effectiveMin: number;
+  isVerified: boolean;
+  remarks: string | null;
+}
+
+// Batch-fetch emp_ot_master for a set of employees/month — mirrors the existing punch/daily-OT batch
+// pattern in the register GET route. Monthly OT only exists once generated (see upsertMonthlyOt,
+// called from the verify route) so most employees will simply have no row until then.
+export async function getMonthlyOtMap(
+  pool: Pool,
+  empFkeys: number[],
+  monthYearYYYYMM: string
+): Promise<Record<number, MonthlyOt>> {
+  if (empFkeys.length === 0) return {};
+  const placeholders = empFkeys.map(() => '?').join(',');
+  const [rows] = await pool.execute<RowDataPacket[]>(
+    `SELECT emp_ot_master_pkey, emp_fkey, total_duration, set_duration, is_verified, remarks
+     FROM emp_ot_master
+     WHERE emp_fkey IN (${placeholders}) AND DATE_FORMAT(month, '%Y-%m') = ?`,
+    [...empFkeys, monthYearYYYYMM]
+  );
+  const map: Record<number, MonthlyOt> = {};
+  for (const r of rows) {
+    const totalMin = Number(r.total_duration ?? 0);
+    const setMin = r.set_duration === null ? null : Number(r.set_duration);
+    map[r.emp_fkey] = {
+      pkey: r.emp_ot_master_pkey,
+      totalMin,
+      setMin,
+      effectiveMin: setMin ?? totalMin,
+      isVerified: r.is_verified === 'Y',
+      remarks: r.remarks ?? null,
+    };
+  }
+  return map;
+}
+
+// Ports OtAttendanceNewController::getDurationRegister()'s per-employee generation step: sums the
+// month's effective daily OT (emp_ot_timeattandance, same is_manual?set_duration:ot_duration rule
+// used everywhere else) and upserts it into emp_ot_master.total_duration. Skips rows already
+// verified — legacy never clobbers a verified monthly OT once approved. Called from the register
+// verify route right after an employee's attendance is confirmed verified, matching legacy's own
+// dependency (monthly OT generation requires attendance_register.isdelete='N' for the month first).
+export async function upsertMonthlyOt(
+  pool: Pool,
+  empFkey: number,
+  empName: string,
+  monthYearYYYYMM: string,
+  period: AttPeriod
+): Promise<void> {
+  const monthDate = `${monthYearYYYYMM}-01`;
+  const [[sumRow]] = await pool.execute<RowDataPacket[]>(
+    `SELECT SUM(CASE WHEN is_manual = 'Y' THEN IFNULL(set_duration, 0) ELSE IFNULL(ot_duration, 0) END) AS total
+     FROM emp_ot_timeattandance
+     WHERE emp_pkey = ? AND att_date BETWEEN ? AND ?`,
+    [empFkey, period.start, period.end]
+  );
+  const totalDuration = Number(sumRow?.total ?? 0);
+
+  const [[existing]] = await pool.execute<RowDataPacket[]>(
+    'SELECT emp_ot_master_pkey FROM emp_ot_master WHERE emp_fkey = ? AND month = ?',
+    [empFkey, monthDate]
+  );
+
+  if (existing) {
+    await pool.execute(
+      `UPDATE emp_ot_master SET total_duration = ?, set_duration = NULL
+       WHERE emp_ot_master_pkey = ? AND is_verified != 'Y'`,
+      [totalDuration, existing.emp_ot_master_pkey]
+    );
+  } else {
+    await pool.execute(
+      `INSERT INTO emp_ot_master (emp_fkey, emp_name, month, total_duration) VALUES (?, ?, ?, ?)`,
+      [empFkey, empName, monthDate, totalDuration]
+    );
+  }
+}
+
+export interface DailyOt {
+  otDurationMin: number | null;
+  setDurationMin: number | null;
+  remarks: string | null;
+  isManual: boolean;
+}
+
+// Reads the day-level OT row written/refreshed by ot_duration_register_date (present once a punch
+// exists for an OT-eligible day) plus any manual override from updateSetDuration()/setRemarks().
+// No isdelete filter — deliberately matches updateSetDuration()/setRemarks()'s own lookup, which
+// query this table by (emp_pkey, att_date) alone. isdelete on this table doesn't cleanly mean
+// "active row" the way it does on attendance_register (fresh function-computed rows default to
+// isdelete='Y' per the live schema's own column default, since ot_duration_register_date's INSERT
+// never sets it) — filtering on it here would risk hiding real, current OT data.
+export async function getDailyOt(pool: Pool, empFkey: number, date: string): Promise<DailyOt | null> {
+  const [[row]] = await pool.execute<RowDataPacket[]>(
+    `SELECT ot_duration, set_duration, remarks, is_manual
+     FROM emp_ot_timeattandance
+     WHERE emp_pkey = ? AND att_date = ?
+     ORDER BY id DESC
+     LIMIT 1`,
+    [empFkey, date]
+  );
+  if (!row) return null;
+  return {
+    otDurationMin: row.ot_duration === null ? null : Number(row.ot_duration),
+    setDurationMin: row.set_duration === null ? null : Number(row.set_duration),
+    remarks: row.remarks ?? null,
+    isManual: row.is_manual === 'Y',
+  };
+}

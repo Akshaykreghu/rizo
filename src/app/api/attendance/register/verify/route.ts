@@ -1,14 +1,16 @@
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
-import { FIELD_COLUMNS } from '@/lib/attendance';
+import { FIELD_COLUMNS, getAttPeriod, upsertMonthlyOt } from '@/lib/attendance';
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket } from 'mysql2';
 
 // Ports checkifregistercanverify() + verifyAttendance(): a register row can only be verified/locked
 // (isdelete='Y' -> 'N') once every calendar day in its month has a non-blank FIELD value (legacy's
 // "miss-punched date" gate). Also triggers ot_duration_register_date per employee, matching legacy's
-// verifyAttendance() OT-duration recompute.
+// verifyAttendance() OT-duration recompute. Then generates/refreshes Monthly OT (emp_ot_master) for
+// that employee — legacy's OtAttendanceNewController::getDurationRegister() only does this once
+// attendance_register is verified for the month, which is exactly this moment.
 
 export async function POST(request: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -25,8 +27,8 @@ export async function POST(request: NextRequest) {
   const pool = await getCompanyPool(session.user.companyCode);
   const placeholders = registerIds.map(() => '?').join(',');
   const [rows] = await pool.execute<RowDataPacket[]>(
-    `SELECT registerid, emp_fkey, branch_code, month_year, calander_days, ${FIELD_COLUMNS.join(', ')}
-     FROM attendance_register WHERE registerid IN (${placeholders}) AND isdelete = 'Y'`,
+    `SELECT ar.registerid, ar.emp_fkey, ar.branch_code, ar.month_year, ar.calander_days, ar.emp_name, ${FIELD_COLUMNS.map((c) => `ar.${c}`).join(', ')}
+     FROM attendance_register ar WHERE ar.registerid IN (${placeholders}) AND ar.isdelete = 'Y'`,
     registerIds
   );
 
@@ -51,6 +53,14 @@ export async function POST(request: NextRequest) {
         // OT duration recompute is best-effort per day; a single bad date shouldn't block verification
       }
     }
+
+    try {
+      const period = await getAttPeriod(pool, row.month_year);
+      await upsertMonthlyOt(pool, row.emp_fkey, row.emp_name ?? '', row.month_year, period);
+    } catch {
+      // Monthly OT generation is best-effort — a failure here shouldn't block attendance verification
+    }
+
     verified.push(row.registerid);
   }
 

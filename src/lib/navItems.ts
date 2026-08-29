@@ -59,7 +59,6 @@ export const navItems: NavItem[] = [
     icon: CalendarDays,
     children: [
       { label: 'Register', href: '/attendance/register', description: 'View daily attendance across the organization.' },
-      { label: 'Device Punches', href: '/attendance/edit-punches', description: 'Review and correct raw biometric device punches.' },
       { label: 'Regularisation', href: '/attendance/regularisation', description: 'Approve employee requests to fix missed punches.' },
       { label: 'Shift Planner', href: '/attendance/shift-planner', description: 'Assign and schedule employee work shifts.' },
       { label: 'Overtime', href: '/attendance/overtime', description: 'Track and approve overtime hours worked.' },

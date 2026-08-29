@@ -1,14 +1,15 @@
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
-import { getAttPeriod, getPolicyLopMap, fieldsToArray, isPolicyLeaveForDate, toISODate } from '@/lib/attendance';
+import { getAttPeriod, getPolicyLopMap, fieldsToArray, isPolicyLeaveForDate, toISODate, getMonthlyOtMap } from '@/lib/attendance';
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket } from 'mysql2';
 
 // Mirrors AttendanceRegisterNewController::registerbook() (read side): lists attendance_register
 // rows for a branch/month, split into Not-Verified (isdelete='Y') / Verified (isdelete='N') tabs,
-// plus the per-day cell color hints (policy-leave vs indirect LOP) and expandable IN/OUT/Duration
-// detail sourced from emp_detail_timeattandance.
+// plus the per-day cell color hints (policy-leave vs indirect LOP) and expandable IN/OUT/Duration/OT
+// detail sourced from emp_detail_timeattandance and emp_ot_timeattandance. Also attaches Monthly OT
+// (emp_ot_master) per employee — only populated once the register verify step has generated it.
 
 export async function GET(request: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -61,7 +62,26 @@ export async function GET(request: NextRequest) {
     }
   }
 
+  let otByEmp: Record<number, Record<string, RowDataPacket>> = {};
+  if (empFkeys.length > 0) {
+    const placeholders = empFkeys.map(() => '?').join(',');
+    const [otRows] = await pool.execute<RowDataPacket[]>(
+      `SELECT emp_pkey, att_date, ot_duration, set_duration, is_manual
+       FROM emp_ot_timeattandance
+       WHERE emp_pkey IN (${placeholders}) AND att_date BETWEEN ? AND ?`,
+      [...empFkeys, period.start, period.end]
+    );
+    otByEmp = {};
+    for (const o of otRows) {
+      const emp = o.emp_pkey;
+      const date = toISODate(o.att_date);
+      if (!otByEmp[emp]) otByEmp[emp] = {};
+      otByEmp[emp][date] = o;
+    }
+  }
+
   const lopMap = await getPolicyLopMap(pool, branch, period.start, period.end);
+  const monthlyOtMap = await getMonthlyOtMap(pool, empFkeys, month);
 
   const calendarDayCount = Math.round(
     (new Date(period.end).getTime() - new Date(period.start).getTime()) / 86400000
@@ -77,6 +97,9 @@ export async function GET(request: NextRequest) {
     const days = dates.map((date, i) => {
       const value = fields[i] ?? '';
       const punch = punchesByEmp[row.emp_fkey]?.[date];
+      const ot = otByEmp[row.emp_fkey]?.[date];
+      // Effective OT: the manual override (set_duration) once one exists, else the computed value.
+      const otMinutes = ot ? (ot.is_manual === 'Y' ? ot.set_duration : ot.ot_duration) : null;
       return {
         date,
         value,
@@ -84,6 +107,7 @@ export async function GET(request: NextRequest) {
         inTime: punch?.att_in_time ?? null,
         outTime: punch?.att_out_time ?? null,
         duration: punch?.duration ?? null,
+        otDuration: otMinutes != null ? Number(otMinutes) : null,
       };
     });
     return {
@@ -101,6 +125,7 @@ export async function GET(request: NextRequest) {
       workingDays: Number(row.working_days),
       calendarDays: Number(row.calander_days),
       prorateCode: Number(row.prorate_code),
+      monthlyOt: monthlyOtMap[row.emp_fkey] ?? null,
       days,
     };
   });
