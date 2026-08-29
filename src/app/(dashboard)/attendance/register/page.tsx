@@ -1,7 +1,9 @@
 'use client';
 
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
+import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
 import { AttendanceGrid, type AttendanceDay, type AttendanceRow } from '@/components/attendance/AttendanceGrid';
 import { ATTENDANCE_LEGEND, getCellColor } from '@/lib/attendance';
 import { cn } from '@/lib/utils';
@@ -54,6 +56,7 @@ export default function AttendanceRegisterPage() {
   const [message, setMessage] = useState<string | null>(null);
   const [showBulkUpdate, setShowBulkUpdate] = useState(false);
   const [showSummaryCols, setShowSummaryCols] = useState(true);
+  const { slotEl } = useHeaderSlot();
 
   const { data: branches = [] } = useLookup('setup/branches', 'branch_code', (r) => String(r.branch_name));
 
@@ -182,10 +185,19 @@ export default function AttendanceRegisterPage() {
 
   return (
     <div>
-      <div className="mb-6">
-        <h1 className="font-heading text-2xl font-bold text-[#0F172A] tracking-tight">Attendance Register</h1>
-        <p className="text-[13.5px] text-slate-500 mt-1">Review and manage employee attendance records</p>
-      </div>
+      {/* Page title sits in the global Header row, left-aligned with this content, alongside the account controls. */}
+      {slotEl &&
+        createPortal(
+          <div className="min-w-0">
+            <h1 className="font-heading text-2xl font-bold text-[#0F172A] tracking-tight leading-tight truncate">
+              Attendance Register
+            </h1>
+            <p className="text-sm text-[#64748B] mt-0.5 truncate">
+              Review and manage employee attendance records
+            </p>
+          </div>,
+          slotEl
+        )}
 
       {/* Toolbar */}
       <div className="surface-card rounded-xl px-4 py-2.5 mb-4 flex flex-wrap items-center gap-3">

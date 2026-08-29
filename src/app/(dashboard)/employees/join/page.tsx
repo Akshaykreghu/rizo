@@ -286,17 +286,38 @@ export default function EmployeeJoinPage() {
 
   return (
     <div>
-      <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-4 mb-6">
-        <div>
-          <h1 className="font-heading text-2xl font-bold text-[#0F172A] tracking-tight">
-            Employee
-          </h1>
-          <p className="text-sm text-[#64748B] mt-0.5">
-            Onboard new hires and manage your workforce
-          </p>
-        </div>
+      {/* Page header lives in the global Header row, alongside the account controls:
+          title (left) · stat cards (middle) · employee search (right, before the user menu). */}
+      {slotEl &&
+        createPortal(
+          <div className="flex flex-1 flex-wrap items-center gap-x-4 gap-y-2 min-w-0">
+            <div className="min-w-0 mr-auto">
+              <h1 className="font-heading text-2xl font-bold text-[#0F172A] tracking-tight leading-tight">
+                Employee
+              </h1>
+              <p className="text-sm text-[#64748B] mt-0.5 truncate">
+                Onboard new hires and manage your workforce
+              </p>
+            </div>
 
-        <div className="flex items-center gap-2.5 justify-self-center">
+            <div className="relative w-full max-w-[220px] flex-shrink-0">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+              <input
+                type="text"
+                placeholder={tab === 'joining' ? 'Search employees by name or mobile' : 'Search employees by name or ID'}
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+                className="w-full h-8 pl-8 pr-2.5 bg-white border border-slate-200 rounded-full text-xs focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/40"
+                aria-label="Search employees"
+              />
+            </div>
+          </div>,
+          slotEl
+        )}
+
+      <input ref={fileInputRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleFileSelected} />
+      <div className="flex items-center justify-between flex-wrap gap-3 mb-5">
+        <div className="flex items-center gap-2.5">
           {kpis.map((k) => (
             <div key={k.label} className="glass-card lift-on-hover rounded-2xl px-3.5 py-2.5 flex items-center gap-2.5 min-w-[120px]">
               <span className={cn('w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0', kpiColorClass[k.color])}>
@@ -310,45 +331,25 @@ export default function EmployeeJoinPage() {
           ))}
         </div>
 
-        <div className="flex items-center gap-2 justify-self-end">
-          <input ref={fileInputRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleFileSelected} />
-          {tab === 'joining' && (
-            <>
-              <button
-                key={`new-join-${tab}`}
-                onClick={() => setNewJoinOpen(true)}
-                className="cta-pulse flex items-center gap-2 bg-[color:var(--color-primary)] hover:bg-[#1E88E5] active:bg-[#1976D2] hover:scale-[1.03] active:scale-100 text-white px-4 py-2.5 rounded-xl text-sm font-medium shadow-lg shadow-[color:var(--color-primary)]/20 transition-all duration-[180ms]"
-              >
-                <Plus className="w-4 h-4" />
-                New Join
-              </button>
-              <button
-                onClick={() => setBulkUploadOpen(true)}
-                className="flex items-center gap-1.5 text-sm text-slate-600 hover:text-[color:var(--color-primary)] px-3 py-2 rounded-xl glass-panel transition-all duration-[180ms]"
-              >
-                <UploadCloud className="w-4 h-4" /> Bulk Upload
-              </button>
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* Page-specific employee search — portaled into the global Header, between the page title and the account menu. */}
-      {slotEl &&
-        createPortal(
-          <div className="relative w-full max-w-[240px]">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
-            <input
-              type="text"
-              placeholder={tab === 'joining' ? 'Search employees by name or mobile' : 'Search employees by name or ID'}
-              value={searchInput}
-              onChange={(e) => setSearchInput(e.target.value)}
-              className="w-full h-8 pl-8 pr-2.5 bg-white border border-slate-200 rounded-full text-xs focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/40"
-              aria-label="Search employees"
-            />
-          </div>,
-          slotEl
+        {tab === 'joining' && (
+          <div className="flex items-center gap-2">
+            <button
+              key={`new-join-${tab}`}
+              onClick={() => setNewJoinOpen(true)}
+              className="cta-pulse flex items-center gap-2 bg-[color:var(--color-primary)] hover:bg-[#1E88E5] active:bg-[#1976D2] hover:scale-[1.03] active:scale-100 text-white px-4 py-2.5 rounded-xl text-sm font-medium shadow-lg shadow-[color:var(--color-primary)]/20 transition-all duration-[180ms]"
+            >
+              <Plus className="w-4 h-4" />
+              New Join
+            </button>
+            <button
+              onClick={() => setBulkUploadOpen(true)}
+              className="flex items-center gap-1.5 text-sm text-slate-600 hover:text-[color:var(--color-primary)] px-3 py-2 rounded-xl glass-panel transition-all duration-[180ms]"
+            >
+              <UploadCloud className="w-4 h-4" /> Bulk Upload
+            </button>
+          </div>
         )}
+      </div>
 
       {uploadResult && (
         <div className="mb-4 p-3 rounded-xl glass-panel text-sm">
