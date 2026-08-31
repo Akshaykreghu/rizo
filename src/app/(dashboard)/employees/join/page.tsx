@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Trash2, Pencil, ArrowRightCircle, Search, Download, UploadCloud, Users, UserCheck, UserPlus, FileSpreadsheet, X, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { Plus, Trash2, ArrowRightCircle, Search, Download, UploadCloud, Users, UserCheck, UserPlus, FileSpreadsheet, X, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { cn, formatDate } from '@/lib/utils';
 import { DataTable } from '@/components/data-table/DataTable';
 import { Avatar } from '@/components/ui/Avatar';
@@ -252,13 +252,6 @@ export default function EmployeeJoinPage() {
   const joinPanelActions: FloatingAction[] = selectedJoinRow
     ? [
         {
-          key: 'edit',
-          label: 'Edit',
-          icon: Pencil,
-          variant: 'primary',
-          onClick: () => setModalOpen(true),
-        },
-        {
           key: 'delete',
           label: 'Delete',
           icon: Trash2,
@@ -316,16 +309,16 @@ export default function EmployeeJoinPage() {
         )}
 
       <input ref={fileInputRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleFileSelected} />
-      <div className="flex items-center justify-between flex-wrap gap-3 mb-5">
-        <div className="flex items-center gap-2.5">
+      <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
+        <div className="flex items-center gap-2">
           {kpis.map((k) => (
-            <div key={k.label} className="glass-card lift-on-hover rounded-2xl px-3.5 py-2.5 flex items-center gap-2.5 min-w-[120px]">
-              <span className={cn('w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0', kpiColorClass[k.color])}>
-                <k.icon className="w-4 h-4" strokeWidth={1.75} />
+            <div key={k.label} className="glass-card lift-on-hover rounded-xl px-3 py-2 flex items-center gap-2 min-w-[104px]">
+              <span className={cn('w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0', kpiColorClass[k.color])}>
+                <k.icon className="w-3.5 h-3.5" strokeWidth={1.75} />
               </span>
               <div>
-                <p className="text-lg font-bold text-[#0F172A] leading-none">{k.value ?? '—'}</p>
-                <p className="text-[11px] text-[#64748B] mt-1">{k.label}</p>
+                <p className="text-base font-bold text-[#0F172A] leading-none">{k.value ?? '—'}</p>
+                <p className="text-[10.5px] text-[#64748B] mt-1">{k.label}</p>
               </div>
             </div>
           ))}
@@ -336,16 +329,16 @@ export default function EmployeeJoinPage() {
             <button
               key={`new-join-${tab}`}
               onClick={() => setNewJoinOpen(true)}
-              className="cta-pulse flex items-center gap-2 bg-[color:var(--color-primary)] hover:bg-[#1E88E5] active:bg-[#1976D2] hover:scale-[1.03] active:scale-100 text-white px-4 py-2.5 rounded-xl text-sm font-medium shadow-lg shadow-[color:var(--color-primary)]/20 transition-all duration-[180ms]"
+              className="cta-pulse flex items-center gap-1.5 bg-[color:var(--color-primary)] hover:bg-[#1E88E5] active:bg-[#1976D2] hover:scale-[1.03] active:scale-100 text-white px-3 py-1.5 rounded-[9px] text-[12.5px] font-semibold shadow-sm transition-all duration-[180ms]"
             >
-              <Plus className="w-4 h-4" />
+              <Plus className="w-3.5 h-3.5" />
               New Join
             </button>
             <button
               onClick={() => setBulkUploadOpen(true)}
-              className="flex items-center gap-1.5 text-sm text-slate-600 hover:text-[color:var(--color-primary)] px-3 py-2 rounded-xl glass-panel transition-all duration-[180ms]"
+              className="flex items-center gap-1.5 text-[12.5px] font-semibold text-slate-600 hover:text-[color:var(--color-primary)] px-3 py-1.5 rounded-[9px] glass-panel transition-all duration-[180ms]"
             >
-              <UploadCloud className="w-4 h-4" /> Bulk Upload
+              <UploadCloud className="w-3.5 h-3.5" /> Bulk Upload
             </button>
           </div>
         )}
@@ -372,8 +365,8 @@ export default function EmployeeJoinPage() {
         </div>
       )}
 
-      <div className="sticky top-0 z-20 glass-card-strong rounded-2xl px-3 py-2.5 flex items-center justify-between mb-5 flex-wrap gap-3">
-        <div className="flex items-center gap-1 text-sm bg-slate-900/[0.03] rounded-xl p-1">
+      <div className="sticky top-0 z-20 glass-card-strong rounded-xl px-3 py-2 flex items-center justify-between mb-4 flex-wrap gap-3">
+        <div className="flex items-center gap-1 text-[12.5px] bg-slate-900/[0.03] rounded-lg p-0.5">
           {[
             { value: 'joining' as const, label: 'Employee Join' },
             { value: 'all' as const, label: 'All Employees' },
@@ -382,7 +375,7 @@ export default function EmployeeJoinPage() {
               key={t.value}
               onClick={() => setTab(t.value)}
               className={cn(
-                'px-3.5 py-1.5 rounded-lg transition-all duration-[180ms] font-medium border',
+                'px-3 py-1 rounded-md transition-all duration-[180ms] font-medium border',
                 tab === t.value
                   ? 'bg-[color:var(--color-primary-light)] text-[color:var(--color-primary)] border-[color:var(--color-primary)]/30'
                   : 'bg-white text-slate-500 border-transparent hover:bg-white/70'
@@ -394,14 +387,14 @@ export default function EmployeeJoinPage() {
         </div>
 
         {tab === 'all' && (
-          <div className="flex items-center gap-3 flex-wrap">
-            <div className="flex items-center gap-1 text-sm">
+          <div className="flex items-center gap-2.5 flex-wrap">
+            <div className="flex items-center gap-1 text-[12.5px]">
               {STATUS_FILTERS.map((opt) => (
                 <button
                   key={opt.value}
                   onClick={() => setAllStatus(opt.value)}
                   className={cn(
-                    'px-3 py-2 rounded-xl transition-all duration-[180ms] font-medium',
+                    'px-3 py-1.5 rounded-lg transition-all duration-[180ms] font-medium',
                     allStatus === opt.value
                       ? opt.selectedClass
                       : 'bg-white/80 text-slate-500 hover:bg-white border border-slate-200'
@@ -415,7 +408,7 @@ export default function EmployeeJoinPage() {
             <select
               value={allBranch}
               onChange={(e) => setAllBranch(e.target.value)}
-              className="px-3 py-2 bg-white/80 border border-slate-200 rounded-xl text-sm text-slate-600 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/40"
+              className="px-2.5 py-1.5 bg-white/80 border border-slate-200 rounded-lg text-[12.5px] text-slate-600 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/40"
             >
               <option value="">All Branches</option>
               {branches.map((b) => (

@@ -169,12 +169,32 @@ export default function EmployeesPage({
       meta: { className: 'w-[12%]' },
       cell: ({ getValue }) => <span className="text-[#64748B]">{String(getValue() ?? '')}</span>,
     },
+    {
+      id: 'view',
+      header: '',
+      meta: { className: 'w-12' },
+      cell: ({ row }) => (
+        <div className="flex justify-end">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setSelectedEmpPkey(row.original.emp_pkey);
+              setModalOpen(true);
+            }}
+            aria-label="View employee"
+            title="View"
+            className="p-1.5 rounded-lg bg-[color:var(--color-primary-light)] text-[color:var(--color-primary)] hover:bg-[color:var(--color-primary)] hover:text-white transition-colors duration-[180ms]"
+          >
+            <Eye className="w-4 h-4" />
+          </button>
+        </div>
+      ),
+    },
   ];
 
   const selectedEmployee = data?.data?.find((e: Employee) => e.emp_pkey === selectedEmpPkey);
   const panelActions: FloatingAction[] = selectedEmployee
     ? [
-        { key: 'view', label: 'View', icon: Eye, variant: 'primary', onClick: () => setModalOpen(true) },
         { key: 'access', label: 'Manage Access', icon: KeyRound, variant: 'default', onClick: () => setAccessModalOpen(true) },
         { key: 'menu-allocation', label: 'Menu Allocation', icon: ListTree, variant: 'default', onClick: () => setMenuAllocationOpen(true) },
         ...(selectedEmployee.status === 2

@@ -3,7 +3,9 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Pencil, Trash2, X } from 'lucide-react';
+import type { ColumnDef } from '@tanstack/react-table';
 import { cn } from '@/lib/utils';
+import { DataTable } from '@/components/data-table/DataTable';
 
 export interface FieldDef {
   key: string;
@@ -22,10 +24,15 @@ interface SetupCrudPageProps {
   displayKey: string;
   columns?: { key: string; label: string }[];
   queryParams?: Record<string, string>;
+  /** Hide the page-level <h1> — set when this is rendered as a tab under a page title shown elsewhere. */
+  hideTitle?: boolean;
 }
 
+const INPUT_CLASS =
+  'w-full px-3.5 py-2.5 rounded-lg border border-slate-200 bg-white text-sm text-[#0F172A] hover:border-slate-300 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/25 focus:border-[color:var(--color-primary)]/60 transition-colors duration-150';
+
 export function SetupCrudPage({
-  title, apiPath, fields, primaryKey, displayKey, columns, queryParams,
+  title, apiPath, fields, primaryKey, displayKey, columns, queryParams, hideTitle,
 }: SetupCrudPageProps) {
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState<Record<string, unknown> | null>(null);
@@ -35,6 +42,7 @@ export function SetupCrudPage({
 
   const cols = columns ?? [{ key: displayKey, label: title.replace(' Management', '') }];
   const qs = queryParams ? `?${new URLSearchParams(queryParams).toString()}` : '';
+  const itemLabel = title.replace(' Management', '');
 
   const { data = [], isLoading } = useQuery<Record<string, unknown>[]>({
     queryKey: [apiPath, queryParams],
@@ -103,101 +111,101 @@ export function SetupCrudPage({
 
   const showModal = isNew || editing !== null;
 
+  const tableColumns: ColumnDef<Record<string, unknown>, unknown>[] = [
+    {
+      id: 'slNo',
+      header: '',
+      meta: { className: 'w-12' },
+      cell: ({ row, table }) => {
+        const { pageIndex, pageSize } = table.getState().pagination;
+        return <span className="text-slate-400">{pageIndex * pageSize + row.index + 1}</span>;
+      },
+    },
+    ...cols.map(
+      (col): ColumnDef<Record<string, unknown>, unknown> => ({
+        id: col.key,
+        header: col.label,
+        accessorFn: (row) => row[col.key],
+        cell: ({ getValue }) => String(getValue() ?? ''),
+      })
+    ),
+    {
+      id: 'actions',
+      header: '',
+      meta: { className: 'w-24' },
+      cell: ({ row }) => (
+        <div className="flex items-center justify-end gap-1">
+          <button
+            onClick={(e) => { e.stopPropagation(); openEdit(row.original); }}
+            aria-label={`Edit ${itemLabel}`}
+            className="p-1.5 rounded-lg text-slate-400 hover:text-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-light)] transition-colors duration-150"
+          >
+            <Pencil className="w-3.5 h-3.5" />
+          </button>
+          {deleteConfirm === (row.original[primaryKey] as number) ? (
+            <span className="flex items-center gap-1.5 text-xs pl-1">
+              <button
+                onClick={(e) => { e.stopPropagation(); remove.mutate(row.original[primaryKey] as number); }}
+                className="font-medium text-[color:var(--color-danger)] hover:underline"
+              >
+                Confirm
+              </button>
+              <span className="text-slate-300">·</span>
+              <button
+                onClick={(e) => { e.stopPropagation(); setDeleteConfirm(null); }}
+                className="text-slate-500 hover:underline"
+              >
+                Cancel
+              </button>
+            </span>
+          ) : (
+            <button
+              onClick={(e) => { e.stopPropagation(); setDeleteConfirm(row.original[primaryKey] as number); }}
+              aria-label={`Delete ${itemLabel}`}
+              className="p-1.5 rounded-lg text-slate-400 hover:text-[color:var(--color-danger)] hover:bg-[color:var(--color-danger)]/10 transition-colors duration-150"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+      ),
+    },
+  ];
+
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-semibold text-gray-900">{title}</h1>
+      <div className={cn('flex items-center gap-3 mb-5', hideTitle ? 'justify-end' : 'justify-between')}>
+        {!hideTitle && <h1 className="font-heading text-2xl font-bold text-[#0F172A] tracking-tight">{title}</h1>}
         <button
           onClick={openNew}
-          className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+          className="inline-flex items-center gap-2 bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)] text-white px-4 py-2.5 rounded-xl text-sm font-semibold shadow-sm transition-colors duration-150"
         >
           <Plus className="w-4 h-4" />
           Add New
         </button>
       </div>
 
-      {isLoading ? (
-        <div className="text-gray-500 text-sm">Loading...</div>
-      ) : (
-        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50 border-b border-gray-200">
-              <tr>
-                {cols.map((col) => (
-                  <th key={col.key} className="text-left px-4 py-3 font-medium text-gray-600">
-                    {col.label}
-                  </th>
-                ))}
-                <th className="text-right px-4 py-3 font-medium text-gray-600">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {data.length === 0 && (
-                <tr>
-                  <td colSpan={cols.length + 1} className="px-4 py-8 text-center text-gray-400">
-                    No records found. Add one to get started.
-                  </td>
-                </tr>
-              )}
-              {data.map((row) => (
-                <tr key={String(row[primaryKey])} className="hover:bg-gray-50">
-                  {cols.map((col) => (
-                    <td key={col.key} className="px-4 py-3 text-gray-800">
-                      {String(row[col.key] ?? '')}
-                    </td>
-                  ))}
-                  <td className="px-4 py-3">
-                    <div className="flex items-center justify-end gap-2">
-                      <button
-                        onClick={() => openEdit(row)}
-                        className="p-1.5 rounded hover:bg-gray-100 text-gray-500 hover:text-indigo-600 transition-colors"
-                      >
-                        <Pencil className="w-4 h-4" />
-                      </button>
-                      {deleteConfirm === (row[primaryKey] as number) ? (
-                        <span className="flex items-center gap-1 text-xs">
-                          <button
-                            onClick={() => remove.mutate(row[primaryKey] as number)}
-                            className="text-red-600 hover:underline"
-                          >
-                            Confirm
-                          </button>
-                          <span className="text-gray-400">·</span>
-                          <button
-                            onClick={() => setDeleteConfirm(null)}
-                            className="text-gray-500 hover:underline"
-                          >
-                            Cancel
-                          </button>
-                        </span>
-                      ) : (
-                        <button
-                          onClick={() => setDeleteConfirm(row[primaryKey] as number)}
-                          className="p-1.5 rounded hover:bg-gray-100 text-gray-500 hover:text-red-600 transition-colors"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      <DataTable
+        data={data}
+        columns={tableColumns}
+        pageSize={10}
+        pageSizeOptions={[10, 20, 30, 50]}
+        isLoading={isLoading}
+      />
 
       {/* Modal */}
       {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="absolute inset-0 bg-black/40" onClick={closeModal} />
-          <div className="relative bg-white rounded-xl shadow-xl p-6 w-full max-w-md mx-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/25 backdrop-blur-[2px] p-4 animate-fade-in" onClick={closeModal}>
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="relative bg-white rounded-[20px] border border-black/[0.06] shadow-[0_25px_70px_-15px_rgba(0,0,0,0.25)] p-6 w-full max-w-md animate-modal-in"
+          >
             <div className="flex items-center justify-between mb-5">
-              <h2 className="text-lg font-semibold text-gray-900">
-                {isNew ? `New ${title.replace(' Management', '')}` : `Edit ${title.replace(' Management', '')}`}
+              <h2 className="text-[19px] font-semibold text-[#0F172A] tracking-tight">
+                {isNew ? `New ${itemLabel}` : `Edit ${itemLabel}`}
               </h2>
-              <button onClick={closeModal} className="p-1 rounded hover:bg-gray-100">
-                <X className="w-5 h-5 text-gray-500" />
+              <button onClick={closeModal} aria-label="Close" className="p-1 rounded-full hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors duration-150">
+                <X className="w-4.5 h-4.5" />
               </button>
             </div>
 
@@ -211,29 +219,29 @@ export function SetupCrudPage({
               {fields.map((field) => (
                 <div key={field.key}>
                   {field.type === 'checkbox' ? (
-                    <label className="flex items-center gap-2 text-sm font-medium text-gray-700">
+                    <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
                       <input
                         type="checkbox"
                         checked={form[field.key] === 'Y'}
                         onChange={(e) =>
                           setForm((f) => ({ ...f, [field.key]: e.target.checked ? 'Y' : 'N' }))
                         }
-                        className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                        className="rounded border-slate-300 text-[color:var(--color-primary)] focus:ring-[color:var(--color-primary)]/40"
                       />
                       {field.label}
                     </label>
                   ) : (
                     <>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                      <label className="block text-[13px] font-medium text-slate-600 mb-1.5">
                         {field.label}
-                        {field.required && <span className="text-red-500 ml-0.5">*</span>}
+                        {field.required && <span className="text-[color:var(--color-danger)]"> *</span>}
                       </label>
                       {field.type === 'select' ? (
                         <select
                           required={field.required}
                           value={form[field.key] ?? ''}
                           onChange={(e) => setForm((f) => ({ ...f, [field.key]: e.target.value }))}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                          className={INPUT_CLASS}
                         >
                           <option value="">Select…</option>
                           {field.options?.map((opt) => (
@@ -247,7 +255,7 @@ export function SetupCrudPage({
                           placeholder={field.placeholder}
                           value={form[field.key] ?? ''}
                           onChange={(e) => setForm((f) => ({ ...f, [field.key]: e.target.value }))}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                          className={INPUT_CLASS}
                         />
                       )}
                     </>
@@ -256,14 +264,14 @@ export function SetupCrudPage({
               ))}
 
               {save.isError && (
-                <p className="text-red-500 text-sm">{String(save.error)}</p>
+                <p className="text-[color:var(--color-danger)] text-[12.5px]">{String(save.error)}</p>
               )}
 
-              <div className="flex justify-end gap-3 pt-2">
+              <div className="flex justify-end gap-2 pt-2">
                 <button
                   type="button"
                   onClick={closeModal}
-                  className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                  className="px-4 py-2 text-sm font-medium text-slate-500 hover:bg-slate-100 rounded-xl transition-colors duration-150"
                 >
                   Cancel
                 </button>
@@ -271,10 +279,10 @@ export function SetupCrudPage({
                   type="submit"
                   disabled={save.isPending}
                   className={cn(
-                    'px-4 py-2 text-sm font-medium text-white rounded-lg transition-colors',
+                    'px-4 py-2.5 text-sm font-semibold text-white rounded-xl shadow-sm transition-colors duration-150',
                     save.isPending
-                      ? 'bg-indigo-400'
-                      : 'bg-indigo-600 hover:bg-indigo-700'
+                      ? 'bg-[color:var(--color-primary)]/60 cursor-not-allowed'
+                      : 'bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)]'
                   )}
                 >
                   {save.isPending ? 'Saving…' : 'Save'}

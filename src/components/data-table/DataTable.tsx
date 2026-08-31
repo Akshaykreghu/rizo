@@ -95,7 +95,7 @@ export function DataTable<TData>({
     <div className={cn('space-y-4', className)}>
       <div className="surface-card rounded-2xl overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-sm border-separate border-spacing-0">
+          <table className="w-full text-[13px] border-separate border-spacing-0">
             <thead className="sticky top-0 z-10 bg-slate-100 border-b border-slate-200">
               {table.getHeaderGroups().map((headerGroup) => (
                 <tr key={headerGroup.id}>
@@ -103,7 +103,7 @@ export function DataTable<TData>({
                     <th
                       key={header.id}
                       className={cn(
-                        'px-4 py-3 text-left text-[12px] font-semibold text-[#64748B] uppercase tracking-wide whitespace-nowrap',
+                        'px-4 py-2.5 text-left text-[11px] font-semibold text-[#64748B] uppercase tracking-wide whitespace-nowrap',
                         header.column.getCanSort() && 'cursor-pointer select-none hover:text-[#0F172A]',
                         (header.column.columnDef.meta as { className?: string } | undefined)?.className
                       )}
@@ -148,7 +148,7 @@ export function DataTable<TData>({
                   <tr
                     key={row.id}
                     className={cn(
-                      'group/row h-11 transition-colors duration-[180ms]',
+                      'group/row h-10 transition-colors duration-[180ms]',
                       i % 2 === 1 && !selected && 'bg-slate-900/[0.035]',
                       selected
                         ? 'bg-[color:var(--color-primary)]/[0.07] shadow-[inset_2px_0_0_var(--color-primary)]'
@@ -161,7 +161,7 @@ export function DataTable<TData>({
                       <td
                         key={cell.id}
                         className={cn(
-                          'px-4 py-2 text-[#0F172A]',
+                          'px-4 py-1.5 text-[#0F172A]',
                           (cell.column.columnDef.meta as { className?: string } | undefined)?.className
                         )}
                       >
@@ -177,15 +177,15 @@ export function DataTable<TData>({
         </div>
 
         {/* Pagination */}
-        <div className="flex items-center justify-between text-sm text-slate-500 bg-slate-100 border-t border-slate-200 px-4 py-3">
+        <div className="flex items-center justify-between text-[12.5px] text-slate-500 bg-slate-100 border-t border-slate-200 px-4 py-2.5">
           <div className="flex items-center gap-4">
             {pageSizeOptions && (
-              <label className="flex items-center gap-2 text-sm text-slate-500">
+              <label className="flex items-center gap-2 text-[12.5px] text-slate-500">
                 Rows per page
                 <select
                   value={pagination.pageSize}
                   onChange={(e) => table.setPageSize(Number(e.target.value))}
-                  className="bg-white border border-slate-200 rounded-lg px-2 py-1 text-sm text-slate-600 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/40"
+                  className="bg-white border border-slate-200 rounded-lg px-2 py-1 text-[12.5px] text-slate-600 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/40"
                 >
                   {pageSizeOptions.map((n) => <option key={n} value={n}>{n}</option>)}
                 </select>
@@ -223,7 +223,7 @@ export function DataTable<TData>({
                   key={n}
                   onClick={() => table.setPageIndex(n - 1)}
                   className={cn(
-                    'w-8 h-8 rounded-lg text-sm font-medium transition-all duration-[180ms]',
+                    'w-7 h-7 rounded-lg text-[12.5px] font-medium transition-all duration-[180ms]',
                     n === pageIndex + 1
                       ? 'bg-[color:var(--color-primary)] text-white shadow-sm'
                       : 'text-slate-500 hover:bg-[color:var(--color-primary-light)] hover:text-[#1687E8]'

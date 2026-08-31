@@ -6,6 +6,15 @@ import { createPortal } from 'react-dom';
 import { Check, Upload, Image as ImageIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
+import { SetupCrudPage } from '@/components/setup/SetupCrudPage';
+import {
+  BRANCH_FIELDS,
+  BRANCH_COLUMNS,
+  BANK_FIELDS,
+  BANK_COLUMNS,
+  financialYearFields,
+  FINANCIAL_YEAR_COLUMNS,
+} from '@/lib/setupFieldConfigs';
 import {
   panError,
   tanError,
@@ -45,7 +54,11 @@ interface ComplianceInfo {
 const TABS = [
   { value: 'profile' as const, label: 'Profile' },
   { value: 'compliance' as const, label: 'Statutory & Compliance' },
+  { value: 'branches' as const, label: 'Branches' },
+  { value: 'financial-year' as const, label: 'Financial Year' },
+  { value: 'banks' as const, label: 'Banks' },
 ];
+type Tab = (typeof TABS)[number]['value'];
 
 const LABEL_CLASS = 'block text-[13px] font-medium text-slate-600 mb-1.5';
 const INPUT_BASE =
@@ -221,7 +234,7 @@ function LogoUploadField({ value, onChange }: LogoUploadFieldProps) {
 export default function CompanyProfilePage() {
   const queryClient = useQueryClient();
   const { slotEl } = useHeaderSlot();
-  const [tab, setTab] = useState<'profile' | 'compliance'>('profile');
+  const [tab, setTab] = useState<Tab>('profile');
   const [form, setForm] = useState<CompanyInfo>({});
   const [complianceForm, setComplianceForm] = useState<ComplianceInfo>({});
   const [saved, setSaved] = useState(false);
@@ -239,6 +252,12 @@ export default function CompanyProfilePage() {
   const { data: compliance, isLoading: complianceLoading } = useQuery<ComplianceInfo>({
     queryKey: ['setup/compliance'],
     queryFn: () => fetch('/api/setup/compliance').then((r) => r.json()),
+  });
+
+  const { data: finYearBranches = [] } = useQuery<{ branch_code: string; branch_name: string }[]>({
+    queryKey: ['setup/branches'],
+    queryFn: () => fetch('/api/setup/branches').then((r) => r.json()),
+    enabled: tab === 'financial-year',
   });
 
   useEffect(() => {
@@ -358,14 +377,14 @@ export default function CompanyProfilePage() {
           slotEl
         )}
 
-      <div className="sticky top-0 z-20 glass-card-strong rounded-2xl px-3 py-2.5 flex items-center mb-5">
-        <div className="flex items-center gap-1 text-sm bg-slate-900/[0.03] rounded-xl p-1">
+      <div className="sticky top-0 z-20 glass-card-strong rounded-xl px-3 py-2 flex items-center mb-5">
+        <div className="flex items-center gap-1 flex-wrap text-[12.5px] bg-slate-900/[0.03] rounded-lg p-0.5">
           {TABS.map((t) => (
             <button
               key={t.value}
               onClick={() => setTab(t.value)}
               className={cn(
-                'px-3.5 py-1.5 rounded-lg transition-all duration-[180ms] font-medium border',
+                'px-3 py-1 rounded-md transition-all duration-[180ms] font-medium border whitespace-nowrap',
                 tab === t.value
                   ? 'bg-[color:var(--color-primary-light)] text-[color:var(--color-primary)] border-[color:var(--color-primary)]/30'
                   : 'bg-white text-slate-500 border-transparent hover:bg-white/70'
@@ -515,6 +534,42 @@ export default function CompanyProfilePage() {
             </div>
           </form>
         ))}
+
+      {tab === 'branches' && (
+        <SetupCrudPage
+          hideTitle
+          title="Branches"
+          apiPath="setup/branches"
+          primaryKey="id"
+          displayKey="branch_name"
+          fields={BRANCH_FIELDS}
+          columns={BRANCH_COLUMNS}
+        />
+      )}
+
+      {tab === 'financial-year' && (
+        <SetupCrudPage
+          hideTitle
+          title="Financial Year"
+          apiPath="setup/financial-year"
+          primaryKey="Fin_year_seq"
+          displayKey="fin_year"
+          fields={financialYearFields(finYearBranches)}
+          columns={FINANCIAL_YEAR_COLUMNS}
+        />
+      )}
+
+      {tab === 'banks' && (
+        <SetupCrudPage
+          hideTitle
+          title="Banks"
+          apiPath="setup/banks"
+          primaryKey="id"
+          displayKey="bank_name"
+          fields={BANK_FIELDS}
+          columns={BANK_COLUMNS}
+        />
+      )}
     </div>
   );
 }

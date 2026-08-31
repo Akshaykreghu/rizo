@@ -2,6 +2,7 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { SetupCrudPage } from '@/components/setup/SetupCrudPage';
+import { financialYearFields, FINANCIAL_YEAR_COLUMNS } from '@/lib/setupFieldConfigs';
 
 interface Branch {
   branch_code: string;
@@ -20,46 +21,8 @@ export default function FinancialYearPage() {
       apiPath="setup/financial-year"
       primaryKey="Fin_year_seq"
       displayKey="fin_year"
-      fields={[
-        { key: 'start_month', label: 'Year Start', type: 'date', required: true },
-        { key: 'end_month', label: 'Year End', type: 'date', required: true },
-        {
-          key: 'branch_code',
-          label: 'Branch',
-          type: 'select',
-          required: true,
-          options: branches.map((b) => ({ value: b.branch_code, label: b.branch_name })),
-        },
-        {
-          key: 'Year_status',
-          label: 'Status',
-          type: 'select',
-          required: true,
-          options: [
-            { value: 'OPEN', label: 'Open' },
-            { value: 'CLOSED', label: 'Closed' },
-          ],
-        },
-        {
-          key: 'vattr1',
-          label: 'Type',
-          type: 'select',
-          required: true,
-          options: [
-            { value: '0', label: 'Leave' },
-            { value: '1', label: 'Financial' },
-          ],
-        },
-        { key: 'is_current_finyear', label: 'Is Current Financial Year', type: 'checkbox' },
-      ]}
-      columns={[
-        { key: 'branch_name', label: 'Branch' },
-        { key: 'fin_year', label: 'Year' },
-        { key: 'start_month', label: 'Start' },
-        { key: 'end_month', label: 'End' },
-        { key: 'Year_status', label: 'Status' },
-        { key: 'type_label', label: 'Type' },
-      ]}
+      fields={financialYearFields(branches)}
+      columns={FINANCIAL_YEAR_COLUMNS}
     />
   );
 }
