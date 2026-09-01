@@ -26,13 +26,15 @@ interface SetupCrudPageProps {
   queryParams?: Record<string, string>;
   /** Hide the page-level <h1> — set when this is rendered as a tab under a page title shown elsewhere. */
   hideTitle?: boolean;
+  /** Extra content (e.g. a filter dropdown) rendered on the left of the header row, alongside "Add New". */
+  headerExtra?: React.ReactNode;
 }
 
 const INPUT_CLASS =
   'w-full px-3.5 py-2.5 rounded-lg border border-slate-200 bg-white text-sm text-[#0F172A] hover:border-slate-300 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/25 focus:border-[color:var(--color-primary)]/60 transition-colors duration-150';
 
 export function SetupCrudPage({
-  title, apiPath, fields, primaryKey, displayKey, columns, queryParams, hideTitle,
+  title, apiPath, fields, primaryKey, displayKey, columns, queryParams, hideTitle, headerExtra,
 }: SetupCrudPageProps) {
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState<Record<string, unknown> | null>(null);
@@ -174,8 +176,9 @@ export function SetupCrudPage({
 
   return (
     <div>
-      <div className={cn('flex items-center gap-3 mb-5', hideTitle ? 'justify-end' : 'justify-between')}>
+      <div className={cn('flex items-center gap-3 mb-5', hideTitle && !headerExtra ? 'justify-end' : 'justify-between')}>
         {!hideTitle && <h1 className="font-heading text-2xl font-bold text-[#0F172A] tracking-tight">{title}</h1>}
+        {hideTitle && headerExtra}
         <button
           onClick={openNew}
           className="inline-flex items-center gap-2 bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)] text-white px-4 py-2.5 rounded-xl text-sm font-semibold shadow-sm transition-colors duration-150"

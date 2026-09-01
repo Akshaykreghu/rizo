@@ -1,11 +1,12 @@
 'use client';
 
-import Link from 'next/link';
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Pencil, PowerOff, Search } from 'lucide-react';
 import { formatCurrency } from '@/lib/utils';
 import { DataTable } from '@/components/data-table/DataTable';
+import { Modal } from '@/components/ui/Modal';
+import { SalaryStructureForm } from '@/components/setup/SalaryStructureForm';
 import type { ColumnDef } from '@tanstack/react-table';
 
 interface StructureListItem {
@@ -17,12 +18,21 @@ interface StructureListItem {
   structure_active: number;
 }
 
-export default function SalaryStructureListPage() {
+export function SalaryStructurePanel() {
   const queryClient = useQueryClient();
   const [deactivateConfirm, setDeactivateConfirm] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [activeOnly, setActiveOnly] = useState(false);
+  // 'new' | a structure id being edited | null (closed)
+  const [modalTarget, setModalTarget] = useState<'new' | number | null>(null);
+
+  function handleSaved(id: number) {
+    queryClient.invalidateQueries({ queryKey: ['setup/salary-structures'] });
+    // New structures switch into edit mode in the same modal (mirrors the old
+    // navigate-to-the-new-record's-edit-page behavior); an existing structure's save closes it.
+    setModalTarget((prev) => (prev === 'new' ? id : null));
+  }
 
   const { data = [], isLoading } = useQuery<StructureListItem[]>({
     queryKey: ['setup/salary-structures', 'full'],
@@ -68,13 +78,13 @@ export default function SalaryStructureListPage() {
       header: '',
       cell: ({ row }) => (
         <div className="flex items-center justify-end gap-2">
-          <Link
-            href={`/setup/salary-structure/${row.original.structure_id}`}
+          <button
+            onClick={() => setModalTarget(row.original.structure_id)}
             className="p-1.5 rounded hover:bg-gray-100 text-gray-500 hover:text-indigo-600 transition-colors"
             title="Edit"
           >
             <Pencil className="w-4 h-4" />
-          </Link>
+          </button>
           {row.original.structure_active === 1 && (
             deactivateConfirm === row.original.structure_id ? (
               <span className="flex items-center gap-1 text-xs">
@@ -103,37 +113,36 @@ export default function SalaryStructureListPage() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-semibold text-gray-900">Salary Structures</h1>
-        <Link
-          href="/setup/salary-structure/new"
+      <div className="flex items-center justify-between mb-5">
+        <div className="flex items-center gap-4">
+          <div className="relative max-w-sm flex-1">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <input
+              type="text"
+              placeholder="Search by name"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full pl-8 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+          </div>
+          <label className="flex items-center gap-1.5 text-sm text-gray-600 whitespace-nowrap">
+            <input
+              type="checkbox"
+              checked={activeOnly}
+              onChange={(e) => setActiveOnly(e.target.checked)}
+              className="rounded border-gray-300"
+            />
+            Active only
+          </label>
+        </div>
+
+        <button
+          onClick={() => setModalTarget('new')}
           className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
         >
           <Plus className="w-4 h-4" />
           Add New
-        </Link>
-      </div>
-
-      <div className="flex items-center gap-4 mb-4">
-        <div className="relative max-w-sm flex-1">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-          <input
-            type="text"
-            placeholder="Search by name"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-full pl-8 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-          />
-        </div>
-        <label className="flex items-center gap-1.5 text-sm text-gray-600 whitespace-nowrap">
-          <input
-            type="checkbox"
-            checked={activeOnly}
-            onChange={(e) => setActiveOnly(e.target.checked)}
-            className="rounded border-gray-300"
-          />
-          Active only
-        </label>
+        </button>
       </div>
 
       {error && (
@@ -142,7 +151,18 @@ export default function SalaryStructureListPage() {
         </div>
       )}
 
-      <DataTable data={filtered} columns={columns} pageSize={25} isLoading={isLoading} />
+      <DataTable data={filtered} columns={columns} pageSize={10} pageSizeOptions={[10, 20, 30, 50]} isLoading={isLoading} />
+
+      <Modal open={modalTarget !== null} onClose={() => setModalTarget(null)} className="max-w-6xl">
+        {modalTarget !== null && (
+          <SalaryStructureForm
+            structureId={modalTarget === 'new' ? undefined : modalTarget}
+            onBack={() => setModalTarget(null)}
+            showBackLink={false}
+            onSaved={handleSaved}
+          />
+        )}
+      </Modal>
     </div>
   );
 }

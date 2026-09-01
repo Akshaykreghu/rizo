@@ -5,19 +5,21 @@ import { createPortal } from 'react-dom';
 import { useSearchParams } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
-import { DevicesPanel } from '@/components/setup/DevicesPanel';
-import { DeviceMappingPanel } from '@/components/setup/DeviceMappingPanel';
+import { SalaryHeadCategoriesPanel } from '@/components/setup/SalaryHeadCategoriesPanel';
+import { SalaryHeadItemsPanel } from '@/components/setup/SalaryHeadItemsPanel';
+import { SalaryStructurePanel } from '@/components/setup/SalaryStructurePanel';
 
 const TABS = [
-  { value: 'devices' as const, label: 'Devices' },
-  { value: 'mapping' as const, label: 'Device Mapping' },
+  { value: 'categories' as const, label: 'Salary Head Categories' },
+  { value: 'items' as const, label: 'Salary Head Items' },
+  { value: 'salary-structure' as const, label: 'Salary Structure' },
 ];
 type Tab = (typeof TABS)[number]['value'];
 
-function DevicesSetupContent() {
+function SalarySetupContent() {
   const { slotEl } = useHeaderSlot();
   const searchParams = useSearchParams();
-  const initialTab = searchParams.get('tab') === 'mapping' ? 'mapping' : 'devices';
+  const initialTab = searchParams.get('tab') === 'salary-structure' ? 'salary-structure' : 'categories';
   const [tab, setTab] = useState<Tab>(initialTab);
 
   return (
@@ -27,10 +29,10 @@ function DevicesSetupContent() {
         createPortal(
           <div className="min-w-0">
             <h1 className="font-heading text-2xl font-bold text-[#0F172A] tracking-tight leading-tight truncate">
-              Devices
+              Salary
             </h1>
             <p className="text-sm text-[#64748B] mt-0.5 truncate">
-              Biometric devices and employee-device mapping
+              Salary head categories, items and structure templates
             </p>
           </div>,
           slotEl
@@ -55,16 +57,17 @@ function DevicesSetupContent() {
         </div>
       </div>
 
-      {tab === 'devices' && <DevicesPanel />}
-      {tab === 'mapping' && <DeviceMappingPanel />}
+      {tab === 'categories' && <SalaryHeadCategoriesPanel />}
+      {tab === 'items' && <SalaryHeadItemsPanel />}
+      {tab === 'salary-structure' && <SalaryStructurePanel />}
     </div>
   );
 }
 
-export default function DevicesSetupPage() {
+export default function SalarySetupPage() {
   return (
     <Suspense fallback={null}>
-      <DevicesSetupContent />
+      <SalarySetupContent />
     </Suspense>
   );
 }

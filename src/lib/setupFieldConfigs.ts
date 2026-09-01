@@ -80,3 +80,65 @@ export const FINANCIAL_YEAR_COLUMNS = [
   { key: 'Year_status', label: 'Status' },
   { key: 'type_label', label: 'Type' },
 ];
+
+/** "Profession" tabs — Departments, Designations, Grades, Notice Period, Division, Section. */
+
+export const DEPARTMENT_FIELDS: FieldDef[] = [
+  { key: 'dept_name', label: 'Department Name', required: true, placeholder: 'e.g. Engineering' },
+  { key: 'dept_code', label: 'Department Code', placeholder: 'e.g. ENG' },
+];
+
+export const DEPARTMENT_COLUMNS = [
+  { key: 'dept_code', label: 'Code' },
+  { key: 'dept_name', label: 'Name' },
+];
+
+export const DESIGNATION_FIELDS: FieldDef[] = [
+  { key: 'desig_name', label: 'Designation Name', required: true, placeholder: 'e.g. Software Engineer' },
+  { key: 'desig_code', label: 'Code', placeholder: 'e.g. SWE' },
+];
+
+export const DESIGNATION_COLUMNS = [
+  { key: 'desig_code', label: 'Code' },
+  { key: 'desig_name', label: 'Name' },
+];
+
+export const GRADE_FIELDS: FieldDef[] = [
+  { key: 'grade_name', label: 'Grade Name', required: true, placeholder: 'e.g. Senior' },
+  { key: 'grade_code', label: 'Code', placeholder: 'e.g. SR' },
+];
+
+export const GRADE_COLUMNS = [
+  { key: 'grade_code', label: 'Code' },
+  { key: 'grade_name', label: 'Name' },
+];
+
+export const NOTICE_PERIOD_FIELDS: FieldDef[] = [
+  { key: 'description', label: 'Description', required: true, placeholder: 'e.g. One Month' },
+  { key: 'notice_days', label: 'Notice Days', type: 'number', required: true },
+];
+
+export const NOTICE_PERIOD_COLUMNS = [
+  { key: 'description', label: 'Description' },
+  { key: 'notice_days', label: 'Days' },
+];
+
+export const DIVISION_FIELDS: FieldDef[] = [
+  { key: 'div_code', label: 'Division Code', placeholder: 'e.g. DIV001' },
+  { key: 'div_name', label: 'Division Name', required: true },
+];
+
+export const DIVISION_COLUMNS = [
+  { key: 'div_code', label: 'Code' },
+  { key: 'div_name', label: 'Name' },
+];
+
+export const SECTION_FIELDS: FieldDef[] = [
+  { key: 'section_code', label: 'Section Code', placeholder: 'e.g. SEC001' },
+  { key: 'section_name', label: 'Section Name', required: true },
+];
+
+export const SECTION_COLUMNS = [
+  { key: 'section_code', label: 'Code' },
+  { key: 'section_name', label: 'Name' },
+];

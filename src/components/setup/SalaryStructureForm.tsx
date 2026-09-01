@@ -74,9 +74,22 @@ function newRow(): DetailRow {
   };
 }
 
-export function SalaryStructureForm({ structureId }: { structureId?: number }) {
+interface SalaryStructureFormProps {
+  structureId?: number;
+  /** Defaults to navigating back to the list route — pass this when embedding the form
+   * elsewhere (e.g. inside a modal) so "Back" closes it instead of navigating away. */
+  onBack?: () => void;
+  showBackLink?: boolean;
+  /** Called with the structure's id after a successful save, instead of navigating away.
+   * On create, the modal caller uses this to keep the form open in edit mode for the new
+   * record (same behavior the standalone page gets by pushing to its edit route). */
+  onSaved?: (id: number) => void;
+}
+
+export function SalaryStructureForm({ structureId, onBack, showBackLink = true, onSaved }: SalaryStructureFormProps) {
   const router = useRouter();
   const isEdit = structureId != null;
+  const goBack = onBack ?? (() => router.push('/setup/salary?tab=salary-structure'));
 
   const [header, setHeader] = useState({
     structure_name: '', prorate_code: '', prorate_desc: '', fixed_days: '30',
@@ -182,7 +195,12 @@ export function SalaryStructureForm({ structureId }: { structureId?: number }) {
     },
     onSuccess: (data) => {
       setError(null);
-      router.push(isEdit ? '/setup/salary-structure' : `/setup/salary-structure/${data.id}`);
+      const savedId = isEdit ? structureId! : (data.id as number);
+      if (onSaved) {
+        onSaved(savedId);
+      } else {
+        router.push('/setup/salary?tab=salary-structure');
+      }
     },
     onError: (err) => setError(String(err instanceof Error ? err.message : err)),
   });
@@ -455,12 +473,14 @@ export function SalaryStructureForm({ structureId }: { structureId?: number }) {
 
   return (
     <div>
-      <button
-        onClick={() => router.push('/setup/salary-structure')}
-        className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 mb-5 transition-colors"
-      >
-        <ArrowLeft className="w-4 h-4" /> Back to Salary Structures
-      </button>
+      {showBackLink && (
+        <button
+          onClick={goBack}
+          className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 mb-5 transition-colors"
+        >
+          <ArrowLeft className="w-4 h-4" /> Back to Salary Structures
+        </button>
+      )}
 
       <h1 className="text-2xl font-semibold text-gray-900 mb-6">
         {isEdit ? 'Edit Salary Structure' : 'New Salary Structure'}

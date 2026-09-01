@@ -3,8 +3,9 @@
 import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Pencil, Trash2, X } from 'lucide-react';
-import { SetupCrudPage } from '@/components/setup/SetupCrudPage';
 import { cn } from '@/lib/utils';
+import { DataTable } from '@/components/data-table/DataTable';
+import type { ColumnDef } from '@tanstack/react-table';
 
 interface LeavePolicyGroup {
   LEAVEPOLICY_GROUP_ID: number;
@@ -111,7 +112,7 @@ function rowToForm(row: LeavePolicyRow): FormState {
   };
 }
 
-export default function LeavePolicyPage() {
+export function LeavePolicyPanel() {
   const queryClient = useQueryClient();
   const [selectedGroupId, setSelectedGroupId] = useState<number | null>(null);
   const [editing, setEditing] = useState<LeavePolicyRow | null>(null);
@@ -203,21 +204,60 @@ export default function LeavePolicyPage() {
   const showModal = isNew || editing !== null;
   const isPresentDays = form.leave_policy_type === 'P';
 
-  return (
-    <div className="space-y-10">
-      <SetupCrudPage
-        title="Leave Policy Groups"
-        apiPath="setup/leavepolicy-groups"
-        primaryKey="LEAVEPOLICY_GROUP_ID"
-        displayKey="LEAVEPOLICY_GROUP_NAME"
-        fields={[{ key: 'LEAVEPOLICY_GROUP_NAME', label: 'Leave Policy Group Name', required: true }]}
-        columns={[{ key: 'LEAVEPOLICY_GROUP_NAME', label: 'Group Name' }]}
-      />
+  const policyColumns: ColumnDef<LeavePolicyRow, unknown>[] = [
+    { accessorKey: 'leave_type_name', header: 'Leave Type', cell: ({ getValue }) => <span className="text-[#0F172A]">{String(getValue() ?? '').trim()}</span> },
+    {
+      id: 'duration',
+      header: 'Duration',
+      cell: ({ row }) => DURATION_TYPES.find((d) => d.value === row.original.leave_policy_type)?.label ?? row.original.leave_policy_type,
+    },
+    {
+      id: 'limit',
+      header: 'Limit / Days',
+      cell: ({ row }) => (row.original.leave_policy_type === 'P' ? row.original.alloted_leave_forthe_month : row.original.alloted_leave_forthe_year),
+    },
+    { accessorKey: 'CARRY_FORWARD_LIMIT', header: 'Carry Forward' },
+    { id: 'negative', header: 'Negative Balance', cell: ({ row }) => (row.original.ALLOW_NEGETIVE === 'Y' ? 'Yes' : 'No') },
+    {
+      id: 'actions',
+      header: '',
+      meta: { className: 'w-24' },
+      cell: ({ row }) => (
+        <div className="flex items-center justify-end gap-1">
+          <button
+            onClick={(e) => { e.stopPropagation(); openEdit(row.original); }}
+            className="p-1.5 rounded-lg text-slate-400 hover:text-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-light)] transition-colors duration-150"
+          >
+            <Pencil className="w-3.5 h-3.5" />
+          </button>
+          {deleteConfirm === row.original.LEAVEPOLICYID ? (
+            <span className="flex items-center gap-1.5 text-xs pl-1">
+              <button onClick={(e) => { e.stopPropagation(); remove.mutate(row.original.LEAVEPOLICYID); }} className="font-medium text-[color:var(--color-danger)] hover:underline">
+                Confirm
+              </button>
+              <span className="text-slate-300">·</span>
+              <button onClick={(e) => { e.stopPropagation(); setDeleteConfirm(null); }} className="text-slate-500 hover:underline">
+                Cancel
+              </button>
+            </span>
+          ) : (
+            <button
+              onClick={(e) => { e.stopPropagation(); setDeleteConfirm(row.original.LEAVEPOLICYID); }}
+              className="p-1.5 rounded-lg text-slate-400 hover:text-[color:var(--color-danger)] hover:bg-[color:var(--color-danger)]/10 transition-colors duration-150"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+      ),
+    },
+  ];
 
+  return (
+    <div>
       <div>
-        <h2 className="text-lg font-semibold text-gray-900 mb-3">Leave Policies</h2>
         {groups.length === 0 ? (
-          <p className="text-sm text-gray-500">Create a Leave Policy Group first.</p>
+          <p className="text-sm text-gray-500">Create a Leave Policy Group first, on the &quot;Leave Policy Groups&quot; tab.</p>
         ) : (
           <>
             <div className="mb-4 max-w-xs">
@@ -248,74 +288,13 @@ export default function LeavePolicyPage() {
               </button>
             </div>
 
-            {isLoading ? (
-              <div className="text-gray-500 text-sm">Loading...</div>
-            ) : (
-              <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-                <table className="w-full text-sm">
-                  <thead className="bg-gray-50 border-b border-gray-200">
-                    <tr>
-                      <th className="text-left px-4 py-3 font-medium text-gray-600">Leave Type</th>
-                      <th className="text-left px-4 py-3 font-medium text-gray-600">Duration</th>
-                      <th className="text-left px-4 py-3 font-medium text-gray-600">Limit / Days</th>
-                      <th className="text-left px-4 py-3 font-medium text-gray-600">Carry Forward</th>
-                      <th className="text-left px-4 py-3 font-medium text-gray-600">Negative Balance</th>
-                      <th className="text-right px-4 py-3 font-medium text-gray-600">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {policies.length === 0 && (
-                      <tr>
-                        <td colSpan={6} className="px-4 py-8 text-center text-gray-400">
-                          No leave types configured for this group yet.
-                        </td>
-                      </tr>
-                    )}
-                    {policies.map((row) => (
-                      <tr key={row.LEAVEPOLICYID} className="hover:bg-gray-50">
-                        <td className="px-4 py-3 text-gray-800">{row.leave_type_name?.trim()}</td>
-                        <td className="px-4 py-3 text-gray-600">
-                          {DURATION_TYPES.find((d) => d.value === row.leave_policy_type)?.label ?? row.leave_policy_type}
-                        </td>
-                        <td className="px-4 py-3 text-gray-600">
-                          {row.leave_policy_type === 'P' ? row.alloted_leave_forthe_month : row.alloted_leave_forthe_year}
-                        </td>
-                        <td className="px-4 py-3 text-gray-600">{row.CARRY_FORWARD_LIMIT}</td>
-                        <td className="px-4 py-3 text-gray-600">{row.ALLOW_NEGETIVE === 'Y' ? 'Yes' : 'No'}</td>
-                        <td className="px-4 py-3">
-                          <div className="flex items-center justify-end gap-2">
-                            <button
-                              onClick={() => openEdit(row)}
-                              className="p-1.5 rounded hover:bg-gray-100 text-gray-500 hover:text-indigo-600 transition-colors"
-                            >
-                              <Pencil className="w-4 h-4" />
-                            </button>
-                            {deleteConfirm === row.LEAVEPOLICYID ? (
-                              <span className="flex items-center gap-1 text-xs">
-                                <button onClick={() => remove.mutate(row.LEAVEPOLICYID)} className="text-red-600 hover:underline">
-                                  Confirm
-                                </button>
-                                <span className="text-gray-400">·</span>
-                                <button onClick={() => setDeleteConfirm(null)} className="text-gray-500 hover:underline">
-                                  Cancel
-                                </button>
-                              </span>
-                            ) : (
-                              <button
-                                onClick={() => setDeleteConfirm(row.LEAVEPOLICYID)}
-                                className="p-1.5 rounded hover:bg-gray-100 text-gray-500 hover:text-red-600 transition-colors"
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </button>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
+            <DataTable
+              data={policies}
+              columns={policyColumns}
+              pageSize={10}
+              pageSizeOptions={[10, 20, 30, 50]}
+              isLoading={isLoading}
+            />
           </>
         )}
       </div>

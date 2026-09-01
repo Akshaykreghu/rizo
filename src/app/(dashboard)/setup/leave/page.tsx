@@ -1,24 +1,23 @@
 'use client';
 
-import { Suspense, useState } from 'react';
+import { useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useSearchParams } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
-import { DevicesPanel } from '@/components/setup/DevicesPanel';
-import { DeviceMappingPanel } from '@/components/setup/DeviceMappingPanel';
+import { LeaveTypesPanel } from '@/components/setup/LeaveTypesPanel';
+import { LeavePolicyGroupsPanel } from '@/components/setup/LeavePolicyGroupsPanel';
+import { LeavePolicyPanel } from '@/components/setup/LeavePolicyPanel';
 
 const TABS = [
-  { value: 'devices' as const, label: 'Devices' },
-  { value: 'mapping' as const, label: 'Device Mapping' },
+  { value: 'types' as const, label: 'Leave Types' },
+  { value: 'groups' as const, label: 'Leave Policy Groups' },
+  { value: 'policy' as const, label: 'Leave Policy' },
 ];
 type Tab = (typeof TABS)[number]['value'];
 
-function DevicesSetupContent() {
+export default function LeaveSetupPage() {
   const { slotEl } = useHeaderSlot();
-  const searchParams = useSearchParams();
-  const initialTab = searchParams.get('tab') === 'mapping' ? 'mapping' : 'devices';
-  const [tab, setTab] = useState<Tab>(initialTab);
+  const [tab, setTab] = useState<Tab>('types');
 
   return (
     <div>
@@ -27,10 +26,10 @@ function DevicesSetupContent() {
         createPortal(
           <div className="min-w-0">
             <h1 className="font-heading text-2xl font-bold text-[#0F172A] tracking-tight leading-tight truncate">
-              Devices
+              Leave
             </h1>
             <p className="text-sm text-[#64748B] mt-0.5 truncate">
-              Biometric devices and employee-device mapping
+              Leave types and accrual/policy rules
             </p>
           </div>,
           slotEl
@@ -55,16 +54,9 @@ function DevicesSetupContent() {
         </div>
       </div>
 
-      {tab === 'devices' && <DevicesPanel />}
-      {tab === 'mapping' && <DeviceMappingPanel />}
+      {tab === 'types' && <LeaveTypesPanel />}
+      {tab === 'groups' && <LeavePolicyGroupsPanel />}
+      {tab === 'policy' && <LeavePolicyPanel />}
     </div>
-  );
-}
-
-export default function DevicesSetupPage() {
-  return (
-    <Suspense fallback={null}>
-      <DevicesSetupContent />
-    </Suspense>
   );
 }

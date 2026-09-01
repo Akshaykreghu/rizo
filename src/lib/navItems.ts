@@ -18,6 +18,9 @@ export interface NavChild {
   label: string;
   href: string;
   description: string;
+  /** Groups this child under a subheading on the /menu/[slug] grid (Company Setup only, for
+   * now) — cards without a section render together, unsectioned, at the top. */
+  section?: string;
 }
 
 export interface NavItem {
@@ -86,8 +89,7 @@ export const navItems: NavItem[] = [
     children: [
       { label: 'Process Payroll', href: '/payroll/process', description: 'Run payroll processing for the current cycle.' },
       { label: 'Approve Payroll', href: '/payroll/approve', description: 'Review and approve processed payroll before payout.' },
-      { label: 'Salary Heads', href: '/setup/salary-heads', description: 'Define earning and deduction components used in pay.' },
-      { label: 'Salary Structure', href: '/setup/salary-structure', description: 'Configure salary structure templates and formulas.' },
+      { label: 'Salary', href: '/setup/salary', description: 'Configure salary head categories, items and structure templates.' },
       { label: 'Increments', href: '/payroll/increments', description: 'Apply salary increments and revisions.' },
       { label: 'Year-End Processing', href: '/payroll/year-end', description: 'Run year-end payroll closing and rollovers.' },
       { label: 'Form-16 Documents', href: '/taxation/form16', description: 'Generate and distribute employee Form-16s.' },
@@ -136,26 +138,16 @@ export const navItems: NavItem[] = [
     icon: Building2,
     adminOnly: true,
     children: [
-      { label: 'Company Profile', href: '/setup/company', description: 'Edit company name, address and registration details.' },
-      { label: 'Branches', href: '/setup/branches', description: 'Manage office branches and locations.' },
-      { label: 'Departments', href: '/setup/departments', description: 'Manage the list of company departments.' },
-      { label: 'Designations', href: '/setup/designations', description: 'Manage employee job titles and designations.' },
-      { label: 'Grades', href: '/setup/grades', description: 'Manage employee grade levels.' },
-      { label: 'Banks', href: '/setup/banks', description: 'Manage banks used for salary disbursement.' },
-      { label: 'Contacts', href: '/setup/contacts', description: 'Manage company emergency and official contacts.' },
-      { label: 'Salary Heads', href: '/setup/salary-heads', description: 'Define earning and deduction components used in pay.' },
-      { label: 'Salary Structure', href: '/setup/salary-structure', description: 'Configure salary structure templates and formulas.' },
-      { label: 'Financial Year', href: '/setup/financial-year', description: 'Configure financial year start and end dates.' },
-      { label: 'Holiday Calendar', href: '/setup/holidays', description: 'Manage the company holiday calendar.' },
-      { label: 'Leave Types', href: '/setup/leave-types', description: 'Define the types of leave employees can apply for.' },
-      { label: 'Leave Policy', href: '/setup/leave-policy', description: 'Configure leave accrual and policy rules.' },
-      { label: 'Shifts', href: '/setup/shifts', description: 'Define work shift timings.' },
-      { label: 'Attendance Config', href: '/setup/attendance-config', description: 'Configure attendance rules and calculation settings.' },
-      { label: 'Devices', href: '/setup/devices', description: 'Manage biometric and attendance devices.' },
-      { label: 'Notice Period', href: '/setup/notice-periods', description: 'Configure notice period policies.' },
-      { label: 'Division', href: '/setup/divisions', description: 'Manage company divisions.' },
-      { label: 'Section', href: '/setup/sections', description: 'Manage sections within departments.' },
-      { label: 'Employee Devices', href: '/setup/employee-devices', description: 'Assign biometric devices to employees.' },
+      { label: 'Company Profile', href: '/setup/company', description: 'Edit company details, branches, financial year and banks.', section: 'Company' },
+      { label: 'Contacts', href: '/setup/contacts', description: 'Manage company emergency and official contacts.', section: 'Company' },
+      { label: 'Profession', href: '/setup/profession', description: 'Manage departments, designations, grades, notice periods, divisions and sections.', section: 'Company' },
+
+      { label: 'Holiday', href: '/setup/holidays', description: 'Manage the company holiday calendar.', section: 'Company Policies' },
+      { label: 'Leave', href: '/setup/leave', description: 'Leave types and accrual/policy rules.', section: 'Company Policies' },
+      { label: 'Shift', href: '/setup/shift', description: 'Work shift timings and policy.', section: 'Company Policies' },
+      { label: 'Salary', href: '/setup/salary', description: 'Salary head categories, items and structure templates.', section: 'Company Policies' },
+
+      { label: 'Devices', href: '/setup/devices', description: 'Manage biometric devices and employee-device mapping.', section: 'Devices' },
     ],
   },
   {

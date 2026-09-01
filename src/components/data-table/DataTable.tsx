@@ -177,15 +177,15 @@ export function DataTable<TData>({
         </div>
 
         {/* Pagination */}
-        <div className="flex items-center justify-between text-[12.5px] text-slate-500 bg-slate-100 border-t border-slate-200 px-4 py-2.5">
-          <div className="flex items-center gap-4">
+        <div className="flex items-center justify-between text-[11.5px] text-slate-500 bg-slate-100 border-t border-slate-200 px-3 py-1.5">
+          <div className="flex items-center gap-3">
             {pageSizeOptions && (
-              <label className="flex items-center gap-2 text-[12.5px] text-slate-500">
+              <label className="flex items-center gap-1.5 text-[11.5px] text-slate-500">
                 Rows per page
                 <select
                   value={pagination.pageSize}
                   onChange={(e) => table.setPageSize(Number(e.target.value))}
-                  className="bg-white border border-slate-200 rounded-lg px-2 py-1 text-[12.5px] text-slate-600 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/40"
+                  className="bg-white border border-slate-200 rounded-md px-1.5 py-0.5 text-[11.5px] text-slate-600 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/40"
                 >
                   {pageSizeOptions.map((n) => <option key={n} value={n}>{n}</option>)}
                 </select>
@@ -194,28 +194,28 @@ export function DataTable<TData>({
             <span>
               Page {pageIndex + 1} of {pageCount}
               {isServerSide && totalRows !== undefined && (
-                <span className="text-slate-400 ml-2">({totalRows} total)</span>
+                <span className="text-slate-400 ml-1.5">({totalRows} total)</span>
               )}
             </span>
           </div>
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-0.5">
             <button
               onClick={() => table.setPageIndex(0)}
               disabled={!table.getCanPreviousPage()}
-              className="p-1.5 rounded-lg hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed"
+              className="p-1 rounded-md hover:bg-slate-200/70 disabled:opacity-30 disabled:cursor-not-allowed"
             >
-              <ChevronsLeft className="w-4 h-4" />
+              <ChevronsLeft className="w-3.5 h-3.5" />
             </button>
             <button
               onClick={() => table.previousPage()}
               disabled={!table.getCanPreviousPage()}
-              className="p-1.5 rounded-lg hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed"
+              className="p-1 rounded-md hover:bg-slate-200/70 disabled:opacity-30 disabled:cursor-not-allowed"
             >
-              <ChevronLeft className="w-4 h-4" />
+              <ChevronLeft className="w-3.5 h-3.5" />
             </button>
             {pageNumbers.map((n, i) =>
               n === '…' ? (
-                <span key={`ellipsis-${i}`} className="px-1.5 text-slate-400">
+                <span key={`ellipsis-${i}`} className="px-1 text-slate-400">
                   …
                 </span>
               ) : (
@@ -223,7 +223,7 @@ export function DataTable<TData>({
                   key={n}
                   onClick={() => table.setPageIndex(n - 1)}
                   className={cn(
-                    'w-7 h-7 rounded-lg text-[12.5px] font-medium transition-all duration-[180ms]',
+                    'w-6 h-6 rounded-md text-[11.5px] font-medium transition-all duration-[180ms]',
                     n === pageIndex + 1
                       ? 'bg-[color:var(--color-primary)] text-white shadow-sm'
                       : 'text-slate-500 hover:bg-[color:var(--color-primary-light)] hover:text-[#1687E8]'
@@ -236,16 +236,16 @@ export function DataTable<TData>({
             <button
               onClick={() => table.nextPage()}
               disabled={!table.getCanNextPage()}
-              className="p-1.5 rounded-lg hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed"
+              className="p-1 rounded-md hover:bg-slate-200/70 disabled:opacity-30 disabled:cursor-not-allowed"
             >
-              <ChevronRight className="w-4 h-4" />
+              <ChevronRight className="w-3.5 h-3.5" />
             </button>
             <button
               onClick={() => table.setPageIndex(table.getPageCount() - 1)}
               disabled={!table.getCanNextPage()}
-              className="p-1.5 rounded-lg hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed"
+              className="p-1 rounded-md hover:bg-slate-200/70 disabled:opacity-30 disabled:cursor-not-allowed"
             >
-              <ChevronsRight className="w-4 h-4" />
+              <ChevronsRight className="w-3.5 h-3.5" />
             </button>
           </div>
         </div>

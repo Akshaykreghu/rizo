@@ -95,7 +95,7 @@ export function ShiftForm({ id }: { id?: string }) {
       if (!res.ok) throw new Error((await res.json()).error ?? 'Save failed');
       return res.json();
     },
-    onSuccess: () => router.push('/setup/shifts'),
+    onSuccess: () => router.push('/setup/shift'),
     onError: (e) => setError(String((e as Error).message)),
   });
 
@@ -360,7 +360,7 @@ export function ShiftForm({ id }: { id?: string }) {
           </button>
           <button
             type="button"
-            onClick={() => router.push('/setup/shifts')}
+            onClick={() => router.push('/setup/shift')}
             className="text-sm text-gray-600 hover:underline"
           >
             Cancel
