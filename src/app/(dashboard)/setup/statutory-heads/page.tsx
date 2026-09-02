@@ -1,8 +1,16 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
+import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
+
+const INPUT_CLASS =
+  'border border-slate-200 bg-white rounded-[9px] px-2.5 py-1.5 text-[12.5px] text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/25 focus:border-[color:var(--color-primary)] transition-colors';
+
+const BTN_BASE =
+  'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[9px] text-[12.5px] font-semibold shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
 
 interface StatutoryHead {
   tax_salary_components_pkey: number;
@@ -20,6 +28,7 @@ interface SalaryHeadItemOption {
 type RowState = Record<number, { salary_head_item_Fkey: string; upper_limit: string }>;
 
 export default function StatutoryHeadsPage() {
+  const { slotEl } = useHeaderSlot();
   const queryClient = useQueryClient();
   const [rows, setRows] = useState<RowState>({});
   const [saved, setSaved] = useState(false);
@@ -67,32 +76,37 @@ export default function StatutoryHeadsPage() {
     },
   });
 
-  if (isLoading) return <div className="text-gray-500 text-sm">Loading...</div>;
+  if (isLoading) return <div className="text-slate-500 text-[12.5px]">Loading...</div>;
 
   return (
     <div>
-      <div className="mb-6">
-        <h1 className="text-2xl font-semibold text-gray-900">Statutory Heads</h1>
-        <p className="text-sm text-gray-500 mt-1">
-          Map each standard statutory report label to the actual salary head item this company uses for it —
-          drives PF/ESI/PT/TDS reports.
-        </p>
-      </div>
+      {slotEl &&
+        createPortal(
+          <div className="min-w-0">
+            <h1 className="font-heading text-2xl font-bold text-[#0F172A] tracking-tight leading-tight truncate">
+              Statutory Heads
+            </h1>
+            <p className="text-sm text-[#64748B] mt-0.5 truncate">
+              Map statutory report labels to salary head items, for PF/ESI/PT/TDS reports
+            </p>
+          </div>,
+          slotEl
+        )}
 
-      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-        <table className="w-full text-sm">
-          <thead className="bg-gray-50 border-b border-gray-200">
+      <div className="surface-card rounded-2xl overflow-hidden">
+        <table className="w-full text-[13px]">
+          <thead className="bg-slate-50 border-b border-slate-200">
             <tr>
-              <th className="text-left px-4 py-3 font-medium text-gray-600">Statutory Label</th>
-              <th className="text-left px-4 py-3 font-medium text-gray-600">Mapped Salary Head Item</th>
-              <th className="text-left px-4 py-3 font-medium text-gray-600">Upper Limit</th>
+              <th className="text-left px-4 py-2.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Statutory Label</th>
+              <th className="text-left px-4 py-2.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Mapped Salary Head Item</th>
+              <th className="text-left px-4 py-2.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Upper Limit</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-100">
+          <tbody className="divide-y divide-slate-100">
             {data.map((row) => (
-              <tr key={row.tax_salary_components_pkey} className="hover:bg-gray-50">
-                <td className="px-4 py-3 text-gray-800">{row.tax_salary_components_name}</td>
-                <td className="px-4 py-3">
+              <tr key={row.tax_salary_components_pkey} className="hover:bg-slate-50/70">
+                <td className="px-4 py-2 text-[#0F172A]">{row.tax_salary_components_name}</td>
+                <td className="px-4 py-2">
                   <select
                     value={rows[row.tax_salary_components_pkey]?.salary_head_item_Fkey ?? ''}
                     onChange={(e) =>
@@ -104,7 +118,7 @@ export default function StatutoryHeadsPage() {
                         },
                       }))
                     }
-                    className="w-full px-2.5 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    className={cn(INPUT_CLASS, 'w-full')}
                   >
                     <option value="">[--Not mapped--]</option>
                     {items.map((i) => (
@@ -112,7 +126,7 @@ export default function StatutoryHeadsPage() {
                     ))}
                   </select>
                 </td>
-                <td className="px-4 py-3">
+                <td className="px-4 py-2">
                   <input
                     type="number"
                     step="any"
@@ -126,7 +140,7 @@ export default function StatutoryHeadsPage() {
                         },
                       }))
                     }
-                    className="w-32 px-2.5 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    className={cn(INPUT_CLASS, 'w-32')}
                   />
                 </td>
               </tr>
@@ -135,20 +149,17 @@ export default function StatutoryHeadsPage() {
         </table>
       </div>
 
-      {save.isError && <p className="text-red-500 text-sm mt-3">{String(save.error)}</p>}
+      {save.isError && <p className="text-[color:var(--color-danger)] text-[12.5px] mt-3">{String(save.error)}</p>}
 
-      <div className="flex items-center gap-4 mt-4">
+      <div className="flex items-center gap-3 mt-4">
         <button
           onClick={() => save.mutate()}
           disabled={save.isPending}
-          className={cn(
-            'px-4 py-2 text-sm font-medium text-white rounded-lg transition-colors',
-            save.isPending ? 'bg-indigo-400' : 'bg-indigo-600 hover:bg-indigo-700'
-          )}
+          className={cn(BTN_BASE, 'bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)] text-white')}
         >
           {save.isPending ? 'Saving…' : 'Save Mapping'}
         </button>
-        {saved && <span className="text-green-600 text-sm">Saved successfully.</span>}
+        {saved && <span className="text-[color:var(--color-success-dark)] text-[12.5px]">Saved successfully.</span>}
       </div>
     </div>
   );

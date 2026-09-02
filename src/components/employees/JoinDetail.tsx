@@ -180,8 +180,9 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
         date_of_birth: dobError(form.date_of_birth ?? '') ?? '',
         mobile_no: mobileError(form.mobile_no ?? '') ?? '',
         id_card: aadhaarError(form.id_card ?? '') ?? '',
+        classification: form.classification ? '' : 'Gender is required',
       };
-      if (errors.date_of_birth || errors.mobile_no || errors.id_card) {
+      if (errors.date_of_birth || errors.mobile_no || errors.id_card || errors.classification) {
         setFieldErrors(errors);
         return;
       }
@@ -252,13 +253,14 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
               <FieldError>{fieldErrors.date_of_birth}</FieldError>
             </div>
             <div>
-              <label className={LABEL_CLASS}>Gender</label>
-              <select className={INPUT_CLASS} {...f('classification')}>
+              <label className={LABEL_CLASS}>Gender <span className="text-[color:var(--color-danger)]">*</span></label>
+              <select className={cn(INPUT_CLASS, fieldErrors.classification && ERROR_INPUT_CLASS)} {...f('classification')}>
                 <option value="">Select gender</option>
                 <option value="male">Male</option>
                 <option value="female">Female</option>
                 <option value="others">Other</option>
               </select>
+              <FieldError>{fieldErrors.classification}</FieldError>
             </div>
             <div>
               <label className={LABEL_CLASS}>Mobile</label>

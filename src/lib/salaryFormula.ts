@@ -149,3 +149,15 @@ export function evaluateSalaryFormula(
   const expr = resolveToNumericExpression(formula, itemValues, monthlyGross);
   return evaluateNumericExpression(expr);
 }
+
+// Safe evaluation of a plain arithmetic string (`+ - * / ( )` and numeric literals only) — for
+// callers that do their own token→number substitution first (e.g. the component-increment
+// recalculation, which follows legacy onIncrementChangeNew()'s own inline replacement scheme
+// rather than this module's token grammar). Never uses eval()/Function().
+export function evaluateArithmetic(expr: string): number {
+  const cleaned = expr.replace(/\s+/g, '');
+  if (!/^[0-9+\-*/.()]+$/.test(cleaned)) {
+    throw new FormulaError(`Expression contains unsupported characters: "${expr}"`);
+  }
+  return evaluateNumericExpression(cleaned);
+}

@@ -60,7 +60,9 @@ export async function PUT(
   const validationError =
     (body.date_of_birth !== undefined ? dobError(body.date_of_birth ?? '') : null) ||
     (body.mobile_no !== undefined ? mobileError(body.mobile_no ?? '') : null) ||
-    (body.id_card !== undefined ? aadhaarError(body.id_card ?? '') : null);
+    (body.id_card !== undefined ? aadhaarError(body.id_card ?? '') : null) ||
+    // Legacy requires Gender on the Personal Info tab — enforce it whenever the field is submitted.
+    (body.classification !== undefined && !body.classification ? 'Gender is required' : null);
   if (validationError) {
     return NextResponse.json({ error: validationError }, { status: 400 });
   }

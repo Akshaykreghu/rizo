@@ -1,9 +1,14 @@
 'use client';
 
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { EmployeeSearch } from '@/components/employees/EmployeeSearch';
 import { Plus, Check, X } from 'lucide-react';
+import type { ColumnDef } from '@tanstack/react-table';
+import { cn } from '@/lib/utils';
+import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
+import { DataTable } from '@/components/data-table/DataTable';
 
 interface Option { value: string; label: string }
 
@@ -21,6 +26,12 @@ function currentMonth() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
+const INPUT_CLASS =
+  'border border-slate-200 bg-white rounded-[9px] px-2.5 py-1.5 text-[12.5px] text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/25 focus:border-[color:var(--color-primary)] transition-colors';
+
+const BTN_BASE =
+  'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[9px] text-[12.5px] font-semibold shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
+
 interface RegRow {
   id: number;
   att_date: string;
@@ -35,6 +46,7 @@ interface RegRow {
 }
 
 export default function RegularisationPage() {
+  const { slotEl } = useHeaderSlot();
   const [month, setMonth] = useState(currentMonth());
   const [branch, setBranch] = useState('');
   const [status, setStatus] = useState('pending');
@@ -86,122 +98,147 @@ export default function RegularisationPage() {
     onError: (err: Error) => setMessage(err.message),
   });
 
+  const columns: ColumnDef<RegRow, unknown>[] = [
+    { id: 'employee', header: 'Employee', cell: ({ row }) => <>{row.original.first_name} {row.original.last_name} <span className="text-slate-400 text-[11px]">({row.original.emp_id})</span></> },
+    { accessorKey: 'branch_name', header: 'Branch' },
+    { accessorKey: 'att_date', header: 'Date' },
+    { id: 'direction', header: 'Direction', cell: ({ row }) => <span className="capitalize">{row.original.direction}</span> },
+    { accessorKey: 'LOGTIME', header: 'Time' },
+    { id: 'remarks', header: 'Remarks', cell: ({ row }) => <span className="text-slate-500">{row.original.remarks}</span> },
+    {
+      id: 'status',
+      header: 'Status',
+      cell: ({ row }) => (
+        <span
+          className={cn(
+            'px-2 py-0.5 rounded text-[11px] font-medium',
+            row.original.approved === 'A'
+              ? 'bg-[color:var(--color-success-soft)] text-[color:var(--color-success-dark)]'
+              : row.original.approved === 'R'
+                ? 'bg-[color:var(--color-danger-soft)] text-[color:var(--color-danger-dark)]'
+                : 'bg-[color:var(--color-highlight-light)] text-[color:var(--color-highlight-dark)]'
+          )}
+        >
+          {row.original.approved === 'A' ? 'Approved' : row.original.approved === 'R' ? 'Rejected' : 'Pending'}
+        </span>
+      ),
+    },
+    ...(status === 'pending'
+      ? [{
+          id: 'actions',
+          header: '',
+          meta: { className: 'w-16' },
+          cell: ({ row }: { row: { original: RegRow } }) => (
+            <div className="flex items-center gap-1">
+              <button
+                onClick={(e) => { e.stopPropagation(); decide.mutate({ id: row.original.id, decision: 'approve' }); }}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-[color:var(--color-success-dark)] hover:bg-[color:var(--color-success-soft)] transition-colors duration-150"
+              >
+                <Check className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); decide.mutate({ id: row.original.id, decision: 'reject' }); }}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-[color:var(--color-danger)] hover:bg-[color:var(--color-danger)]/10 transition-colors duration-150"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ),
+        } as ColumnDef<RegRow, unknown>]
+      : []),
+  ];
+
   return (
-    <div className="p-6">
-      <div className="flex items-center justify-between mb-4">
-        <h1 className="text-xl font-semibold">Regularisation</h1>
+    <div>
+      {slotEl &&
+        createPortal(
+          <div className="min-w-0">
+            <h1 className="font-heading text-2xl font-bold text-[#0F172A] tracking-tight leading-tight truncate">
+              Regularisation
+            </h1>
+            <p className="text-sm text-[#64748B] mt-0.5 truncate">
+              Raise and approve attendance regularisation requests
+            </p>
+          </div>,
+          slotEl
+        )}
+
+      <div className="flex items-center justify-end mb-4">
         <button
           onClick={() => setShowRaise(true)}
-          className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium"
+          className={cn(BTN_BASE, 'bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)] text-white')}
         >
-          <Plus className="w-4 h-4" /> Raise Regularisation
+          <Plus className="w-3.5 h-3.5" /> Raise Regularisation
         </button>
       </div>
 
-      <div className="flex flex-wrap items-end gap-3 mb-4">
+      <div className="surface-card rounded-xl px-4 py-2.5 mb-4 flex flex-wrap items-end gap-3">
         <div>
-          <label className="block text-xs text-gray-500 mb-1">Month</label>
-          <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm" />
+          <label className="block text-[11.5px] font-medium text-slate-500 mb-1">Month</label>
+          <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className={INPUT_CLASS} />
         </div>
         <div>
-          <label className="block text-xs text-gray-500 mb-1">Branch</label>
-          <select value={branch} onChange={(e) => setBranch(e.target.value)} className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm min-w-[160px]">
+          <label className="block text-[11.5px] font-medium text-slate-500 mb-1">Branch</label>
+          <select value={branch} onChange={(e) => setBranch(e.target.value)} className={cn(INPUT_CLASS, 'min-w-[160px]')}>
             <option value="">All branches</option>
             {branches.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
         </div>
         <div>
-          <label className="block text-xs text-gray-500 mb-1">Status</label>
-          <select value={status} onChange={(e) => setStatus(e.target.value)} className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm">
+          <label className="block text-[11.5px] font-medium text-slate-500 mb-1">Status</label>
+          <select value={status} onChange={(e) => setStatus(e.target.value)} className={INPUT_CLASS}>
             <option value="pending">Pending</option>
             <option value="approved">Approved</option>
             <option value="rejected">Rejected</option>
             <option value="">All</option>
           </select>
         </div>
+        {message && <span className="text-[12.5px] text-slate-500">{message}</span>}
       </div>
 
-      {message && <div className="mb-4 text-sm bg-blue-50 text-blue-700 px-3 py-2 rounded-lg">{message}</div>}
-
-      {isLoading && <p className="text-sm text-gray-400">Loading…</p>}
-      {!isLoading && rows.length === 0 && <p className="text-sm text-gray-400">No requests found.</p>}
-      {rows.length > 0 && (
-        <table className="w-full text-sm border border-gray-200 rounded-lg overflow-hidden">
-          <thead>
-            <tr className="bg-gray-50 text-left">
-              <th className="p-2">Employee</th>
-              <th className="p-2">Branch</th>
-              <th className="p-2">Date</th>
-              <th className="p-2">Direction</th>
-              <th className="p-2">Time</th>
-              <th className="p-2">Remarks</th>
-              <th className="p-2">Status</th>
-              {status === 'pending' && <th className="p-2">Actions</th>}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => (
-              <tr key={row.id} className="border-t border-gray-100">
-                <td className="p-2">{row.first_name} {row.last_name} <span className="text-gray-400 text-xs">({row.emp_id})</span></td>
-                <td className="p-2">{row.branch_name}</td>
-                <td className="p-2">{row.att_date}</td>
-                <td className="p-2 capitalize">{row.direction}</td>
-                <td className="p-2">{row.LOGTIME}</td>
-                <td className="p-2 text-gray-500">{row.remarks}</td>
-                <td className="p-2">
-                  <span className={`px-2 py-0.5 rounded text-xs ${row.approved === 'A' ? 'bg-green-100 text-green-700' : row.approved === 'R' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>
-                    {row.approved === 'A' ? 'Approved' : row.approved === 'R' ? 'Rejected' : 'Pending'}
-                  </span>
-                </td>
-                {status === 'pending' && (
-                  <td className="p-2 flex gap-2">
-                    <button onClick={() => decide.mutate({ id: row.id, decision: 'approve' })} className="text-green-600 hover:text-green-800">
-                      <Check className="w-4 h-4" />
-                    </button>
-                    <button onClick={() => decide.mutate({ id: row.id, decision: 'reject' })} className="text-red-600 hover:text-red-800">
-                      <X className="w-4 h-4" />
-                    </button>
-                  </td>
-                )}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+      <DataTable data={rows} columns={columns} pageSize={10} pageSizeOptions={[10, 20, 30, 50]} isLoading={isLoading} />
 
       {showRaise && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setShowRaise(false)}>
-          <div className="bg-white rounded-xl p-5 w-full max-w-md" onClick={(e) => e.stopPropagation()}>
-            <h2 className="font-semibold mb-4">Raise Regularisation</h2>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/25 backdrop-blur-[2px] p-4 animate-fade-in" onClick={() => setShowRaise(false)}>
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="relative bg-white rounded-[20px] border border-black/[0.06] shadow-[0_25px_70px_-15px_rgba(0,0,0,0.25)] p-6 w-full max-w-md animate-modal-in"
+          >
+            <div className="flex items-center justify-between mb-5">
+              <h2 className="text-[19px] font-semibold text-[#0F172A] tracking-tight">Raise Regularisation</h2>
+              <button onClick={() => setShowRaise(false)} aria-label="Close" className="p-1 rounded-full hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors duration-150">
+                <X className="w-4.5 h-4.5" />
+              </button>
+            </div>
             <div className="space-y-3">
               <div>
-                <label className="block text-xs text-gray-500 mb-1">Employee</label>
+                <label className="block text-[12px] font-medium text-slate-600 mb-1.5">Employee</label>
                 <EmployeeSearch value={form.empFkey} onChange={(v) => setForm((f) => ({ ...f, empFkey: v }))} />
               </div>
               <div>
-                <label className="block text-xs text-gray-500 mb-1">Date</label>
-                <input type="date" value={form.attDate} onChange={(e) => setForm((f) => ({ ...f, attDate: e.target.value }))} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                <label className="block text-[12px] font-medium text-slate-600 mb-1.5">Date</label>
+                <input type="date" value={form.attDate} onChange={(e) => setForm((f) => ({ ...f, attDate: e.target.value }))} className={cn(INPUT_CLASS, 'w-full')} />
               </div>
               <div>
-                <label className="block text-xs text-gray-500 mb-1">Direction</label>
-                <select value={form.direction} onChange={(e) => setForm((f) => ({ ...f, direction: e.target.value as 'in' | 'out' }))} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                <label className="block text-[12px] font-medium text-slate-600 mb-1.5">Direction</label>
+                <select value={form.direction} onChange={(e) => setForm((f) => ({ ...f, direction: e.target.value as 'in' | 'out' }))} className={cn(INPUT_CLASS, 'w-full')}>
                   <option value="in">In</option>
                   <option value="out">Out</option>
                 </select>
               </div>
               <div>
-                <label className="block text-xs text-gray-500 mb-1">Time</label>
-                <input type="time" step="1" value={form.logTime} onChange={(e) => setForm((f) => ({ ...f, logTime: e.target.value }))} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                <label className="block text-[12px] font-medium text-slate-600 mb-1.5">Time</label>
+                <input type="time" step="1" value={form.logTime} onChange={(e) => setForm((f) => ({ ...f, logTime: e.target.value }))} className={cn(INPUT_CLASS, 'w-full')} />
               </div>
               <div>
-                <label className="block text-xs text-gray-500 mb-1">Remarks</label>
-                <input type="text" value={form.remarks} onChange={(e) => setForm((f) => ({ ...f, remarks: e.target.value }))} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                <label className="block text-[12px] font-medium text-slate-600 mb-1.5">Remarks</label>
+                <input type="text" value={form.remarks} onChange={(e) => setForm((f) => ({ ...f, remarks: e.target.value }))} className={cn(INPUT_CLASS, 'w-full')} />
               </div>
             </div>
             <button
               onClick={() => raise.mutate()}
               disabled={!form.empFkey || !form.attDate || !form.logTime || raise.isPending}
-              className="mt-4 w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white py-2 rounded-lg text-sm font-medium"
+              className={cn(BTN_BASE, 'w-full justify-center mt-4 bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)] text-white')}
             >
               {raise.isPending ? 'Submitting…' : 'Submit'}
             </button>

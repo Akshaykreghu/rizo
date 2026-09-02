@@ -1,10 +1,21 @@
 'use client';
 
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Upload, Trash2, Users, X, Download } from 'lucide-react';
+import type { ColumnDef } from '@tanstack/react-table';
 import { DocumentUploadField } from '@/components/employees/DocumentUploadField';
 import { EmployeeSearch } from '@/components/employees/EmployeeSearch';
+import { cn } from '@/lib/utils';
+import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
+import { DataTable } from '@/components/data-table/DataTable';
+
+const INPUT_CLASS =
+  'border border-slate-200 bg-white rounded-[9px] px-2.5 py-1.5 text-[12.5px] text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/25 focus:border-[color:var(--color-primary)] transition-colors';
+
+const BTN_BASE =
+  'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[9px] text-[12.5px] font-semibold shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
 
 interface DocumentRow {
   document_upload_pkey: number;
@@ -35,6 +46,7 @@ function previewKind(doc: DocumentRow): 'pdf' | 'image' | 'other' {
 }
 
 export default function DocumentLibraryPage() {
+  const { slotEl } = useHeaderSlot();
   const queryClient = useQueryClient();
   const [newName, setNewName] = useState('');
   const [newPath, setNewPath] = useState('');
@@ -89,21 +101,66 @@ export default function DocumentLibraryPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['employees/documents/allocate', allocateFor?.document_upload_pkey] }),
   });
 
+  const columns: ColumnDef<DocumentRow, unknown>[] = [
+    {
+      accessorKey: 'document_name',
+      header: 'Document Name',
+      cell: ({ row }) => (
+        <button onClick={(e) => { e.stopPropagation(); setPreviewDoc(row.original); }} className="text-[color:var(--color-primary)] hover:underline text-left">
+          {row.original.document_name}
+        </button>
+      ),
+    },
+    { accessorKey: 'created_by', header: 'Uploaded By' },
+    { id: 'date', header: 'Date', cell: ({ row }) => new Date(row.original.creation_date).toLocaleDateString() },
+    {
+      id: 'actions',
+      header: '',
+      meta: { className: 'w-20' },
+      cell: ({ row }) => (
+        <div className="flex items-center justify-end gap-1">
+          <button
+            onClick={(e) => { e.stopPropagation(); setAllocateFor(row.original); }}
+            className="p-1.5 rounded-lg text-slate-400 hover:text-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-light)] transition-colors duration-150"
+            title="Allocate to employees"
+          >
+            <Users className="w-3.5 h-3.5" />
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); if (confirm('Remove this document?')) remove.mutate(row.original.document_upload_pkey); }}
+            className="p-1.5 rounded-lg text-slate-400 hover:text-[color:var(--color-danger)] hover:bg-[color:var(--color-danger)]/10 transition-colors duration-150"
+            title="Remove"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      ),
+    },
+  ];
+
   return (
     <div>
-      <h1 className="text-2xl font-semibold text-gray-900 mb-1">Document Upload</h1>
-      <p className="text-sm text-gray-500 mb-6 max-w-xl">
-        Upload company documents once, then allocate them to specific employees.
-      </p>
+      {slotEl &&
+        createPortal(
+          <div className="min-w-0">
+            <h1 className="font-heading text-2xl font-bold text-[#0F172A] tracking-tight leading-tight truncate">
+              Document Upload
+            </h1>
+            <p className="text-sm text-[#64748B] mt-0.5 truncate">
+              Upload company documents once, then allocate them to specific employees
+            </p>
+          </div>,
+          slotEl
+        )}
 
-      <div className="bg-white rounded-xl border border-gray-200 p-6 max-w-xl mb-6 space-y-4">
-        <h2 className="text-sm font-semibold text-gray-700">Upload New Document</h2>
+      <div className="surface-card rounded-xl px-4 py-4 max-w-xl mb-4 space-y-3">
+        <h2 className="text-[13.5px] font-semibold text-slate-600 uppercase tracking-wide">Upload New Document</h2>
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Document Name</label>
+          <label className="block text-[12px] font-medium text-slate-600 mb-1.5">Document Name</label>
           <input
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            className={cn(INPUT_CLASS, 'w-full')}
             placeholder="e.g. Offer Letter Template"
           />
         </div>
@@ -111,57 +168,14 @@ export default function DocumentLibraryPage() {
         <button
           onClick={() => create.mutate()}
           disabled={!newName || !newPath || create.isPending}
-          className="flex items-center gap-1.5 text-sm text-white bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 px-3 py-2 rounded-lg transition-colors"
+          className={cn(BTN_BASE, 'bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)] text-white')}
         >
-          <Upload className="w-4 h-4" /> {create.isPending ? 'Saving…' : 'Add to Library'}
+          <Upload className="w-3.5 h-3.5" /> {create.isPending ? 'Saving…' : 'Add to Library'}
         </button>
-        {create.isError && <p className="text-xs text-red-500">Failed to save document.</p>}
+        {create.isError && <p className="text-[11.5px] text-[color:var(--color-danger)]">Failed to save document.</p>}
       </div>
 
-      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-        <table className="w-full text-sm">
-          <thead className="bg-gray-50 text-gray-500 text-xs uppercase">
-            <tr>
-              <th className="text-left px-4 py-2.5">Document Name</th>
-              <th className="text-left px-4 py-2.5">Uploaded By</th>
-              <th className="text-left px-4 py-2.5">Date</th>
-              <th className="text-right px-4 py-2.5">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {documents.map((doc) => (
-              <tr key={doc.document_upload_pkey} className="border-t border-gray-100">
-                <td className="px-4 py-2.5">
-                  <button onClick={() => setPreviewDoc(doc)} className="text-indigo-600 hover:underline text-left">
-                    {doc.document_name}
-                  </button>
-                </td>
-                <td className="px-4 py-2.5 text-gray-600">{doc.created_by}</td>
-                <td className="px-4 py-2.5 text-gray-500">{new Date(doc.creation_date).toLocaleDateString()}</td>
-                <td className="px-4 py-2.5 text-right">
-                  <button
-                    onClick={() => setAllocateFor(doc)}
-                    className="text-gray-400 hover:text-indigo-600 mr-3"
-                    title="Allocate to employees"
-                  >
-                    <Users className="w-4 h-4 inline" />
-                  </button>
-                  <button
-                    onClick={() => confirm('Remove this document?') && remove.mutate(doc.document_upload_pkey)}
-                    className="text-gray-400 hover:text-red-600"
-                    title="Remove"
-                  >
-                    <Trash2 className="w-4 h-4 inline" />
-                  </button>
-                </td>
-              </tr>
-            ))}
-            {documents.length === 0 && (
-              <tr><td colSpan={4} className="px-4 py-8 text-center text-gray-400">No documents uploaded yet.</td></tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+      <DataTable data={documents} columns={columns} pageSize={10} pageSizeOptions={[10, 20, 30, 50]} />
 
       {allocateFor && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setAllocateFor(null)}>

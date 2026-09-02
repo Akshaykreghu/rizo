@@ -1,11 +1,15 @@
 'use client';
 
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, X } from 'lucide-react';
+import type { ColumnDef } from '@tanstack/react-table';
 import { EmployeeSearch } from '@/components/employees/EmployeeSearch';
 import { FileUploadField } from '@/components/employees/FileUploadField';
 import { cn, formatCurrency } from '@/lib/utils';
+import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
+import { DataTable } from '@/components/data-table/DataTable';
 
 interface ExpenseType {
   expense_type_pkey: number;
@@ -43,14 +47,21 @@ const EMPTY_FORM: FormState = {
 };
 
 const STATUS_COLORS: Record<string, string> = {
-  Applied: 'bg-amber-50 text-amber-700',
-  Authorized: 'bg-blue-50 text-blue-700',
-  Approved: 'bg-green-50 text-green-700',
-  Rejected: 'bg-red-50 text-red-700',
-  Removed: 'bg-gray-100 text-gray-500',
+  Applied: 'bg-[color:var(--color-highlight-light)] text-[color:var(--color-highlight-dark)]',
+  Authorized: 'bg-[color:var(--color-primary-light)] text-[color:var(--color-primary-dark)]',
+  Approved: 'bg-[color:var(--color-success-soft)] text-[color:var(--color-success-dark)]',
+  Rejected: 'bg-[color:var(--color-danger-soft)] text-[color:var(--color-danger-dark)]',
+  Removed: 'bg-slate-100 text-slate-500',
 };
 
+const INPUT_CLASS =
+  'border border-slate-200 bg-white rounded-[9px] px-2.5 py-1.5 text-[12.5px] text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/25 focus:border-[color:var(--color-primary)] transition-colors';
+
+const BTN_BASE =
+  'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[9px] text-[12.5px] font-semibold shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
+
 export default function ExpensesPage() {
+  const { slotEl } = useHeaderSlot();
   const queryClient = useQueryClient();
   const [statusFilter, setStatusFilter] = useState('');
   const [isNew, setIsNew] = useState(false);
@@ -109,25 +120,83 @@ export default function ExpensesPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['expenses'] }),
   });
 
+  const columns: ColumnDef<ExpenseRow, unknown>[] = [
+    { id: 'employee', header: 'Employee', cell: ({ row }) => <>{row.original.first_name} {row.original.last_name} <span className="text-slate-400 text-[11px]">({row.original.emp_id})</span></> },
+    { accessorKey: 'expense_type', header: 'Type' },
+    { id: 'amount', header: 'Amount', cell: ({ row }) => formatCurrency(row.original.expenses_amount) },
+    { id: 'month', header: 'Month', cell: ({ row }) => row.original.affected_month?.slice(0, 7) },
+    { id: 'vendor', header: 'Vendor', cell: ({ row }) => row.original.vendor || '—' },
+    {
+      id: 'status',
+      header: 'Status',
+      cell: ({ row }) => (
+        <span className={cn('px-2 py-0.5 rounded-full text-[11px] font-medium', STATUS_COLORS[row.original.expense_status] ?? 'bg-slate-100 text-slate-600')}>
+          {row.original.expense_status}
+        </span>
+      ),
+    },
+    {
+      id: 'actions',
+      header: '',
+      meta: { className: 'w-52' },
+      cell: ({ row }) => (
+        <div className="flex items-center justify-end gap-2.5 text-[11.5px]" onClick={(e) => e.stopPropagation()}>
+          {row.original.expense_status === 'Applied' && (
+            <button onClick={() => setRemarksFor({ id: row.original.emp_expenses_pkey, action: 'authorize' })} className="text-[color:var(--color-primary)] hover:underline font-medium">
+              Authorize
+            </button>
+          )}
+          {(row.original.expense_status === 'Authorized' || row.original.expense_status === 'Applied') && (
+            <button onClick={() => setRemarksFor({ id: row.original.emp_expenses_pkey, action: 'approve' })} className="text-[color:var(--color-success-dark)] hover:underline font-medium">
+              Approve
+            </button>
+          )}
+          {(row.original.expense_status === 'Applied' || row.original.expense_status === 'Authorized') && (
+            <button onClick={() => setRemarksFor({ id: row.original.emp_expenses_pkey, action: 'reject' })} className="text-[color:var(--color-danger)] hover:underline font-medium">
+              Reject
+            </button>
+          )}
+          {row.original.expense_status !== 'Approved' && (
+            <button onClick={() => remove.mutate(row.original.emp_expenses_pkey)} className="text-slate-500 hover:underline font-medium">
+              Remove
+            </button>
+          )}
+        </div>
+      ),
+    },
+  ];
+
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-semibold text-gray-900">Employee Expenses</h1>
+      {slotEl &&
+        createPortal(
+          <div className="min-w-0">
+            <h1 className="font-heading text-2xl font-bold text-[#0F172A] tracking-tight leading-tight truncate">
+              Employee Expenses
+            </h1>
+            <p className="text-sm text-[#64748B] mt-0.5 truncate">
+              Submit, authorize, and approve expense claims
+            </p>
+          </div>,
+          slotEl
+        )}
+
+      <div className="flex items-center justify-end mb-4">
         <button
           onClick={() => setIsNew(true)}
-          className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+          className={cn(BTN_BASE, 'bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)] text-white')}
         >
-          <Plus className="w-4 h-4" />
+          <Plus className="w-3.5 h-3.5" />
           New Claim
         </button>
       </div>
 
-      <div className="mb-4 max-w-xs">
-        <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
+      <div className="surface-card rounded-xl px-4 py-2.5 mb-4 max-w-xs">
+        <label className="block text-[11.5px] font-medium text-slate-500 mb-1">Status</label>
         <select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
-          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          className={cn(INPUT_CLASS, 'w-full')}
         >
           <option value="">All</option>
           <option value="Applied">Applied</option>
@@ -137,92 +206,31 @@ export default function ExpensesPage() {
         </select>
       </div>
 
-      {isLoading ? (
-        <div className="text-gray-500 text-sm">Loading...</div>
-      ) : (
-        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50 border-b border-gray-200">
-              <tr>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Employee</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Type</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Amount</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Month</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Vendor</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Status</th>
-                <th className="text-right px-4 py-3 font-medium text-gray-600">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {rows.length === 0 && (
-                <tr>
-                  <td colSpan={7} className="px-4 py-8 text-center text-gray-400">No expense claims found.</td>
-                </tr>
-              )}
-              {rows.map((r) => (
-                <tr key={r.emp_expenses_pkey} className="hover:bg-gray-50">
-                  <td className="px-4 py-3 text-gray-800">{r.first_name} {r.last_name} <span className="text-gray-400">({r.emp_id})</span></td>
-                  <td className="px-4 py-3 text-gray-600">{r.expense_type}</td>
-                  <td className="px-4 py-3 text-gray-600">{formatCurrency(r.expenses_amount)}</td>
-                  <td className="px-4 py-3 text-gray-600">{r.affected_month?.slice(0, 7)}</td>
-                  <td className="px-4 py-3 text-gray-600">{r.vendor || '—'}</td>
-                  <td className="px-4 py-3">
-                    <span className={cn('px-2 py-0.5 rounded-full text-xs font-medium', STATUS_COLORS[r.expense_status] ?? 'bg-gray-100 text-gray-600')}>
-                      {r.expense_status}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center justify-end gap-2 text-xs">
-                      {r.expense_status === 'Applied' && (
-                        <button onClick={() => setRemarksFor({ id: r.emp_expenses_pkey, action: 'authorize' })} className="text-blue-600 hover:underline">
-                          Authorize
-                        </button>
-                      )}
-                      {(r.expense_status === 'Authorized' || r.expense_status === 'Applied') && (
-                        <button onClick={() => setRemarksFor({ id: r.emp_expenses_pkey, action: 'approve' })} className="text-green-600 hover:underline">
-                          Approve
-                        </button>
-                      )}
-                      {(r.expense_status === 'Applied' || r.expense_status === 'Authorized') && (
-                        <button onClick={() => setRemarksFor({ id: r.emp_expenses_pkey, action: 'reject' })} className="text-red-600 hover:underline">
-                          Reject
-                        </button>
-                      )}
-                      {r.expense_status !== 'Approved' && (
-                        <button onClick={() => remove.mutate(r.emp_expenses_pkey)} className="text-gray-500 hover:underline">
-                          Remove
-                        </button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      <DataTable data={rows} columns={columns} pageSize={10} pageSizeOptions={[10, 20, 30, 50]} isLoading={isLoading} />
 
       {remarksFor && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="absolute inset-0 bg-black/40" onClick={() => setRemarksFor(null)} />
-          <div className="relative bg-white rounded-xl shadow-xl p-6 w-full max-w-sm mx-4">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4 capitalize">{remarksFor.action} Claim</h2>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/25 backdrop-blur-[2px] p-4 animate-fade-in" onClick={() => setRemarksFor(null)}>
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="relative bg-white rounded-[20px] border border-black/[0.06] shadow-[0_25px_70px_-15px_rgba(0,0,0,0.25)] p-6 w-full max-w-sm animate-modal-in"
+          >
+            <h2 className="text-[19px] font-semibold text-[#0F172A] tracking-tight mb-4 capitalize">{remarksFor.action} Claim</h2>
             <textarea
               value={remarks}
               onChange={(e) => setRemarks(e.target.value)}
               placeholder="Remarks (optional)"
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className={cn(INPUT_CLASS, 'w-full')}
               rows={3}
             />
-            {action.isError && <p className="text-red-500 text-sm mt-2">{String(action.error)}</p>}
-            <div className="flex justify-end gap-3 pt-4">
-              <button onClick={() => setRemarksFor(null)} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">
+            {action.isError && <p className="text-[color:var(--color-danger)] text-[12.5px] mt-2">{String(action.error)}</p>}
+            <div className="flex justify-end gap-2 pt-4">
+              <button onClick={() => setRemarksFor(null)} className="px-4 py-2 text-sm font-medium text-slate-500 hover:bg-slate-100 rounded-xl transition-colors duration-150">
                 Cancel
               </button>
               <button
                 onClick={() => action.mutate({ id: remarksFor.id, action: remarksFor.action, remarks })}
                 disabled={action.isPending}
-                className="px-4 py-2 text-sm font-medium text-white rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400"
+                className={cn(BTN_BASE, 'bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)] text-white')}
               >
                 {action.isPending ? 'Saving…' : 'Confirm'}
               </button>
@@ -232,13 +240,15 @@ export default function ExpensesPage() {
       )}
 
       {isNew && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="absolute inset-0 bg-black/40" onClick={() => setIsNew(false)} />
-          <div className="relative bg-white rounded-xl shadow-xl p-6 w-full max-w-lg mx-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/25 backdrop-blur-[2px] p-4 animate-fade-in" onClick={() => setIsNew(false)}>
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="relative bg-white rounded-[20px] border border-black/[0.06] shadow-[0_25px_70px_-15px_rgba(0,0,0,0.25)] p-6 w-full max-w-lg animate-modal-in"
+          >
             <div className="flex items-center justify-between mb-5">
-              <h2 className="text-lg font-semibold text-gray-900">New Expense Claim</h2>
-              <button onClick={() => setIsNew(false)} className="p-1 rounded hover:bg-gray-100">
-                <X className="w-5 h-5 text-gray-500" />
+              <h2 className="text-[19px] font-semibold text-[#0F172A] tracking-tight">New Expense Claim</h2>
+              <button onClick={() => setIsNew(false)} aria-label="Close" className="p-1 rounded-full hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors duration-150">
+                <X className="w-4.5 h-4.5" />
               </button>
             </div>
             <form
@@ -249,17 +259,17 @@ export default function ExpensesPage() {
               className="space-y-4"
             >
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Employee</label>
+                <label className="block text-[12px] font-medium text-slate-600 mb-1.5">Employee</label>
                 <EmployeeSearch value={form.empFkey} onChange={(v) => setForm((f) => ({ ...f, empFkey: v }))} placeholder="Search employee..." />
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Expense Type</label>
+                  <label className="block text-[12px] font-medium text-slate-600 mb-1.5">Expense Type</label>
                   <select
                     required
                     value={form.expenseType}
                     onChange={(e) => setForm((f) => ({ ...f, expenseType: e.target.value }))}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    className={cn(INPUT_CLASS, 'w-full')}
                   >
                     <option value="">[--Select--]</option>
                     {expenseTypes.map((t) => (
@@ -268,54 +278,54 @@ export default function ExpensesPage() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Amount</label>
+                  <label className="block text-[12px] font-medium text-slate-600 mb-1.5">Amount</label>
                   <input
                     type="number" step="any" required
                     value={form.expensesAmount}
                     onChange={(e) => setForm((f) => ({ ...f, expensesAmount: e.target.value }))}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    className={cn(INPUT_CLASS, 'w-full')}
                   />
                 </div>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Affected Month</label>
+                <label className="block text-[12px] font-medium text-slate-600 mb-1.5">Affected Month</label>
                 <input
                   type="month" required
                   value={form.affectedMonth ? form.affectedMonth.slice(0, 7) : ''}
                   onChange={(e) => setForm((f) => ({ ...f, affectedMonth: `${e.target.value}-01` }))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className={cn(INPUT_CLASS, 'w-full')}
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Vendor</label>
+                <label className="block text-[12px] font-medium text-slate-600 mb-1.5">Vendor</label>
                 <input
                   type="text"
                   value={form.vendor}
                   onChange={(e) => setForm((f) => ({ ...f, vendor: e.target.value }))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className={cn(INPUT_CLASS, 'w-full')}
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Purpose</label>
+                <label className="block text-[12px] font-medium text-slate-600 mb-1.5">Purpose</label>
                 <textarea
                   value={form.purpose}
                   onChange={(e) => setForm((f) => ({ ...f, purpose: e.target.value }))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className={cn(INPUT_CLASS, 'w-full')}
                   rows={2}
                 />
               </div>
               <FileUploadField label="Receipt" value={form.image} onChange={(path) => setForm((f) => ({ ...f, image: path }))} />
 
-              {create.isError && <p className="text-red-500 text-sm">{String(create.error)}</p>}
+              {create.isError && <p className="text-[color:var(--color-danger)] text-[12.5px]">{String(create.error)}</p>}
 
-              <div className="flex justify-end gap-3 pt-2">
-                <button type="button" onClick={() => setIsNew(false)} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">
+              <div className="flex justify-end gap-2 pt-2">
+                <button type="button" onClick={() => setIsNew(false)} className="px-4 py-2 text-sm font-medium text-slate-500 hover:bg-slate-100 rounded-xl transition-colors duration-150">
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={create.isPending}
-                  className={cn('px-4 py-2 text-sm font-medium text-white rounded-lg', create.isPending ? 'bg-indigo-400' : 'bg-indigo-600 hover:bg-indigo-700')}
+                  className={cn(BTN_BASE, 'bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)] text-white')}
                 >
                   {create.isPending ? 'Saving…' : 'Submit Claim'}
                 </button>

@@ -33,7 +33,8 @@ export async function GET(request: NextRequest) {
   const result = [];
   for (const group of groups) {
     const [items] = await pool.execute<RowDataPacket[]>(
-      `SELECT lp.salary_head_item_fkey, shi.item
+      `SELECT lp.salary_head_item_fkey, shi.item, lp.alloted_leave_forthe_year,
+              lp.CARRY_FORWARD_LIMIT, lp.ALLOW_NEGETIVE, lp.IS_SANDWICH
        FROM leavepolicy lp
        LEFT JOIN salary_head_items shi ON shi.salary_head_item_pkey = lp.salary_head_item_fkey
        WHERE lp.status = 1 AND shi.status = 1 AND lp.LEAVEPOLICY_GROUP_ID = ?`,
@@ -48,7 +49,15 @@ export async function GET(request: NextRequest) {
            AND EMP_fkey IN (SELECT emp_pkey FROM emp_details WHERE branch_code = ?)`,
         [item.salary_head_item_fkey, finYear.start_month, finYear.end_month, branch]
       );
-      leaves.push({ salaryHeadItemFkey: item.salary_head_item_fkey, name: item.item, pending: Number(pending?.cnt ?? 0) });
+      leaves.push({
+        salaryHeadItemFkey: item.salary_head_item_fkey,
+        name: item.item,
+        allotedLeaveForTheYear: item.alloted_leave_forthe_year,
+        carryForwardLimit: item.CARRY_FORWARD_LIMIT,
+        allowNegative: item.ALLOW_NEGETIVE,
+        isSandwich: item.IS_SANDWICH,
+        pending: Number(pending?.cnt ?? 0),
+      });
     }
     result.push({ groupId: group.LEAVEPOLICY_GROUP_ID, groupName: group.LEAVEPOLICY_GROUP_NAME, leaves });
   }

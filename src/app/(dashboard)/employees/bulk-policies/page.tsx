@@ -1,12 +1,21 @@
 'use client';
 
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Search, Settings } from 'lucide-react';
 import { HierarchyMover } from '@/components/employees/HierarchyMover';
+import { cn } from '@/lib/utils';
+import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
 
 interface Employee { emp_pkey: number; first_name: string; last_name: string | null; emp_id: string }
 interface Option { value: string; label: string }
+
+const INPUT_CLASS =
+  'border border-slate-200 bg-white rounded-[9px] px-2.5 py-1.5 text-[12.5px] text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/25 focus:border-[color:var(--color-primary)] transition-colors';
+
+const BTN_BASE =
+  'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[9px] text-[12.5px] font-semibold shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
 
 const SECTIONS: { type: string; title: string; lookupPath: string; valueKey: string; labelFn: (row: Record<string, unknown>) => string }[] = [
   { type: 'SHIFT', title: 'Shift Allocation', lookupPath: 'setup/shifts', valueKey: 'day_time_seq', labelFn: (r) => String(r.day_time_desc) },
@@ -81,15 +90,15 @@ function PolicySection({ type, title, lookupPath, valueKey, labelFn, employees }
   );
 
   return (
-    <section className="bg-white rounded-xl border border-gray-200 p-6">
-      <h2 className="text-base font-semibold text-gray-900 mb-4">{title}</h2>
+    <section className="surface-card rounded-2xl p-5">
+      <h2 className="text-[15px] font-semibold text-[#0F172A] mb-4">{title}</h2>
 
       <div className="mb-4">
-        <label className="block text-sm font-medium text-gray-700 mb-1">Policy</label>
+        <label className="block text-[11.5px] font-medium text-slate-500 mb-1">Policy</label>
         <select
           value={policyId}
           onChange={(e) => setPolicyId(e.target.value)}
-          className="w-full max-w-sm px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          className={cn(INPUT_CLASS, 'w-full max-w-sm')}
         >
           <option value="">Select policy</option>
           {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
@@ -97,22 +106,22 @@ function PolicySection({ type, title, lookupPath, valueKey, labelFn, employees }
       </div>
 
       <div className="mb-2 relative max-w-sm">
-        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
         <input
           type="text"
           placeholder="Filter employees"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="w-full pl-8 pr-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          className={cn(INPUT_CLASS, 'w-full pl-8')}
         />
       </div>
 
-      <div className="max-h-56 overflow-y-auto border border-gray-100 rounded-lg divide-y divide-gray-50 mb-4">
+      <div className="max-h-56 overflow-y-auto border border-slate-100 rounded-xl divide-y divide-slate-50 mb-4">
         {filtered.map((emp) => (
-          <label key={emp.emp_pkey} className="flex items-center gap-2 px-3 py-1.5 text-sm hover:bg-gray-50 cursor-pointer">
-            <input type="checkbox" checked={selected.has(emp.emp_pkey)} onChange={() => toggle(emp.emp_pkey)} />
-            <span>{emp.first_name} {emp.last_name ?? ''}</span>
-            <span className="text-gray-400 text-xs">({emp.emp_id})</span>
+          <label key={emp.emp_pkey} className="flex items-center gap-2 px-3 py-1.5 text-[12.5px] hover:bg-slate-50 cursor-pointer">
+            <input type="checkbox" checked={selected.has(emp.emp_pkey)} onChange={() => toggle(emp.emp_pkey)} className="rounded border-slate-300 text-[color:var(--color-primary)] focus:ring-[color:var(--color-primary)]/40" />
+            <span className="text-[#0F172A]">{emp.first_name} {emp.last_name ?? ''}</span>
+            <span className="text-slate-400 text-[11px]">({emp.emp_id})</span>
           </label>
         ))}
       </div>
@@ -121,18 +130,18 @@ function PolicySection({ type, title, lookupPath, valueKey, labelFn, employees }
         <button
           onClick={() => assign.mutate()}
           disabled={!policyId || !selected.size || assign.isPending}
-          className="bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+          className={cn(BTN_BASE, 'bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)] text-white')}
         >
           {assign.isPending ? 'Assigning…' : `Assign to ${selected.size} selected`}
         </button>
-        {assign.isError && <p className="text-red-500 text-sm">{String(assign.error)}</p>}
+        {assign.isError && <p className="text-[12.5px] text-[color:var(--color-danger)]">{String(assign.error)}</p>}
       </div>
 
       {result && (
-        <div className="mt-3 text-sm">
-          <span className="text-emerald-700 font-medium">{result.assigned} assigned</span>
+        <div className="mt-3 text-[12.5px]">
+          <span className="text-[color:var(--color-success-dark)] font-medium">{result.assigned} assigned</span>
           {result.failed && result.failed.length > 0 && (
-            <span className="text-red-600 ml-2">{result.failed.length} failed — {result.failedNote}</span>
+            <span className="text-[color:var(--color-danger)] ml-2">{result.failed.length} failed — {result.failedNote}</span>
           )}
         </div>
       )}
@@ -141,6 +150,7 @@ function PolicySection({ type, title, lookupPath, valueKey, labelFn, employees }
 }
 
 export default function BulkPoliciesPage() {
+  const { slotEl } = useHeaderSlot();
   const [activeTab, setActiveTab] = useState<string>(TABS[0].key);
 
   const { data } = useQuery<{ data: Employee[] }>({
@@ -153,23 +163,37 @@ export default function BulkPoliciesPage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-semibold text-gray-900 mb-6">Allocate Policies in Bulk</h1>
+      {slotEl &&
+        createPortal(
+          <div className="min-w-0">
+            <h1 className="font-heading text-2xl font-bold text-[#0F172A] tracking-tight leading-tight truncate">
+              Allocate Policies in Bulk
+            </h1>
+            <p className="text-sm text-[#64748B] mt-0.5 truncate">
+              Assign shift, leave, holiday, salary, and hierarchy policies to many employees at once
+            </p>
+          </div>,
+          slotEl
+        )}
 
-      <div className="flex flex-wrap gap-2 mb-6">
-        {TABS.map((t) => (
-          <button
-            key={t.key}
-            type="button"
-            onClick={() => setActiveTab(t.key)}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium border transition-colors ${
-              activeTab === t.key
-                ? 'bg-teal-700 text-white border-teal-700'
-                : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'
-            }`}
-          >
-            <Settings className="w-4 h-4" /> {t.title}
-          </button>
-        ))}
+      <div className="sticky top-0 z-20 glass-card-strong rounded-xl px-3 py-2 flex items-center mb-5">
+        <div className="flex items-center gap-1 flex-wrap text-[12.5px] bg-slate-900/[0.03] rounded-lg p-0.5">
+          {TABS.map((t) => (
+            <button
+              key={t.key}
+              type="button"
+              onClick={() => setActiveTab(t.key)}
+              className={cn(
+                'flex items-center gap-1.5 px-3 py-1 rounded-md transition-all duration-[180ms] font-medium border whitespace-nowrap',
+                activeTab === t.key
+                  ? 'bg-[color:var(--color-primary-light)] text-[color:var(--color-primary)] border-[color:var(--color-primary)]/30'
+                  : 'bg-white text-slate-500 border-transparent hover:bg-white/70'
+              )}
+            >
+              <Settings className="w-3.5 h-3.5" /> {t.title}
+            </button>
+          ))}
+        </div>
       </div>
 
       {activeSection && <PolicySection key={activeSection.type} {...activeSection} employees={employees} />}

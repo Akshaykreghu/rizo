@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { useMutation } from '@tanstack/react-query';
 import { useSession } from 'next-auth/react';
 import { Download, Play } from 'lucide-react';
@@ -9,7 +10,14 @@ import {
   exportReportToExcel, exportReportToPdf, exportSalarySlipsToExcel, exportSalarySlipsToPdf,
   exportGroupedReportToExcel, exportGroupedReportToPdf, type ReportColumn,
 } from '@/lib/reportExport';
-import { formatCurrency } from '@/lib/utils';
+import { cn, formatCurrency } from '@/lib/utils';
+import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
+
+const INPUT_CLASS =
+  'border border-slate-200 bg-white rounded-[9px] px-2.5 py-1.5 text-[12.5px] text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/25 focus:border-[color:var(--color-primary)] transition-colors';
+
+const BTN_BASE =
+  'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[9px] text-[12.5px] font-semibold shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
 
 type Subtype = 'SummaryPayroll' | 'salary' | 'Grosssalary' | 'BankTranfer' | 'Salaryslip'
   | 'MonthlyCTCReport' | 'PayrollCTC' | 'GrosssalaryNew' | 'Comparison' | 'GrosssalarySummary' | 'GrossPeriod';
@@ -49,61 +57,61 @@ interface SalarySlip {
 function SalarySlipCard({ slip }: { slip: SalarySlip }) {
   const rowCount = Math.max(slip.earnings.length, slip.deductions.length);
   return (
-    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-      <div className="bg-gray-50 border-b border-gray-200 px-4 py-3">
-        <h3 className="font-semibold text-gray-900">
+    <div className="surface-card rounded-2xl overflow-hidden">
+      <div className="bg-slate-50 border-b border-slate-200 px-4 py-2.5">
+        <h3 className="text-[13.5px] font-semibold text-[#0F172A]">
           {slip.emp_name}{slip.status === 2 ? ' (Resigned)' : ''} — {slip.designation ?? ''} — {slip.branch_name ?? ''}
         </h3>
       </div>
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-2 px-4 py-3 text-sm border-b border-gray-100">
-        <div><span className="text-gray-500">Department:</span> {slip.department ?? '—'}</div>
-        <div><span className="text-gray-500">Gender:</span> {slip.gender ?? '—'}</div>
-        <div><span className="text-gray-500">Date of Joining:</span> {slip.joining_date ?? '—'}</div>
-        <div><span className="text-gray-500">Leave Days:</span> {slip.leave_days}</div>
-        <div><span className="text-gray-500">Present Days:</span> {slip.present_days}</div>
-        <div><span className="text-gray-500">LOP Days:</span> {slip.lop_days}</div>
-        <div><span className="text-gray-500">Week Off:</span> {slip.weekoff_days}</div>
-        <div><span className="text-gray-500">Holidays:</span> {slip.holiday_days}</div>
-        <div><span className="text-gray-500">PF Account No:</span> {slip.pf_account_no || '—'}</div>
-        <div><span className="text-gray-500">ESI No:</span> {slip.esi_no || '—'}</div>
-        <div><span className="text-gray-500">UAN No:</span> {slip.uan_no || '—'}</div>
-        <div><span className="text-gray-500">Bank:</span> {slip.bank_name || '—'}</div>
-        <div><span className="text-gray-500">Branch:</span> {slip.bank_branch || '—'}</div>
-        <div><span className="text-gray-500">IFSC Code:</span> {slip.ifsc_code || '—'}</div>
-        <div><span className="text-gray-500">Account No:</span> {slip.account_no || '—'}</div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-1.5 px-4 py-3 text-[12.5px] border-b border-slate-100">
+        <div><span className="text-slate-500">Department:</span> {slip.department ?? '—'}</div>
+        <div><span className="text-slate-500">Gender:</span> {slip.gender ?? '—'}</div>
+        <div><span className="text-slate-500">Date of Joining:</span> {slip.joining_date ?? '—'}</div>
+        <div><span className="text-slate-500">Leave Days:</span> {slip.leave_days}</div>
+        <div><span className="text-slate-500">Present Days:</span> {slip.present_days}</div>
+        <div><span className="text-slate-500">LOP Days:</span> {slip.lop_days}</div>
+        <div><span className="text-slate-500">Week Off:</span> {slip.weekoff_days}</div>
+        <div><span className="text-slate-500">Holidays:</span> {slip.holiday_days}</div>
+        <div><span className="text-slate-500">PF Account No:</span> {slip.pf_account_no || '—'}</div>
+        <div><span className="text-slate-500">ESI No:</span> {slip.esi_no || '—'}</div>
+        <div><span className="text-slate-500">UAN No:</span> {slip.uan_no || '—'}</div>
+        <div><span className="text-slate-500">Bank:</span> {slip.bank_name || '—'}</div>
+        <div><span className="text-slate-500">Branch:</span> {slip.bank_branch || '—'}</div>
+        <div><span className="text-slate-500">IFSC Code:</span> {slip.ifsc_code || '—'}</div>
+        <div><span className="text-slate-500">Account No:</span> {slip.account_no || '—'}</div>
       </div>
-      <table className="w-full text-sm">
-        <thead className="bg-gray-100">
+      <table className="w-full text-[13px]">
+        <thead className="bg-slate-100">
           <tr>
-            <th className="text-left px-4 py-2 font-medium text-gray-600">Earnings</th>
-            <th className="text-right px-4 py-2 font-medium text-gray-600">Amount</th>
-            <th className="text-left px-4 py-2 font-medium text-gray-600">Deductions</th>
-            <th className="text-right px-4 py-2 font-medium text-gray-600">Amount</th>
+            <th className="text-left px-4 py-2 text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Earnings</th>
+            <th className="text-right px-4 py-2 text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Amount</th>
+            <th className="text-left px-4 py-2 text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Deductions</th>
+            <th className="text-right px-4 py-2 text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Amount</th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-gray-100">
+        <tbody className="divide-y divide-slate-100">
           {rowCount === 0 && (
-            <tr><td colSpan={4} className="px-4 py-4 text-center text-gray-400">No components found under this data</td></tr>
+            <tr><td colSpan={4} className="px-4 py-4 text-center text-slate-400">No components found under this data</td></tr>
           )}
           {Array.from({ length: rowCount }).map((_, i) => (
             <tr key={i}>
-              <td className="px-4 py-1.5 text-gray-700">{slip.earnings[i]?.label ?? ''}</td>
-              <td className="px-4 py-1.5 text-right text-gray-700">{slip.earnings[i] ? formatCurrency(slip.earnings[i].amount) : ''}</td>
-              <td className="px-4 py-1.5 text-gray-700">{slip.deductions[i]?.label ?? ''}</td>
-              <td className="px-4 py-1.5 text-right text-gray-700">{slip.deductions[i] ? formatCurrency(slip.deductions[i].amount) : ''}</td>
+              <td className="px-4 py-1.5 text-[#0F172A]">{slip.earnings[i]?.label ?? ''}</td>
+              <td className="px-4 py-1.5 text-right text-[#0F172A]">{slip.earnings[i] ? formatCurrency(slip.earnings[i].amount) : ''}</td>
+              <td className="px-4 py-1.5 text-[#0F172A]">{slip.deductions[i]?.label ?? ''}</td>
+              <td className="px-4 py-1.5 text-right text-[#0F172A]">{slip.deductions[i] ? formatCurrency(slip.deductions[i].amount) : ''}</td>
             </tr>
           ))}
         </tbody>
-        <tfoot className="bg-gray-100 font-medium">
+        <tfoot className="bg-slate-50 font-medium">
           <tr>
-            <td className="px-4 py-2">Total Earnings</td>
-            <td className="px-4 py-2 text-right">{formatCurrency(slip.total_earnings)}</td>
-            <td className="px-4 py-2">Total Deductions</td>
-            <td className="px-4 py-2 text-right">{formatCurrency(slip.total_deductions)}</td>
+            <td className="px-4 py-2 text-[#0F172A]">Total Earnings</td>
+            <td className="px-4 py-2 text-right text-[#0F172A]">{formatCurrency(slip.total_earnings)}</td>
+            <td className="px-4 py-2 text-[#0F172A]">Total Deductions</td>
+            <td className="px-4 py-2 text-right text-[#0F172A]">{formatCurrency(slip.total_deductions)}</td>
           </tr>
           <tr>
-            <td className="px-4 py-2" colSpan={3}>Net Pay</td>
-            <td className="px-4 py-2 text-right">{formatCurrency(slip.net_pay)}</td>
+            <td className="px-4 py-2 text-[#0F172A]" colSpan={3}>Net Pay</td>
+            <td className="px-4 py-2 text-right text-[#0F172A]">{formatCurrency(slip.net_pay)}</td>
           </tr>
         </tfoot>
       </table>
@@ -362,6 +370,7 @@ function monthLabel(monthYear: string) {
 }
 
 export default function PayrollReportPage() {
+  const { slotEl } = useHeaderSlot();
   const { data: session } = useSession();
   const [subtype, setSubtype] = useState<Subtype>('SummaryPayroll');
   const [monthYear, setMonthYear] = useState(currentMonthYear());
@@ -403,48 +412,59 @@ export default function PayrollReportPage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-semibold text-gray-900 mb-6">Payroll Report</h1>
+      {slotEl &&
+        createPortal(
+          <div className="min-w-0">
+            <h1 className="font-heading text-2xl font-bold text-[#0F172A] tracking-tight leading-tight truncate">
+              Payroll Report
+            </h1>
+            <p className="text-sm text-[#64748B] mt-0.5 truncate">
+              Summary, CTC, gross salary, bank transfer, and salary slip reports
+            </p>
+          </div>,
+          slotEl
+        )}
 
-      <div className="bg-white rounded-xl border border-gray-200 p-4 mb-4 space-y-3">
+      <div className="surface-card rounded-xl px-4 py-2.5 mb-4 space-y-3">
         <div className="flex flex-wrap items-end gap-3">
           <div>
-            <label className="block text-xs text-gray-500 mb-1">Report Type</label>
+            <label className="block text-[11.5px] font-medium text-slate-500 mb-1">Report Type</label>
             <select
               value={subtype}
               onChange={(e) => { setSubtype(e.target.value as Subtype); setRows([]); setSlips([]); setCriteria({}); setError(null); generate.reset(); }}
-              className="border border-gray-300 rounded-lg px-3 py-2 text-sm min-w-[180px]"
+              className={cn(INPUT_CLASS, 'min-w-[180px]')}
             >
               {Object.entries(SUBTYPE_META).map(([key, m]) => <option key={key} value={key}>{m.label}</option>)}
             </select>
           </div>
           <div>
-            <label className="block text-xs text-gray-500 mb-1">{meta.dateRange ? 'From Month' : 'Month'}</label>
-            <input type="month" value={monthYear} onChange={(e) => setMonthYear(e.target.value)} className="border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+            <label className="block text-[11.5px] font-medium text-slate-500 mb-1">{meta.dateRange ? 'From Month' : 'Month'}</label>
+            <input type="month" value={monthYear} onChange={(e) => setMonthYear(e.target.value)} className={INPUT_CLASS} />
           </div>
           {meta.dateRange && (
             <div>
-              <label className="block text-xs text-gray-500 mb-1">To Month</label>
-              <input type="month" value={toMonthYear} onChange={(e) => setToMonthYear(e.target.value)} className="border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+              <label className="block text-[11.5px] font-medium text-slate-500 mb-1">To Month</label>
+              <input type="month" value={toMonthYear} onChange={(e) => setToMonthYear(e.target.value)} className={INPUT_CLASS} />
             </div>
           )}
           <CriteriaFilterPanel reportType={subtype} values={criteria} onChange={setCriteria} />
           <button
             onClick={() => generate.mutate()}
             disabled={generate.isPending || !monthYear}
-            className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+            className={cn(BTN_BASE, 'bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)] text-white')}
           >
-            <Play className="w-4 h-4" />
+            <Play className="w-3.5 h-3.5" />
             {generate.isPending ? 'Generating…' : 'Generate'}
           </button>
         </div>
-        {error && <p className="text-sm text-red-600">{error}</p>}
+        {error && <p className="text-[12.5px] text-[color:var(--color-danger)]">{error}</p>}
         {!isSlip && displayRows.length > 0 && (
           <div className="flex gap-2">
             <button
               onClick={() => meta.groupBy
                 ? exportGroupedReportToExcel(displayColumns, groupRows(displayRows, meta.groupBy), currencyKeys, `payroll_report_${monthYear}`)
                 : exportReportToExcel(displayColumns, displayRows, `payroll_report_${monthYear}`)}
-              className="flex items-center gap-2 border border-gray-300 hover:bg-gray-50 px-3 py-1.5 rounded-lg text-sm text-gray-700"
+              className={cn(BTN_BASE, 'bg-white border border-slate-200 hover:bg-slate-50 text-slate-600')}
             >
               <Download className="w-3.5 h-3.5" /> Excel
             </button>
@@ -453,7 +473,7 @@ export default function PayrollReportPage() {
                 onClick={() => meta.groupBy
                   ? exportGroupedReportToPdf(displayColumns, groupRows(displayRows, meta.groupBy), currencyKeys, `${meta.label} — ${monthYear}`, `payroll_report_${monthYear}`)
                   : exportReportToPdf(displayColumns, displayRows, `${meta.label} — ${monthYear}`, `payroll_report_${monthYear}`)}
-                className="flex items-center gap-2 border border-gray-300 hover:bg-gray-50 px-3 py-1.5 rounded-lg text-sm text-gray-700"
+                className={cn(BTN_BASE, 'bg-white border border-slate-200 hover:bg-slate-50 text-slate-600')}
               >
                 <Download className="w-3.5 h-3.5" /> PDF
               </button>
@@ -462,10 +482,10 @@ export default function PayrollReportPage() {
         )}
         {isSlip && slips.length > 0 && (
           <div className="flex gap-2">
-            <button onClick={() => exportSalarySlipsToExcel(slips, session?.user?.companyCode ?? '', monthLabel(monthYear), `salary_slip_${monthYear}`)} className="flex items-center gap-2 border border-gray-300 hover:bg-gray-50 px-3 py-1.5 rounded-lg text-sm text-gray-700">
+            <button onClick={() => exportSalarySlipsToExcel(slips, session?.user?.companyCode ?? '', monthLabel(monthYear), `salary_slip_${monthYear}`)} className={cn(BTN_BASE, 'bg-white border border-slate-200 hover:bg-slate-50 text-slate-600')}>
               <Download className="w-3.5 h-3.5" /> Excel
             </button>
-            <button onClick={() => exportSalarySlipsToPdf(slips, monthLabel(monthYear), `salary_slip_${monthYear}`)} className="flex items-center gap-2 border border-gray-300 hover:bg-gray-50 px-3 py-1.5 rounded-lg text-sm text-gray-700">
+            <button onClick={() => exportSalarySlipsToPdf(slips, monthLabel(monthYear), `salary_slip_${monthYear}`)} className={cn(BTN_BASE, 'bg-white border border-slate-200 hover:bg-slate-50 text-slate-600')}>
               <Download className="w-3.5 h-3.5" /> PDF
             </button>
           </div>
@@ -475,7 +495,7 @@ export default function PayrollReportPage() {
       {isSlip ? (
         <div className="space-y-4">
           {slips.length === 0 && (
-            <div className="bg-white rounded-xl border border-gray-200 px-4 py-8 text-center text-gray-400">
+            <div className="surface-card rounded-xl px-4 py-8 text-center text-[12.5px] text-slate-400">
               {generate.isPending
                 ? 'Loading...'
                 : generate.isSuccess
@@ -486,7 +506,7 @@ export default function PayrollReportPage() {
           {slips.map((slip) => <SalarySlipCard key={slip.emp_pkey} slip={slip} />)}
         </div>
       ) : displayRows.length === 0 ? (
-        <div className="bg-white rounded-xl border border-gray-200 px-4 py-8 text-center text-gray-400">
+        <div className="surface-card rounded-xl px-4 py-8 text-center text-[12.5px] text-slate-400">
           {generate.isPending
             ? 'Loading...'
             : generate.isSuccess
@@ -496,27 +516,27 @@ export default function PayrollReportPage() {
       ) : meta.groupBy ? (
         <div className="space-y-4">
           {groupRows(displayRows, meta.groupBy).map((group) => (
-            <div key={group.key} className="bg-white rounded-xl border border-gray-200 overflow-hidden overflow-x-auto">
-              <div className="bg-gray-100 border-b border-gray-200 px-4 py-2 font-semibold text-gray-800">{group.key}</div>
-              <table className="w-full text-sm">
-                <thead className="bg-gray-50 border-b border-gray-200">
-                  <tr>{displayColumns.map((c) => <th key={c.key} className="text-left px-4 py-3 font-medium text-gray-600 whitespace-nowrap">{c.label}</th>)}</tr>
+            <div key={group.key} className="surface-card rounded-2xl overflow-hidden overflow-x-auto">
+              <div className="bg-slate-100 border-b border-slate-200 px-4 py-2 text-[13px] font-semibold text-[#0F172A]">{group.key}</div>
+              <table className="w-full text-[13px]">
+                <thead className="bg-slate-50 border-b border-slate-200">
+                  <tr>{displayColumns.map((c) => <th key={c.key} className="text-left px-4 py-2.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">{c.label}</th>)}</tr>
                 </thead>
-                <tbody className="divide-y divide-gray-100">
+                <tbody className="divide-y divide-slate-100">
                   {group.rows.map((row, i) => (
-                    <tr key={i} className="hover:bg-gray-50">
+                    <tr key={i} className="hover:bg-slate-50/70">
                       {displayColumns.map((c) => (
-                        <td key={c.key} className="px-4 py-3 text-gray-700 whitespace-nowrap">
+                        <td key={c.key} className="px-4 py-2 text-[#0F172A] whitespace-nowrap">
                           {currencyKeys.has(c.key) ? formatCurrency(Number(row[c.key] ?? 0)) : String(row[c.key] ?? '')}
                         </td>
                       ))}
                     </tr>
                   ))}
                 </tbody>
-                <tfoot className="bg-gray-50 font-medium">
+                <tfoot className="bg-slate-50 font-medium">
                   <tr>
                     {displayColumns.map((c, i) => (
-                      <td key={c.key} className="px-4 py-2 text-gray-800 whitespace-nowrap">
+                      <td key={c.key} className="px-4 py-2 text-[#0F172A] whitespace-nowrap">
                         {i === 0
                           ? 'Total'
                           : currencyKeys.has(c.key) ? formatCurrency(sumColumn(group.rows, c.key)) : ''}
@@ -529,16 +549,16 @@ export default function PayrollReportPage() {
           ))}
         </div>
       ) : (
-        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50 border-b border-gray-200">
-              <tr>{displayColumns.map((c) => <th key={c.key} className="text-left px-4 py-3 font-medium text-gray-600 whitespace-nowrap">{c.label}</th>)}</tr>
+        <div className="surface-card rounded-2xl overflow-hidden overflow-x-auto">
+          <table className="w-full text-[13px]">
+            <thead className="bg-slate-50 border-b border-slate-200">
+              <tr>{displayColumns.map((c) => <th key={c.key} className="text-left px-4 py-2.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">{c.label}</th>)}</tr>
             </thead>
-            <tbody className="divide-y divide-gray-100">
+            <tbody className="divide-y divide-slate-100">
               {displayRows.map((row, i) => (
-                <tr key={i} className="hover:bg-gray-50">
+                <tr key={i} className="hover:bg-slate-50/70">
                   {displayColumns.map((c) => (
-                    <td key={c.key} className="px-4 py-3 text-gray-700 whitespace-nowrap">
+                    <td key={c.key} className="px-4 py-2 text-[#0F172A] whitespace-nowrap">
                       {currencyKeys.has(c.key) ? formatCurrency(Number(row[c.key] ?? 0)) : String(row[c.key] ?? '')}
                     </td>
                   ))}

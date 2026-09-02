@@ -84,9 +84,11 @@ export async function POST(request: NextRequest) {
     const empType = str(row['Employee Type *']);
     const desigName = str(row['Designation *']);
     const deptName = str(row['Department *']);
+    // Gender is mandatory in legacy's Add Employee (Personal Info tab) — mirror that for imports too.
+    const genderRawReq = str(row['Gender *']) ?? str(row['Gender']);
 
-    if (!firstName || !dob || !joiningDate || !empType || !desigName || !deptName) {
-      errors.push({ row: rowNum, message: 'Missing a required field (First Name, Date of Birth, Joining Date, Employee Type, Designation, or Department)' });
+    if (!firstName || !dob || !joiningDate || !empType || !desigName || !deptName || !genderRawReq) {
+      errors.push({ row: rowNum, message: 'Missing a required field (First Name, Date of Birth, Joining Date, Employee Type, Designation, Department, or Gender)' });
       continue;
     }
 
@@ -124,8 +126,8 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const genderRaw = str(row['Gender'])?.toLowerCase() ?? '';
-    const classification = genderRaw.startsWith('m') ? 'male' : genderRaw.startsWith('f') ? 'female' : null;
+    const genderRaw = genderRawReq.toLowerCase();
+    const classification = genderRaw.startsWith('m') ? 'male' : genderRaw.startsWith('f') ? 'female' : 'others';
     const lastName = str(row['Last Name']);
 
     const connection = await pool.getConnection();

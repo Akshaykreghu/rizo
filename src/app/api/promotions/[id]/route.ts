@@ -27,6 +27,8 @@ export async function PUT(
   const body = await request.json();
   const pool = await getCompanyPool(session.user.companyCode);
   const today = new Date().toISOString().slice(0, 10);
+  // Legacy promotionWage() dates the new CTC to the 1st of the current month, not "today".
+  const monthStart = `${today.slice(0, 8)}01`;
   const approverId = Number(session.user.empFkey) || 0;
 
   const [[promo]] = await pool.execute<RowDataPacket[]>(
@@ -75,6 +77,34 @@ export async function PUT(
       );
     }
 
+    // Legacy changeDesignation()/changeDepartment()/changeBranch() also write an emp_config audit
+    // row (type DESIG/DEPARTMENTS/BRANCH, policy_id = the numeric `id` of the master row, not its
+    // code), deactivating any prior row of that type for the employee first. changeType()'s
+    // equivalent block is commented out in legacy, so no TYPE row is written here either.
+    const codeAudits: { type: string; table: string; codeCol: string; code: string | null }[] = [
+      { type: 'DESIG', table: 'designation', codeCol: 'desig_code', code: promo.designation || null },
+      { type: 'DEPARTMENTS', table: 'department', codeCol: 'dept_code', code: promo.emp_dept || null },
+      { type: 'BRANCH', table: 'branches', codeCol: 'branch_code', code: promo.emp_branch || null },
+    ];
+    for (const audit of codeAudits) {
+      if (!audit.code) continue;
+      const [[master]] = await connection.execute<RowDataPacket[]>(
+        `SELECT id FROM ${audit.table} WHERE ${audit.codeCol} = ? AND status = 1`,
+        [audit.code]
+      );
+      if (!master) continue;
+      await connection.execute(
+        `UPDATE emp_config SET modified_by = ?, modification_date = NOW(), status = 0
+         WHERE type = ? AND emp_fkey = ? AND status = 1`,
+        [session.user.loginUserId, audit.type, empFkey]
+      );
+      await connection.execute(
+        `INSERT INTO emp_config (type, company_code, branch_code, emp_fkey, policy_id, created_by, status)
+         VALUES (?, ?, ?, ?, ?, ?, 1)`,
+        [audit.type, session.user.companyCode, emp?.branch_code ?? null, empFkey, master.id, session.user.loginUserId]
+      );
+    }
+
     if (promo.shift) {
       await connection.execute(
         `INSERT INTO emp_config (type, company_code, branch_code, emp_fkey, policy_id, created_by, status)
@@ -97,7 +127,7 @@ export async function PUT(
       await connection.execute(
         `INSERT INTO emp_ctc_upload (emp_fkey, emp_anual_ctc, created_by, start_date_effective)
          VALUES (?, ?, ?, ?)`,
-        [empFkey, Number(promo.annual_gross), session.user.loginUserId, today]
+        [empFkey, Number(promo.annual_gross), session.user.loginUserId, monthStart]
       );
     }
 

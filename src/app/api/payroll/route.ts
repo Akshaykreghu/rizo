@@ -8,9 +8,21 @@ import type { RowDataPacket } from 'mysql2';
 const ACTION_BY_STATUS: Record<string, string> = {
   pending: `(pm.action IS NULL OR pm.action = '')`,
   hold: `pm.action = 'Hold'`,
+  // Mirrors PayrollController::listprocessedpayroll()'s "Processed" tab on the Process Payroll
+  // screen: everything that has left Not Processed (Hold/Processed/Verified/Approved together),
+  // not just the Approve-screen's "Processed"/"Verified" subset below.
+  not_pending: `(pm.action IS NOT NULL AND pm.action <> '')`,
   processed: `pm.action IN ('Processed', 'Verified')`,
   approved: `pm.action = 'Approved'`,
 };
+
+const PREV_SALARY_STATUSES = new Set(['not_pending', 'processed']);
+
+function shiftMonthYear(monthYear: string, deltaMonths: number): string {
+  const [y, m] = monthYear.split('-').map(Number);
+  const d = new Date(Date.UTC(y, m - 1 + deltaMonths, 1));
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+}
 
 // Mirrors PayrollController::listpayroll()/listapprovepayroll()/listapprovedpayroll() — same shape,
 // same emp_details/termination joins for the "resigned" warning flag, same attendance-reversal
@@ -26,6 +38,7 @@ export async function GET(request: NextRequest) {
   const branch = request.nextUrl.searchParams.get('branch') ?? '';
   const month = request.nextUrl.searchParams.get('month') ?? '';
   const status = request.nextUrl.searchParams.get('status') ?? 'pending';
+  const employee = request.nextUrl.searchParams.get('employee') ?? '';
   if (!branch || !month) return NextResponse.json({ error: 'branch and month are required' }, { status: 400 });
 
   const actionClause = ACTION_BY_STATUS[status] ?? ACTION_BY_STATUS.pending;
@@ -39,6 +52,11 @@ export async function GET(request: NextRequest) {
     )`;
     params.push(month, branch);
   }
+  let employeeClause = '';
+  if (employee) {
+    employeeClause = 'AND pm.emp_fkey = ?';
+    params.push(employee);
+  }
 
   const [rows] = await pool.execute<RowDataPacket[]>(
     `SELECT pm.payroll_master_pkey, pm.emp_fkey, pm.emp_name, pm.days_presant, pm.days_leave,
@@ -48,29 +66,55 @@ export async function GET(request: NextRequest) {
      FROM payroll_master pm
      LEFT JOIN emp_details ed ON ed.emp_pkey = pm.emp_fkey
      LEFT JOIN termination t ON t.emp_fkey = pm.emp_fkey AND t.status = 1
-     WHERE ${actionClause} AND pm.branch_code = ? AND pm.month_year = ? ${attendanceExclusion}
+     WHERE ${actionClause} AND pm.branch_code = ? AND pm.month_year = ? ${attendanceExclusion} ${employeeClause}
      ORDER BY pm.emp_name ASC`,
     params
   );
 
-  const result = rows.map((r) => ({
-    payroll_master_pkey: r.payroll_master_pkey,
-    emp_fkey: r.emp_fkey,
-    emp_name: r.emp_name,
-    days_presant: r.days_presant,
-    days_leave: r.days_leave,
-    loss_of_pay: r.loss_of_pay,
-    monthly_ctc: r.monthly_ctc,
-    monthly_amount: r.monthly_amount,
-    calander_days: r.calander_days,
-    working_days: r.working_days,
-    gross_salary: r.gross_salary,
-    net_salary: r.net_salary != null ? Math.round(Number(r.net_salary)) : null,
-    total_deductions: r.total_deduction,
-    action: r.action,
-    tax_include: r.tax_include,
-    resigned: r.emp_status === 2 || !!r.submitted_date,
-  }));
+  // Mirrors PayrollController's Previous Salary / Difference columns (listprocessedpayroll /
+  // listapprovepayroll): looked up from the prior month's payroll_master row per employee, only
+  // computed for the tabs that show it.
+  let prevNetByEmp = new Map<number, number>();
+  if (PREV_SALARY_STATUSES.has(status)) {
+    const prevMonth = shiftMonthYear(month, -1);
+    const prevParams: (string | number)[] = [branch, prevMonth];
+    let prevEmployeeClause = '';
+    if (employee) {
+      prevEmployeeClause = 'AND emp_fkey = ?';
+      prevParams.push(employee);
+    }
+    const [prevRows] = await pool.execute<RowDataPacket[]>(
+      `SELECT emp_fkey, net_salary FROM payroll_master
+       WHERE branch_code = ? AND month_year = ? ${prevEmployeeClause}`,
+      prevParams
+    );
+    prevNetByEmp = new Map(prevRows.map((r) => [r.emp_fkey, Number(r.net_salary)]));
+  }
+
+  const result = rows.map((r) => {
+    const netSalary = r.net_salary != null ? Math.round(Number(r.net_salary)) : null;
+    const prevNet = prevNetByEmp.get(r.emp_fkey);
+    return {
+      payroll_master_pkey: r.payroll_master_pkey,
+      emp_fkey: r.emp_fkey,
+      emp_name: r.emp_name,
+      days_presant: r.days_presant,
+      days_leave: r.days_leave,
+      loss_of_pay: r.loss_of_pay,
+      monthly_ctc: r.monthly_ctc,
+      monthly_amount: r.monthly_amount != null ? Math.round(Number(r.monthly_amount)) : null,
+      calander_days: r.calander_days,
+      working_days: r.working_days,
+      gross_salary: r.gross_salary,
+      net_salary: netSalary,
+      total_deductions: r.total_deduction,
+      action: r.action,
+      tax_include: r.tax_include,
+      resigned: r.emp_status === 2 || !!r.submitted_date,
+      last_month_net_salary: prevNet != null ? Math.round(prevNet) : null,
+      diff: prevNet != null && netSalary != null ? netSalary - Math.round(prevNet) : null,
+    };
+  });
 
   return NextResponse.json({ rows: result });
 }

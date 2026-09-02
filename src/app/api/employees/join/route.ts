@@ -80,6 +80,10 @@ export async function POST(request: NextRequest) {
   if (validationError) {
     return NextResponse.json({ error: validationError }, { status: 400 });
   }
+  // Legacy's Add Employee (Personal Info tab) requires Gender — mirror that here.
+  if (!body.classification) {
+    return NextResponse.json({ error: 'Gender is required' }, { status: 400 });
+  }
 
   const pool = await getCompanyPool(session.user.companyCode);
 

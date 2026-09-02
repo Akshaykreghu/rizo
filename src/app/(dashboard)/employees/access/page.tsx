@@ -1,10 +1,19 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Lock, Unlock, Smartphone, RotateCcw, KeyRound, X, Search, Users } from 'lucide-react';
 import { DataTable } from '@/components/data-table/DataTable';
 import type { ColumnDef } from '@tanstack/react-table';
+import { cn } from '@/lib/utils';
+import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
+
+const INPUT_CLASS =
+  'border border-slate-200 bg-white rounded-[9px] px-2.5 py-1.5 text-[12.5px] text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/25 focus:border-[color:var(--color-primary)] transition-colors';
+
+const BTN_BASE =
+  'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[9px] text-[12.5px] font-semibold shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
 
 interface AccessRow {
   emp_pkey: number;
@@ -53,6 +62,7 @@ function Toast({ message, type, onDismiss }: { message: string; type: 'success' 
 }
 
 export default function EmployeeAccessPage() {
+  const { slotEl } = useHeaderSlot();
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState<AccessRow | null>(null);
   const [form, setForm] = useState<Record<string, string>>({});
@@ -201,75 +211,76 @@ export default function EmployeeAccessPage() {
     <div>
       {toast && <Toast message={toast.message} type={toast.type} onDismiss={() => setToast(null)} />}
 
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-semibold text-gray-900">Employee Access</h1>
-        <button
-          onClick={() => setBulkOpen(true)}
-          className="flex items-center gap-1.5 text-sm text-white bg-indigo-600 hover:bg-indigo-700 px-3 py-2 rounded-lg transition-colors"
-        >
-          <Users className="w-4 h-4" /> Bulk Access
-        </button>
-      </div>
+      {slotEl &&
+        createPortal(
+          <div className="min-w-0">
+            <h1 className="font-heading text-2xl font-bold text-[#0F172A] tracking-tight leading-tight truncate">
+              Employee Access
+            </h1>
+            <p className="text-sm text-[#64748B] mt-0.5 truncate">
+              Manage web/mobile login, device resets, and passwords
+            </p>
+          </div>,
+          slotEl
+        )}
 
       <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
         <form onSubmit={handleSearch} className="flex gap-2 max-w-sm flex-1">
           <div className="relative flex-1">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
             <input
               type="text"
               placeholder="Search by name or username"
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
-              className="w-full pl-8 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className={cn(INPUT_CLASS, 'w-full pl-8')}
             />
           </div>
-          <button type="submit" className="px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm transition-colors">
+          <button type="submit" className={cn(BTN_BASE, 'bg-white border border-slate-200 hover:bg-slate-50 text-slate-600')}>
             Search
           </button>
         </form>
 
-        <label className="flex items-center gap-2 text-sm text-gray-600">
-          Rows per page
-          <select
-            value={pageSize}
-            onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}
-            className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-          >
-            {PAGE_SIZE_OPTIONS.map((n) => <option key={n} value={n}>{n}</option>)}
-          </select>
-        </label>
+        <button
+          onClick={() => setBulkOpen(true)}
+          className={cn(BTN_BASE, 'bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)] text-white')}
+        >
+          <Users className="w-3.5 h-3.5" /> Bulk Access
+        </button>
       </div>
 
       <DataTable
-        key={pageSize}
         data={data?.data ?? []}
         columns={columns}
         pageSize={pageSize}
+        pageSizeOptions={PAGE_SIZE_OPTIONS}
         totalRows={data?.total ?? 0}
-        onPageChange={(p) => setPage(p)}
+        onPageChange={(p, ps) => { setPage(p); setPageSize(ps); }}
         isLoading={isLoading}
       />
 
       {editing && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="absolute inset-0 bg-black/40" onClick={() => setEditing(null)} />
-          <div className="relative bg-white rounded-xl shadow-xl p-6 w-full max-w-md mx-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/25 backdrop-blur-[2px] p-4 animate-fade-in" onClick={() => setEditing(null)}>
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="relative bg-white rounded-[20px] border border-black/[0.06] shadow-[0_25px_70px_-15px_rgba(0,0,0,0.25)] p-6 w-full max-w-md animate-modal-in"
+          >
             <div className="flex items-center justify-between mb-5">
-              <h2 className="text-lg font-semibold text-gray-900">
+              <h2 className="text-[19px] font-semibold text-[#0F172A] tracking-tight">
                 {editing.first_name} {editing.last_name ?? ''}
               </h2>
-              <button onClick={() => setEditing(null)} className="p-1 rounded hover:bg-gray-100">
-                <X className="w-5 h-5 text-gray-500" />
+              <button onClick={() => setEditing(null)} aria-label="Close" className="p-1 rounded-full hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors duration-150">
+                <X className="w-4.5 h-4.5" />
               </button>
             </div>
 
             <form onSubmit={handleSave} className="space-y-4">
               {!editing.user_id && (
                 <div>
-                  <label className="label">Username <span className="text-red-500">*</span></label>
+                  <label className="block text-[12px] font-medium text-slate-600 mb-1.5">Username <span className="text-[color:var(--color-danger)]">*</span></label>
                   <input
                     required
-                    className="input"
+                    className={cn(INPUT_CLASS, 'w-full')}
                     value={form.user_id}
                     onChange={(e) => setForm((f) => ({ ...f, user_id: e.target.value }))}
                     placeholder="e.g. GRTL100024"
@@ -278,52 +289,55 @@ export default function EmployeeAccessPage() {
               )}
 
               <div>
-                <label className="label">Email</label>
+                <label className="block text-[12px] font-medium text-slate-600 mb-1.5">Email</label>
                 <input
                   type="email"
-                  className="input"
+                  className={cn(INPUT_CLASS, 'w-full')}
                   value={form.email}
                   onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
                   placeholder="employee@company.com"
                 />
               </div>
 
-              <label className="flex items-center gap-2 text-sm font-medium text-gray-700">
+              <label className="flex items-center gap-2 text-[13px] font-medium text-slate-700">
                 <input
                   type="checkbox"
                   checked={form.access_allowed === 'Y'}
                   onChange={(e) => setForm((f) => ({ ...f, access_allowed: e.target.checked ? 'Y' : 'N' }))}
+                  className="rounded border-slate-300 text-[color:var(--color-primary)] focus:ring-[color:var(--color-primary)]/40"
                 />
                 Web login enabled
               </label>
 
-              <label className="flex items-center gap-2 text-sm font-medium text-gray-700">
+              <label className="flex items-center gap-2 text-[13px] font-medium text-slate-700">
                 <input
                   type="checkbox"
                   checked={form.locked === '1'}
                   onChange={(e) => setForm((f) => ({ ...f, locked: e.target.checked ? '1' : '0' }))}
+                  className="rounded border-slate-300 text-[color:var(--color-primary)] focus:ring-[color:var(--color-primary)]/40"
                 />
                 Account locked
               </label>
 
-              <div className="border-t border-gray-100 pt-3">
-                <label className="flex items-center gap-2 text-sm font-medium text-gray-700">
+              <div className="border-t border-slate-100 pt-3">
+                <label className="flex items-center gap-2 text-[13px] font-medium text-slate-700">
                   <input
                     type="checkbox"
                     checked={form.mobile_allowed === 'Y'}
                     onChange={(e) => setForm((f) => ({ ...f, mobile_allowed: e.target.checked ? 'Y' : 'N' }))}
+                    className="rounded border-slate-300 text-[color:var(--color-primary)] focus:ring-[color:var(--color-primary)]/40"
                   />
                   Mobile access allowed
                 </label>
-                <p className="text-xs text-gray-400 mt-1">
+                <p className="text-[11.5px] text-slate-400 mt-1">
                   Mobile access is a separate channel from web login — an employee can have one enabled without the other.
                 </p>
               </div>
 
               <div>
-                <label className="label">Punch Type</label>
+                <label className="block text-[12px] font-medium text-slate-600 mb-1.5">Punch Type</label>
                 <select
-                  className="input"
+                  className={cn(INPUT_CLASS, 'w-full')}
                   value={form.punch_type}
                   onChange={(e) => setForm((f) => ({ ...f, punch_type: e.target.value }))}
                 >
@@ -332,10 +346,10 @@ export default function EmployeeAccessPage() {
               </div>
 
               <div>
-                <label className="label flex items-center gap-1.5"><KeyRound className="w-3.5 h-3.5" /> Reset Password (leave blank to keep current)</label>
+                <label className="flex items-center gap-1.5 text-[12px] font-medium text-slate-600 mb-1.5"><KeyRound className="w-3.5 h-3.5" /> Reset Password (leave blank to keep current)</label>
                 <input
                   type="password"
-                  className="input"
+                  className={cn(INPUT_CLASS, 'w-full')}
                   value={form.new_password}
                   onChange={(e) => setForm((f) => ({ ...f, new_password: e.target.value }))}
                   disabled={form.access_allowed !== 'Y'}
@@ -346,20 +360,25 @@ export default function EmployeeAccessPage() {
                   }
                 />
                 {passwordTooShort && (
-                  <p className="text-red-500 text-xs mt-1">Password must be at least {MIN_PASSWORD_LENGTH} characters.</p>
+                  <p className="text-[color:var(--color-danger)] text-[11.5px] mt-1">Password must be at least {MIN_PASSWORD_LENGTH} characters.</p>
                 )}
               </div>
 
-              {save.isError && <p className="text-red-500 text-sm">{String(save.error)}</p>}
+              {save.isError && <p className="text-[color:var(--color-danger)] text-[12.5px]">{String(save.error)}</p>}
 
-              <div className="flex justify-end gap-3 pt-2">
-                <button type="button" onClick={() => setEditing(null)} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">
+              <div className="flex justify-end gap-2 pt-2">
+                <button type="button" onClick={() => setEditing(null)} className="px-4 py-2 text-sm font-medium text-slate-500 hover:bg-slate-100 rounded-xl transition-colors duration-150">
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={save.isPending || passwordTooShort}
-                  className="px-4 py-2 text-sm font-medium text-white rounded-lg transition-colors bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400"
+                  className={cn(
+                    'px-4 py-2.5 text-sm font-semibold text-white rounded-xl shadow-sm transition-colors duration-150',
+                    save.isPending || passwordTooShort
+                      ? 'bg-[color:var(--color-primary)]/60 cursor-not-allowed'
+                      : 'bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)]'
+                  )}
                 >
                   {save.isPending ? 'Saving…' : 'Save'}
                 </button>
@@ -370,12 +389,6 @@ export default function EmployeeAccessPage() {
       )}
 
       {bulkOpen && <BulkAccessModal onClose={() => setBulkOpen(false)} onDone={(msg, type) => setToast({ message: msg, type })} />}
-
-      <style jsx>{`
-        .label { display: block; font-size: 0.875rem; font-weight: 500; color: #374151; margin-bottom: 0.25rem; }
-        .input { width: 100%; padding: 0.5rem 0.75rem; border: 1px solid #d1d5db; border-radius: 0.5rem; font-size: 0.875rem; outline: none; }
-        .input:focus { box-shadow: 0 0 0 2px #6366f1; border-color: transparent; }
-      `}</style>
     </div>
   );
 }
@@ -417,59 +430,61 @@ function BulkAccessModal({ onClose, onDone }: { onClose: () => void; onDone: (me
   });
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-      <div className="relative bg-white rounded-xl shadow-xl p-6 w-full max-w-md mx-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/25 backdrop-blur-[2px] p-4 animate-fade-in" onClick={onClose}>
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="relative bg-white rounded-[20px] border border-black/[0.06] shadow-[0_25px_70px_-15px_rgba(0,0,0,0.25)] p-6 w-full max-w-md animate-modal-in"
+      >
         <div className="flex items-center justify-between mb-5">
-          <h2 className="text-lg font-semibold text-gray-900">Bulk Access</h2>
-          <button onClick={onClose} className="p-1 rounded hover:bg-gray-100">
-            <X className="w-5 h-5 text-gray-500" />
+          <h2 className="text-[19px] font-semibold text-[#0F172A] tracking-tight">Bulk Access</h2>
+          <button onClick={onClose} aria-label="Close" className="p-1 rounded-full hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors duration-150">
+            <X className="w-4.5 h-4.5" />
           </button>
         </div>
-        <p className="text-xs text-gray-500 mb-4">
+        <p className="text-[11.5px] text-slate-500 mb-4">
           Creates a first-time login for every employee in the selected branch who doesn&apos;t
           already have one, sets the password below for all of them, and emails each their credentials.
           Employees who already have a login are left untouched.
         </p>
         <div className="space-y-4">
           <div>
-            <label className="label">Branch</label>
-            <select className="input" value={branch} onChange={(e) => setBranch(e.target.value)}>
+            <label className="block text-[12px] font-medium text-slate-600 mb-1.5">Branch</label>
+            <select className={cn(INPUT_CLASS, 'w-full')} value={branch} onChange={(e) => setBranch(e.target.value)}>
               <option value="">Select branch</option>
               {branches.map((b) => <option key={b.branch_code} value={b.branch_code}>{b.branch_name}</option>)}
             </select>
           </div>
           <div>
-            <label className="label">Initial Password</label>
+            <label className="block text-[12px] font-medium text-slate-600 mb-1.5">Initial Password</label>
             <input
               type="password"
-              className="input"
+              className={cn(INPUT_CLASS, 'w-full')}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
             />
             {passwordTooShort && (
-              <p className="text-red-500 text-xs mt-1">Password must be at least {MIN_PASSWORD_LENGTH} characters.</p>
+              <p className="text-[color:var(--color-danger)] text-[11.5px] mt-1">Password must be at least {MIN_PASSWORD_LENGTH} characters.</p>
             )}
           </div>
-          <div className="flex justify-end gap-3 pt-2">
-            <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">
+          <div className="flex justify-end gap-2 pt-2">
+            <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-medium text-slate-500 hover:bg-slate-100 rounded-xl transition-colors duration-150">
               Cancel
             </button>
             <button
               type="button"
               onClick={() => apply.mutate()}
               disabled={!branch || !password || passwordTooShort || apply.isPending}
-              className="px-4 py-2 text-sm font-medium text-white rounded-lg transition-colors bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400"
+              className={cn(
+                'px-4 py-2.5 text-sm font-semibold text-white rounded-xl shadow-sm transition-colors duration-150',
+                !branch || !password || passwordTooShort || apply.isPending
+                  ? 'bg-[color:var(--color-primary)]/60 cursor-not-allowed'
+                  : 'bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)]'
+              )}
             >
               {apply.isPending ? 'Applying…' : 'Apply to Branch'}
             </button>
           </div>
         </div>
-        <style jsx>{`
-          .label { display: block; font-size: 0.875rem; font-weight: 500; color: #374151; margin-bottom: 0.25rem; }
-          .input { width: 100%; padding: 0.5rem 0.75rem; border: 1px solid #d1d5db; border-radius: 0.5rem; font-size: 0.875rem; outline: none; }
-          .input:focus { box-shadow: 0 0 0 2px #6366f1; border-color: transparent; }
-        `}</style>
       </div>
     </div>
   );

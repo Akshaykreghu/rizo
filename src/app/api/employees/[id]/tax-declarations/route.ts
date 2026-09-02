@@ -39,7 +39,7 @@ export async function GET(
   }
 
   const [heads] = await pool.execute<RowDataPacket[]>(
-    `SELECT tax_heads_pkey, tax_name, tax_type, order_level1
+    `SELECT tax_heads_pkey, tax_name, tax_type, order_level1, attr1
      FROM tax_heads WHERE tax_active = 'Y'
      ORDER BY tax_type DESC, order_level1`
   );
@@ -56,6 +56,12 @@ export async function GET(
 
   const txByKey = new Map(transactions.map((t) => [`${t.tax_heads_fkey}:${t.tax_heads_details_fkey}`, t]));
 
+  // Legacy TaxController::setup() caps a declared deduction at tax_heads.attr1 (the statutory
+  // ceiling, e.g. the 80C 1.5L limit) when it computes tax — surface that ceiling per head so the
+  // UI can show it and /tax-compute can clamp to it.
+  const capOf = (head: RowDataPacket) =>
+    head.tax_type === 'Deductions' && head.attr1 != null && Number(head.attr1) > 0 ? Number(head.attr1) : null;
+
   const result = heads.map((head) => {
     const childDetails = details.filter((d) => d.tax_heads_fkey === head.tax_heads_pkey);
     if (childDetails.length === 0) {
@@ -64,6 +70,7 @@ export async function GET(
         tax_heads_pkey: head.tax_heads_pkey,
         tax_name: head.tax_name,
         tax_type: head.tax_type,
+        cap: capOf(head),
         lines: [{
           tax_heads_details_pkey: 0,
           label: head.tax_name,
@@ -77,6 +84,7 @@ export async function GET(
       tax_heads_pkey: head.tax_heads_pkey,
       tax_name: head.tax_name,
       tax_type: head.tax_type,
+      cap: capOf(head),
       lines: childDetails.map((d) => {
         const tx = txByKey.get(`${head.tax_heads_pkey}:${d.tax_heads_details_pkey}`);
         return {
@@ -90,10 +98,34 @@ export async function GET(
     };
   });
 
+  // "Income from other sources" total — legacy setup() sums every declared value under an Income
+  // head. Used as a headline figure on the worksheet.
+  const incomeHeadIds = new Set(heads.filter((h) => String(h.tax_type).toLowerCase() === 'income').map((h) => h.tax_heads_pkey));
+  const otherIncomeTotal = transactions
+    .filter((t) => incomeHeadIds.has(t.tax_heads_fkey))
+    .reduce((sum, t) => sum + Number(t.tax_value ?? 0), 0);
+
+  // Effective (capped) deduction total — legacy setup()'s $tottax: each declared deduction counts
+  // only up to its head's attr1 ceiling. Declared values themselves are stored uncapped; this is
+  // the "what actually reduces taxable income" figure shown to the admin.
+  const capByHead = new Map(heads.map((h) => [h.tax_heads_pkey, capOf(h)]));
+  const declaredByHead = new Map<number, number>();
+  for (const t of transactions) {
+    if (incomeHeadIds.has(t.tax_heads_fkey)) continue;
+    declaredByHead.set(t.tax_heads_fkey, (declaredByHead.get(t.tax_heads_fkey) ?? 0) + Number(t.tax_value ?? 0));
+  }
+  let cappedDeductionTotal = 0;
+  for (const [headId, declared] of declaredByHead) {
+    const cap = capByHead.get(headId);
+    cappedDeductionTotal += cap != null ? Math.min(cap, declared) : declared;
+  }
+
   return NextResponse.json({
     employee: emp,
     finYear: { fin_year: finYear.fin_year, start_month: finYear.start_month, end_month: finYear.end_month },
     heads: result,
+    otherIncomeTotal,
+    cappedDeductionTotal,
   });
 }
 

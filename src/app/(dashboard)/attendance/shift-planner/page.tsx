@@ -1,14 +1,25 @@
 'use client';
 
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { EmployeeSearch } from '@/components/employees/EmployeeSearch';
 import { Save } from 'lucide-react';
+import type { ColumnDef } from '@tanstack/react-table';
+import { cn } from '@/lib/utils';
+import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
+import { DataTable } from '@/components/data-table/DataTable';
 
 function currentMonth() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
+
+const INPUT_CLASS =
+  'border border-slate-200 bg-white rounded-[9px] px-2.5 py-1.5 text-[12.5px] text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/25 focus:border-[color:var(--color-primary)] transition-colors';
+
+const BTN_BASE =
+  'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[9px] text-[12.5px] font-semibold shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
 
 interface ShiftOption {
   dayTimeSeq: number;
@@ -24,6 +35,7 @@ interface DayRow {
 }
 
 export default function ShiftPlannerPage() {
+  const { slotEl } = useHeaderSlot();
   const [empFkey, setEmpFkey] = useState('');
   const [month, setMonth] = useState(currentMonth());
   const [changes, setChanges] = useState<Record<string, number>>({});
@@ -57,73 +69,89 @@ export default function ShiftPlannerPage() {
   const days = data?.days ?? [];
   const shiftOptions = data?.shiftOptions ?? [];
 
-  return (
-    <div className="p-6">
-      <h1 className="text-xl font-semibold mb-4">Shift Planner</h1>
+  const columns: ColumnDef<DayRow, unknown>[] = [
+    { accessorKey: 'date', header: 'Date' },
+    {
+      id: 'shift',
+      header: 'Shift',
+      cell: ({ row }) => {
+        const currentShiftId = changes[row.original.date] ?? row.original.shiftId;
+        return (
+          <select
+            value={currentShiftId ?? ''}
+            disabled={data?.locked}
+            onClick={(e) => e.stopPropagation()}
+            onChange={(e) => setChanges((prev) => ({ ...prev, [row.original.date]: Number(e.target.value) }))}
+            className={INPUT_CLASS}
+          >
+            {shiftOptions.map((s) => (
+              <option key={s.dayTimeSeq} value={s.dayTimeSeq}>{s.label}{s.dayTimeSeq === shiftOptions[0]?.dayTimeSeq ? ' (Primary)' : ''}</option>
+            ))}
+          </select>
+        );
+      },
+    },
+    {
+      id: 'timings',
+      header: 'Shift Timings',
+      cell: ({ row }) => {
+        const currentShiftId = changes[row.original.date] ?? row.original.shiftId;
+        const shift = shiftOptions.find((s) => s.dayTimeSeq === currentShiftId);
+        return <span className="text-slate-500">{shift ? `${shift.onDuty} - ${shift.offDuty}` : ''}</span>;
+      },
+    },
+  ];
 
-      <div className="flex flex-wrap items-end gap-3 mb-4">
-        <div className="w-72">
-          <label className="block text-xs text-gray-500 mb-1">Employee</label>
+  return (
+    <div>
+      {slotEl &&
+        createPortal(
+          <div className="min-w-0">
+            <h1 className="font-heading text-2xl font-bold text-[#0F172A] tracking-tight leading-tight truncate">
+              Shift Planner
+            </h1>
+            <p className="text-sm text-[#64748B] mt-0.5 truncate">
+              Plan and adjust an employee&apos;s daily shift roster
+            </p>
+          </div>,
+          slotEl
+        )}
+
+      <div className="surface-card rounded-xl px-4 py-2.5 mb-4 flex flex-wrap items-end gap-3">
+        <div className="w-64">
+          <label className="block text-[11.5px] font-medium text-slate-500 mb-1">Employee</label>
           <EmployeeSearch value={empFkey} onChange={setEmpFkey} />
         </div>
         <div>
-          <label className="block text-xs text-gray-500 mb-1">Month</label>
-          <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className="border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+          <label className="block text-[11.5px] font-medium text-slate-500 mb-1">Month</label>
+          <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className={INPUT_CLASS} />
         </div>
         <button
           onClick={() => save.mutate()}
           disabled={!empFkey || Object.keys(changes).length === 0 || save.isPending || data?.locked}
-          className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-medium"
+          className={cn(BTN_BASE, 'bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)] text-white')}
         >
-          <Save className="w-4 h-4" /> Save Roster
+          <Save className="w-3.5 h-3.5" /> Save Roster
         </button>
+        {message && <span className="text-[12.5px] text-slate-500">{message}</span>}
       </div>
 
-      {message && <div className="mb-4 text-sm bg-blue-50 text-blue-700 px-3 py-2 rounded-lg">{message}</div>}
       {data?.locked && (
-        <div className="mb-4 text-sm bg-amber-50 text-amber-700 px-3 py-2 rounded-lg">
+        <div className="mb-4 text-[12.5px] bg-[color:var(--color-highlight-light)] text-[color:var(--color-highlight-dark)] px-3.5 py-2 rounded-lg">
           Attendance already verified for this month — roster changes are locked. Un-verify attendance first to make changes.
         </div>
       )}
 
-      {!empFkey && <p className="text-sm text-gray-400">Select an employee to view their roster.</p>}
-      {empFkey && isLoading && <p className="text-sm text-gray-400">Loading…</p>}
-      {empFkey && !isLoading && days.length > 0 && (
-        <table className="w-full text-sm border border-gray-200 rounded-lg overflow-hidden">
-          <thead>
-            <tr className="bg-gray-50 text-left">
-              <th className="p-2">Date</th>
-              <th className="p-2">Shift</th>
-              <th className="p-2">Shift Timings</th>
-            </tr>
-          </thead>
-          <tbody>
-            {days.map((day) => {
-              const currentShiftId = changes[day.date] ?? day.shiftId;
-              const shift = shiftOptions.find((s) => s.dayTimeSeq === currentShiftId);
-              const isPrimary = day.shiftId === shiftOptions[0]?.dayTimeSeq;
-              const changed = currentShiftId !== day.shiftId;
-              return (
-                <tr key={day.date} className={`border-t border-gray-100 ${changed ? 'bg-blue-50' : ''}`}>
-                  <td className="p-2">{day.date}</td>
-                  <td className="p-2">
-                    <select
-                      value={currentShiftId ?? ''}
-                      disabled={data?.locked}
-                      onChange={(e) => setChanges((prev) => ({ ...prev, [day.date]: Number(e.target.value) }))}
-                      className="border border-gray-300 rounded px-2 py-1 text-sm"
-                    >
-                      {shiftOptions.map((s) => (
-                        <option key={s.dayTimeSeq} value={s.dayTimeSeq}>{s.label}{s.dayTimeSeq === shiftOptions[0]?.dayTimeSeq ? ' (Primary)' : ''}</option>
-                      ))}
-                    </select>
-                  </td>
-                  <td className="p-2 text-gray-500">{shift ? `${shift.onDuty} - ${shift.offDuty}` : isPrimary ? '' : ''}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+      {!empFkey ? (
+        <p className="text-[12.5px] text-slate-400">Select an employee to view their roster.</p>
+      ) : (
+        <DataTable
+          data={days}
+          columns={columns}
+          pageSize={31}
+          isLoading={isLoading}
+          isRowSelected={(row) => (changes[row.date] ?? row.shiftId) !== row.shiftId}
+        />
       )}
     </div>
   );

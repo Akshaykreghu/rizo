@@ -1,14 +1,24 @@
 'use client';
 
 import { useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { Download, Upload, ArrowLeft } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
+
+const INPUT_CLASS =
+  'border border-slate-200 bg-white rounded-[9px] px-2.5 py-1.5 text-[12.5px] text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/25 focus:border-[color:var(--color-primary)] transition-colors';
+
+const BTN_BASE =
+  'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[9px] text-[12.5px] font-semibold shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
 
 interface BranchOption { branch_code: string; branch_name: string }
 interface UploadResult { inserted: number; errors: { row: number; message: string }[] }
 
 export default function ImportEmployeePage() {
+  const { slotEl } = useHeaderSlot();
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [branch, setBranch] = useState('');
@@ -40,27 +50,39 @@ export default function ImportEmployeePage() {
 
   return (
     <div>
+      {slotEl &&
+        createPortal(
+          <div className="min-w-0">
+            <h1 className="font-heading text-2xl font-bold text-[#0F172A] tracking-tight leading-tight truncate">
+              Import Employee
+            </h1>
+            <p className="text-sm text-[#64748B] mt-0.5 truncate">
+              Bulk-create active employees from a spreadsheet
+            </p>
+          </div>,
+          slotEl
+        )}
+
       <button
         onClick={() => router.push('/employees')}
-        className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 mb-5 transition-colors"
+        className="flex items-center gap-1.5 text-[12.5px] text-slate-500 hover:text-slate-800 mb-4 transition-colors"
       >
-        <ArrowLeft className="w-4 h-4" /> Back to Employees
+        <ArrowLeft className="w-3.5 h-3.5" /> Back to Employees
       </button>
 
-      <h1 className="text-2xl font-semibold text-gray-900 mb-2">Import Employee</h1>
-      <p className="text-sm text-gray-500 mb-6 max-w-xl">
-        Bulk-create employees directly from a spreadsheet. Unlike Employee Join, imported rows become
-        active employees immediately — no separate onboarding step. Choose a branch, then upload a
-        filled-in copy of the template below; every row in the file is created under that branch.
+      <p className="text-[12.5px] text-slate-500 mb-4 max-w-xl">
+        Unlike Employee Join, imported rows become active employees immediately — no separate
+        onboarding step. Choose a branch, then upload a filled-in copy of the template below; every
+        row in the file is created under that branch.
       </p>
 
-      <div className="bg-white rounded-xl border border-gray-200 p-6 max-w-xl space-y-5">
+      <div className="surface-card rounded-xl px-4 py-4 max-w-xl space-y-3">
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Branch</label>
+          <label className="block text-[11.5px] font-medium text-slate-500 mb-1">Branch</label>
           <select
             value={branch}
             onChange={(e) => setBranch(e.target.value)}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            className={cn(INPUT_CLASS, 'w-full')}
           >
             <option value="">Select branch</option>
             {branches.map((b) => <option key={b.branch_code} value={b.branch_code}>{b.branch_name}</option>)}
@@ -70,36 +92,36 @@ export default function ImportEmployeePage() {
         <div className="flex items-center gap-2">
           <a
             href="/api/employees/import/template"
-            className="flex items-center gap-1.5 text-sm text-gray-600 hover:text-gray-900 px-3 py-2 rounded-lg hover:bg-gray-100 transition-colors border border-gray-200"
+            className={cn(BTN_BASE, 'bg-white border border-slate-200 hover:bg-slate-50 text-slate-600')}
           >
-            <Download className="w-4 h-4" /> Download Template
+            <Download className="w-3.5 h-3.5" /> Download Template
           </a>
           <button
             onClick={() => fileInputRef.current?.click()}
             disabled={!branch || upload.isPending}
-            className="flex items-center gap-1.5 text-sm text-white bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 px-3 py-2 rounded-lg transition-colors"
+            className={cn(BTN_BASE, 'bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)] text-white')}
           >
-            <Upload className="w-4 h-4" /> {upload.isPending ? 'Uploading…' : 'Upload File'}
+            <Upload className="w-3.5 h-3.5" /> {upload.isPending ? 'Uploading…' : 'Upload File'}
           </button>
           <input ref={fileInputRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleFileSelected} />
         </div>
-        {!branch && <p className="text-xs text-gray-400">Select a branch before uploading.</p>}
-        {upload.isError && <p className="text-sm text-red-500">{String(upload.error)}</p>}
+        {!branch && <p className="text-[11.5px] text-slate-400">Select a branch before uploading.</p>}
+        {upload.isError && <p className="text-[12.5px] text-[color:var(--color-danger)]">{String(upload.error)}</p>}
       </div>
 
       {result && (
-        <div className="mt-5 p-4 rounded-lg border border-gray-200 bg-gray-50 text-sm max-w-xl">
+        <div className="mt-4 surface-card rounded-xl px-4 py-3 text-[12.5px] max-w-xl">
           <div className="flex items-center justify-between">
             <span>
-              <span className="font-medium text-emerald-700">{result.inserted} employee{result.inserted === 1 ? '' : 's'} created</span>
+              <span className="font-medium text-[color:var(--color-success-dark)]">{result.inserted} employee{result.inserted === 1 ? '' : 's'} created</span>
               {result.errors.length > 0 && (
-                <span className="text-red-600 ml-2">{result.errors.length} row(s) skipped</span>
+                <span className="text-[color:var(--color-danger)] ml-2">{result.errors.length} row(s) skipped</span>
               )}
             </span>
-            <button onClick={() => setResult(null)} className="text-gray-400 hover:text-gray-600 text-xs">Dismiss</button>
+            <button onClick={() => setResult(null)} className="text-slate-400 hover:text-slate-600 text-[11.5px]">Dismiss</button>
           </div>
           {result.errors.length > 0 && (
-            <ul className="mt-2 space-y-0.5 text-xs text-red-600">
+            <ul className="mt-2 space-y-0.5 text-[11.5px] text-[color:var(--color-danger)]">
               {result.errors.map((err, i) => (
                 <li key={i}>Row {err.row}: {err.message}</li>
               ))}

@@ -47,6 +47,7 @@ export function NewJoinForm({ onBack, onCreated, showBackLink = true }: NewJoinF
     e.preventDefault();
     const validationError = dobError(form.date_of_birth) || mobileError(form.mobile_no) || aadhaarError(form.id_card);
     if (validationError) { setError(validationError); return; }
+    if (!form.classification) { setError('Gender is required'); return; }
     setSaving(true);
     setError('');
     try {
@@ -95,8 +96,8 @@ export function NewJoinForm({ onBack, onCreated, showBackLink = true }: NewJoinF
               <input required type="date" max={new Date().toISOString().slice(0, 10)} className="input" {...f('date_of_birth')} />
             </div>
             <div>
-              <label className="label">Gender</label>
-              <select className="input" {...f('classification')}>
+              <label className="label">Gender <span className="text-red-500">*</span></label>
+              <select required className="input" {...f('classification')}>
                 <option value="">Select gender</option>
                 <option value="male">Male</option>
                 <option value="female">Female</option>

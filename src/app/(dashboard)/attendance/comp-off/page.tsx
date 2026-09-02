@@ -1,8 +1,10 @@
 'use client';
 
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useQuery } from '@tanstack/react-query';
 import { EmployeeSearch } from '@/components/employees/EmployeeSearch';
+import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
 
 interface MonthCount { month_year: string; days: number }
 
@@ -16,6 +18,7 @@ interface CompOffData {
 }
 
 export default function CompOffPage() {
+  const { slotEl } = useHeaderSlot();
   const [empFkey, setEmpFkey] = useState('');
 
   const { data, isLoading, error } = useQuery<CompOffData>({
@@ -28,55 +31,66 @@ export default function CompOffPage() {
   });
 
   return (
-    <div className="p-6">
-      <h1 className="text-xl font-semibold mb-4">Comp Off</h1>
+    <div>
+      {slotEl &&
+        createPortal(
+          <div className="min-w-0">
+            <h1 className="font-heading text-2xl font-bold text-[#0F172A] tracking-tight leading-tight truncate">
+              Comp Off
+            </h1>
+            <p className="text-sm text-[#64748B] mt-0.5 truncate">
+              Compensatory-off earned and used, by employee
+            </p>
+          </div>,
+          slotEl
+        )}
 
-      <div className="w-72 mb-6">
-        <label className="block text-xs text-gray-500 mb-1">Employee</label>
+      <div className="surface-card rounded-xl px-4 py-2.5 mb-4 w-72">
+        <label className="block text-[11.5px] font-medium text-slate-500 mb-1">Employee</label>
         <EmployeeSearch value={empFkey} onChange={setEmpFkey} />
       </div>
 
-      {!empFkey && <p className="text-sm text-gray-400">Select an employee to view their comp-off report.</p>}
-      {empFkey && isLoading && <p className="text-sm text-gray-400">Loading…</p>}
-      {empFkey && error && <p className="text-sm text-red-600">{String((error as Error).message)}</p>}
+      {!empFkey && <p className="text-[12.5px] text-slate-400">Select an employee to view their comp-off report.</p>}
+      {empFkey && isLoading && <p className="text-[12.5px] text-slate-400">Loading…</p>}
+      {empFkey && error && <p className="text-[12.5px] text-[color:var(--color-danger)]">{String((error as Error).message)}</p>}
 
       {data && (
         <div>
-          <div className="grid grid-cols-2 gap-6 mb-6 text-sm">
-            <div className="border border-gray-200 rounded-lg p-4">
-              <p className="text-gray-400 text-xs mb-1">Employee</p>
-              <p className="font-medium">{data.employee.name} <span className="text-gray-400">({data.employee.empId})</span></p>
-              <p className="text-gray-500">{data.employee.designation} · {data.employee.department}</p>
-              <p className="text-gray-500">{data.employee.branch}</p>
+          <div className="grid grid-cols-2 gap-4 mb-4">
+            <div className="glass-card rounded-2xl p-4">
+              <p className="text-slate-400 text-[11px] mb-1">Employee</p>
+              <p className="text-sm font-medium text-[#0F172A]">{data.employee.name} <span className="text-slate-400">({data.employee.empId})</span></p>
+              <p className="text-[12.5px] text-slate-500">{data.employee.designation} · {data.employee.department}</p>
+              <p className="text-[12.5px] text-slate-500">{data.employee.branch}</p>
             </div>
-            <div className="border border-gray-200 rounded-lg p-4">
-              <p className="text-gray-400 text-xs mb-1">Balance (Earned − Used)</p>
-              <p className="text-2xl font-semibold">{data.balance}</p>
-              <p className="text-gray-500 text-xs">Earned {data.totalEarned} · Used {data.totalUsed}</p>
+            <div className="glass-card rounded-2xl p-4">
+              <p className="text-slate-400 text-[11px] mb-1">Balance (Earned − Used)</p>
+              <p className="text-2xl font-semibold text-[#0F172A]">{data.balance}</p>
+              <p className="text-slate-500 text-[11.5px]">Earned {data.totalEarned} · Used {data.totalUsed}</p>
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-6">
-            <div>
-              <h2 className="font-semibold text-sm mb-2">Used</h2>
-              <table className="w-full text-sm border border-gray-200 rounded-lg overflow-hidden">
-                <thead><tr className="bg-gray-50 text-left"><th className="p-2">Month</th><th className="p-2">Days</th></tr></thead>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="glass-card rounded-2xl p-4">
+              <h2 className="text-[13.5px] font-semibold text-slate-600 uppercase tracking-wide mb-3">Used</h2>
+              <table className="w-full text-[13px]">
+                <thead><tr className="text-left text-[11px] font-semibold text-slate-400 uppercase tracking-wide"><th className="pb-1.5">Month</th><th className="pb-1.5">Days</th></tr></thead>
                 <tbody>
-                  {data.used.length === 0 && <tr><td colSpan={2} className="p-2 text-gray-400 text-xs">None</td></tr>}
+                  {data.used.length === 0 && <tr><td colSpan={2} className="py-1.5 text-slate-400 text-[12px]">None</td></tr>}
                   {data.used.map((r) => (
-                    <tr key={r.month_year} className="border-t border-gray-100"><td className="p-2">{r.month_year}</td><td className="p-2">{r.days}</td></tr>
+                    <tr key={r.month_year} className="border-t border-slate-100"><td className="py-1.5 text-[#0F172A]">{r.month_year}</td><td className="py-1.5 text-[#0F172A]">{r.days}</td></tr>
                   ))}
                 </tbody>
               </table>
             </div>
-            <div>
-              <h2 className="font-semibold text-sm mb-2">Earned</h2>
-              <table className="w-full text-sm border border-gray-200 rounded-lg overflow-hidden">
-                <thead><tr className="bg-gray-50 text-left"><th className="p-2">Month</th><th className="p-2">Days</th></tr></thead>
+            <div className="glass-card rounded-2xl p-4">
+              <h2 className="text-[13.5px] font-semibold text-slate-600 uppercase tracking-wide mb-3">Earned</h2>
+              <table className="w-full text-[13px]">
+                <thead><tr className="text-left text-[11px] font-semibold text-slate-400 uppercase tracking-wide"><th className="pb-1.5">Month</th><th className="pb-1.5">Days</th></tr></thead>
                 <tbody>
-                  {data.earned.length === 0 && <tr><td colSpan={2} className="p-2 text-gray-400 text-xs">None</td></tr>}
+                  {data.earned.length === 0 && <tr><td colSpan={2} className="py-1.5 text-slate-400 text-[12px]">None</td></tr>}
                   {data.earned.map((r) => (
-                    <tr key={r.month_year} className="border-t border-gray-100"><td className="p-2">{r.month_year}</td><td className="p-2">{r.days}</td></tr>
+                    <tr key={r.month_year} className="border-t border-slate-100"><td className="py-1.5 text-[#0F172A]">{r.month_year}</td><td className="py-1.5 text-[#0F172A]">{r.days}</td></tr>
                   ))}
                 </tbody>
               </table>

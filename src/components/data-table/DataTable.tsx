@@ -29,6 +29,8 @@ interface DataTableProps<TData> {
   onRowClick?: (row: TData) => void;
   /** Highlights a row (e.g. for single-select) when it returns true. */
   isRowSelected?: (row: TData) => boolean;
+  /** Extra class names applied to a row's <tr>, layered on top of the default striping/hover. */
+  rowClassName?: (row: TData) => string | undefined;
 }
 
 function getPageNumbers(current: number, total: number): (number | '…')[] {
@@ -56,6 +58,7 @@ export function DataTable<TData>({
   className,
   onRowClick,
   isRowSelected,
+  rowClassName,
 }: DataTableProps<TData>) {
   const [sorting, setSorting] = useState<SortingState>([]);
   const [pagination, setPagination] = useState<PaginationState>({
@@ -153,7 +156,8 @@ export function DataTable<TData>({
                       selected
                         ? 'bg-[color:var(--color-primary)]/[0.07] shadow-[inset_2px_0_0_var(--color-primary)]'
                         : 'hover:bg-[color:var(--color-primary)]/[0.025]',
-                      onRowClick && 'cursor-pointer'
+                      onRowClick && 'cursor-pointer',
+                      rowClassName?.(row.original)
                     )}
                     onClick={() => onRowClick?.(row.original)}
                   >

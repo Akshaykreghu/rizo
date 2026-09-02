@@ -13,6 +13,17 @@ export interface ReportColumn {
   label: string;
 }
 
+/** Turns a report's {label,key}[] column list into ColumnDef[] for the shared DataTable. */
+export function toDataTableColumns(columns: ReportColumn[]): import('@tanstack/react-table').ColumnDef<Record<string, unknown>, unknown>[] {
+  return columns.map((c) => ({
+    id: c.key,
+    header: c.label,
+    accessorFn: (row: Record<string, unknown>) => row[c.key],
+    cell: ({ getValue }: { getValue: () => unknown }) => String(getValue() ?? ''),
+    meta: { className: 'whitespace-nowrap' },
+  }));
+}
+
 export function exportReportToExcel(columns: ReportColumn[], rows: Record<string, unknown>[], filename: string) {
   const data = rows.map((row) => {
     const out: Record<string, unknown> = {};

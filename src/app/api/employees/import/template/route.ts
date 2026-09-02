@@ -12,7 +12,7 @@ import * as XLSX from 'xlsx';
 export const TEMPLATE_HEADERS = [
   'First Name *', 'Last Name', 'Date of Birth * (yyyy-mm-dd)', 'Joining Date * (yyyy-mm-dd)',
   'Employee Type *', 'Designation *', 'Department *', 'Grade', 'Mobile Number', 'Email Address',
-  'Gender', 'Aadhaar No', 'PAN No',
+  'Gender *', 'Aadhaar No', 'PAN No',
 ];
 
 export async function GET() {

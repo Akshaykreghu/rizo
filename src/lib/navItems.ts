@@ -89,9 +89,7 @@ export const navItems: NavItem[] = [
     children: [
       { label: 'Process Payroll', href: '/payroll/process', description: 'Run payroll processing for the current cycle.' },
       { label: 'Approve Payroll', href: '/payroll/approve', description: 'Review and approve processed payroll before payout.' },
-      { label: 'Salary', href: '/setup/salary', description: 'Configure salary head categories, items and structure templates.' },
       { label: 'Increments', href: '/payroll/increments', description: 'Apply salary increments and revisions.' },
-      { label: 'Year-End Processing', href: '/payroll/year-end', description: 'Run year-end payroll closing and rollovers.' },
       { label: 'Form-16 Documents', href: '/taxation/form16', description: 'Generate and distribute employee Form-16s.' },
       { label: 'TDS Report', href: '/reports/tds', description: 'View tax deducted at source across employees.' },
     ],
@@ -146,6 +144,7 @@ export const navItems: NavItem[] = [
       { label: 'Leave', href: '/setup/leave', description: 'Leave types and accrual/policy rules.', section: 'Company Policies' },
       { label: 'Shift', href: '/setup/shift', description: 'Work shift timings and policy.', section: 'Company Policies' },
       { label: 'Salary', href: '/setup/salary', description: 'Salary head categories, items and structure templates.', section: 'Company Policies' },
+      { label: 'Year-End Processing', href: '/payroll/year-end', description: 'Run year-end payroll closing and rollovers.', section: 'Company Policies' },
 
       { label: 'Devices', href: '/setup/devices', description: 'Manage biometric devices and employee-device mapping.', section: 'Devices' },
     ],
