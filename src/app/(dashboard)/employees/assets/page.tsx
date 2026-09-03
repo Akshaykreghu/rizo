@@ -47,11 +47,18 @@ const ASSET_STATES = [
 
 const TODAY = new Date().toISOString().slice(0, 10);
 
-export default function AllocateAssetsPage() {
+interface AllocateAssetsPageProps {
+  /** When set, the page runs scoped to this one employee: no header title, no search, employee locked. */
+  embeddedEmpPkey?: number;
+  embeddedEmpName?: string;
+}
+
+export default function AllocateAssetsPage({ embeddedEmpPkey, embeddedEmpName }: AllocateAssetsPageProps = {}) {
+  const embedded = embeddedEmpPkey != null;
   const { slotEl } = useHeaderSlot();
   const queryClient = useQueryClient();
   const [showModal, setShowModal] = useState(false);
-  const [form, setForm] = useState({ emp_fkey: '', asset: '', allocated_date: '', asset_state: '1', description: '' });
+  const [form, setForm] = useState({ emp_fkey: embedded ? String(embeddedEmpPkey) : '', asset: '', allocated_date: '', asset_state: '1', description: '' });
   const [formError, setFormError] = useState('');
   const [editRow, setEditRow] = useState<AllocationRow | null>(null);
   const [editForm, setEditForm] = useState({ allocated_date: '', asset_state: '1', description: '' });
@@ -62,8 +69,10 @@ export default function AllocateAssetsPage() {
   const [searchInput, setSearchInput] = useState('');
 
   const { data, isLoading } = useQuery<{ data: AllocationRow[]; total: number }>({
-    queryKey: ['employees/assets', page, pageSize, search],
-    queryFn: () => fetch(`/api/employees/assets?page=${page}&pageSize=${pageSize}&search=${encodeURIComponent(search)}`).then((r) => r.json()),
+    queryKey: ['employees/assets', page, pageSize, search, embeddedEmpPkey ?? null],
+    queryFn: () => fetch(
+      `/api/employees/assets?page=${page}&pageSize=${pageSize}&search=${encodeURIComponent(search)}${embedded ? `&emp_fkey=${embeddedEmpPkey}` : ''}`
+    ).then((r) => r.json()),
   });
 
   function handleSearch(e: React.FormEvent) {
@@ -90,7 +99,7 @@ export default function AllocateAssetsPage() {
       queryClient.invalidateQueries({ queryKey: ['employees/assets'] });
       queryClient.invalidateQueries({ queryKey: ['assets'] });
       setShowModal(false);
-      setForm({ emp_fkey: '', asset: '', allocated_date: '', asset_state: '1', description: '' });
+      setForm({ emp_fkey: embedded ? String(embeddedEmpPkey) : '', asset: '', allocated_date: '', asset_state: '1', description: '' });
     },
   });
 
@@ -209,7 +218,7 @@ export default function AllocateAssetsPage() {
 
   return (
     <div>
-      {slotEl &&
+      {!embedded && slotEl &&
         createPortal(
           <div className="min-w-0">
             <h1 className="font-heading text-2xl font-bold text-[#0F172A] tracking-tight leading-tight truncate">
@@ -222,22 +231,28 @@ export default function AllocateAssetsPage() {
           slotEl
         )}
 
+      {embedded && (
+        <h2 className="font-heading text-[20px] font-bold text-[#0F172A] tracking-tight mb-4">Allocate Assets</h2>
+      )}
+
       <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
-        <form onSubmit={handleSearch} className="flex gap-2 max-w-sm flex-1">
-          <div className="relative flex-1">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
-            <input
-              type="text"
-              placeholder="Search by employee name or ID"
-              value={searchInput}
-              onChange={(e) => setSearchInput(e.target.value)}
-              className={cn(INPUT_CLASS, 'w-full pl-8')}
-            />
-          </div>
-          <button type="submit" className={cn(BTN_BASE, 'bg-white border border-slate-200 hover:bg-slate-50 text-slate-600')}>
-            Search
-          </button>
-        </form>
+        {!embedded ? (
+          <form onSubmit={handleSearch} className="flex gap-2 max-w-sm flex-1">
+            <div className="relative flex-1">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Search by employee name or ID"
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+                className={cn(INPUT_CLASS, 'w-full pl-8')}
+              />
+            </div>
+            <button type="submit" className={cn(BTN_BASE, 'bg-white border border-slate-200 hover:bg-slate-50 text-slate-600')}>
+              Search
+            </button>
+          </form>
+        ) : <span />}
 
         <button
           onClick={() => setShowModal(true)}
@@ -282,7 +297,11 @@ export default function AllocateAssetsPage() {
             >
               <div>
                 <label className="block text-[12px] font-medium text-slate-600 mb-1.5">Employee <span className="text-[color:var(--color-danger)]">*</span></label>
-                <EmployeeSearch value={form.emp_fkey} onChange={(v) => setForm((f) => ({ ...f, emp_fkey: v }))} />
+                {embedded ? (
+                  <div className={cn(INPUT_CLASS, 'w-full bg-slate-50 text-slate-500')}>{embeddedEmpName}</div>
+                ) : (
+                  <EmployeeSearch value={form.emp_fkey} onChange={(v) => setForm((f) => ({ ...f, emp_fkey: v }))} />
+                )}
               </div>
               <div>
                 <label className="block text-[12px] font-medium text-slate-600 mb-1.5">Asset <span className="text-[color:var(--color-danger)]">*</span></label>

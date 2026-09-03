@@ -9,10 +9,11 @@ import {
   generateApprovedOvertimeReport,
   generateCheckinLogsReport,
   generateRegularisationReport,
+  generateNonPunchedReport,
 } from '@/lib/attendanceReports';
 import { NextRequest, NextResponse } from 'next/server';
 
-const TYPES = ['VerifiedAttendance', 'DetailedAttendance', 'OvertimeReport', 'Overtime', 'Dashboard', 'regularisation'] as const;
+const TYPES = ['VerifiedAttendance', 'DetailedAttendance', 'OvertimeReport', 'Overtime', 'Dashboard', 'regularisation', 'NonPunched'] as const;
 
 export async function POST(request: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -47,6 +48,10 @@ export async function POST(request: NextRequest) {
       case 'regularisation':
         if (!body.fromDate || !body.toDate) return NextResponse.json({ error: 'fromDate and toDate are required' }, { status: 400 });
         rows = await generateRegularisationReport(pool, { fromDate: body.fromDate, toDate: body.toDate, criteria });
+        break;
+      case 'NonPunched':
+        if (!body.fromDate || !body.toDate) return NextResponse.json({ error: 'fromDate and toDate are required' }, { status: 400 });
+        rows = await generateNonPunchedReport(pool, { fromDate: body.fromDate, toDate: body.toDate, criteria });
         break;
       default:
         if (!body.monthYear) return NextResponse.json({ error: 'monthYear is required' }, { status: 400 });

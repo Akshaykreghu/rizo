@@ -19,6 +19,7 @@ export async function GET(request: NextRequest) {
   const pool = await getCompanyPool(session.user.companyCode);
   const { searchParams } = new URL(request.url);
   const status = searchParams.get('status') ?? 'N';
+  const empFkey = searchParams.get('emp_fkey');
 
   const [rows] = await pool.execute<RowDataPacket[]>(
     `SELECT pr.promotion_pkey, pr.emp_fkey, pr.created_date, pr.approved_status, pr.approved_date,
@@ -42,9 +43,9 @@ export async function GET(request: NextRequest) {
      LEFT JOIN leavepolicy_group lp ON lp.LEAVEPOLICY_GROUP_ID = pr.\`leave\`
      LEFT JOIN salary_structure ss ON ss.structure_id = pr.salary
      LEFT JOIN emp_details mgr ON mgr.emp_pkey = pr.hierarch
-     WHERE pr.approved_status = ? AND pr.status = 1
+     WHERE pr.approved_status = ? AND pr.status = 1${empFkey ? ' AND pr.emp_fkey = ?' : ''}
      ORDER BY pr.promotion_pkey DESC`,
-    [status]
+    empFkey ? [status, empFkey] : [status]
   );
 
   return NextResponse.json(rows);

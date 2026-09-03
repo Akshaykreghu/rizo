@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useState } from 'react';
+import { Suspense, useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, PlayCircle, Eye, Trash2, AlertTriangle, Clock, UserX, ChevronDown, ChevronRight } from 'lucide-react';
@@ -115,13 +115,21 @@ function fmtDate(d: string | null | undefined) {
   return Number.isNaN(t.getTime()) ? '—' : t.toLocaleDateString();
 }
 
-function IncrementsContent() {
+interface IncrementsContentProps {
+  /** When set, render ONLY the Salary Update form (own <Modal>), pre-loaded for this employee. */
+  embeddedEmpPkey?: number;
+  /** Called when the embedded form is closed or saved, so the host can dismiss it. */
+  onClose?: () => void;
+}
+
+function IncrementsContent({ embeddedEmpPkey, onClose }: IncrementsContentProps = {}) {
+  const embedded = embeddedEmpPkey != null;
   const { slotEl } = useHeaderSlot();
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<TabKey>('due');
   const [dueFilter, setDueFilter] = useState<string>('');
-  const [showForm, setShowForm] = useState(false);
-  const [empId, setEmpId] = useState('');
+  const [showForm, setShowForm] = useState(embedded);
+  const [empId, setEmpId] = useState(embedded ? String(embeddedEmpPkey) : '');
   const [structureId, setStructureId] = useState('');
   const [newGross, setNewGross] = useState('');
   const [withEffectFrom, setWithEffectFrom] = useState('');
@@ -209,6 +217,17 @@ function IncrementsContent() {
     const allLines = [...s.structure, ...s.structure_indirect, ...s.emp_contribution];
     setCompNew(Object.fromEntries(allLines.map((c) => [c.salary_head_item_fkey, String(c.value)])));
   };
+
+  const closeForm = () => {
+    setShowForm(false);
+    onClose?.();
+  };
+
+  // Embedded (from the All Employees widget): auto-load the selected employee into the form.
+  useEffect(() => {
+    if (embedded) void loadEmployee(String(embeddedEmpPkey));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Current value per component — the full active-structure map (covers preview lines that fall
   // outside the three editable groups); falls back to the grouped lines if the map is absent.
@@ -373,6 +392,7 @@ function IncrementsContent() {
       setShowForm(false);
       resetForm();
       queryClient.invalidateQueries({ queryKey: ['payroll/increments'] });
+      if (embedded) onClose?.();
     },
     onError: (err: Error) => setMessage(err.message),
   });
@@ -526,7 +546,7 @@ function IncrementsContent() {
 
   return (
     <div>
-      {slotEl &&
+      {!embedded && slotEl &&
         createPortal(
           <div className="min-w-0">
             <h1 className="font-heading text-2xl font-bold text-[#0F172A] tracking-tight leading-tight truncate">
@@ -539,21 +559,23 @@ function IncrementsContent() {
           slotEl
         )}
 
-      <div className="flex items-center justify-end mb-4">
-        <button
-          onClick={() => { setShowForm(true); setMessage(null); }}
-          className={cn(BTN_BASE, 'bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)] text-white')}
-        >
-          <Plus className="w-3.5 h-3.5" />
-          Salary Update
-        </button>
-      </div>
+      {!embedded && (
+        <div className="flex items-center justify-end mb-4">
+          <button
+            onClick={() => { setShowForm(true); setMessage(null); }}
+            className={cn(BTN_BASE, 'bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)] text-white')}
+          >
+            <Plus className="w-3.5 h-3.5" />
+            Salary Update
+          </button>
+        </div>
+      )}
 
-      {message && <p className="text-[12.5px] text-slate-500 mb-4">{message}</p>}
+      {!embedded && message && <p className="text-[12.5px] text-slate-500 mb-4">{message}</p>}
 
       <Modal
         open={showForm}
-        onClose={() => setShowForm(false)}
+        onClose={closeForm}
         className="!max-w-[1160px] !p-0 !overflow-hidden flex flex-col"
       >
         {/* Header */}
@@ -590,13 +612,15 @@ function IncrementsContent() {
                 <p className="text-[13px] text-slate-500">
                   {[empStructure.emp.designation, empStructure.emp.branch, empStructure.emp.department].filter(Boolean).join(' · ') || '—'}
                 </p>
-                <button
-                  type="button"
-                  onClick={() => void loadEmployee('')}
-                  className="text-[12px] font-medium text-[color:var(--color-primary)] hover:text-[color:var(--color-primary-dark)] shrink-0"
-                >
-                  Change employee
-                </button>
+                {!embedded && (
+                  <button
+                    type="button"
+                    onClick={() => void loadEmployee('')}
+                    className="text-[12px] font-medium text-[color:var(--color-primary)] hover:text-[color:var(--color-primary-dark)] shrink-0"
+                  >
+                    Change employee
+                  </button>
+                )}
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 {[
@@ -846,8 +870,9 @@ function IncrementsContent() {
 
         {/* Sticky footer */}
         <div className="shrink-0 flex items-center justify-end gap-2.5 px-6 py-3.5 border-t border-slate-200 bg-slate-50/70">
+          {embedded && message && <span className="mr-auto text-[12px] text-[color:var(--color-danger-dark)]">{message}</span>}
           <button
-            onClick={() => setShowForm(false)}
+            onClick={closeForm}
             className={cn(BTN_BASE, 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50')}
           >
             Cancel
@@ -862,6 +887,8 @@ function IncrementsContent() {
         </div>
       </Modal>
 
+      {!embedded && (
+      <>
       <div className="sticky top-0 z-20 glass-card-strong rounded-xl px-3 py-2 flex items-center mb-4">
         <div className="flex items-center gap-1 flex-wrap text-[12.5px] bg-slate-900/[0.03] rounded-lg p-0.5">
           {TABS.map((t) => (
@@ -930,8 +957,10 @@ function IncrementsContent() {
           isLoading={isLoading}
         />
       )}
+      </>
+      )}
 
-      {viewId != null && (
+      {!embedded && viewId != null && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4" onClick={() => setViewId(null)}>
           <div className="bg-white rounded-xl shadow-xl max-w-3xl w-full max-h-[80vh] overflow-auto p-5" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-3">
@@ -984,10 +1013,10 @@ function IncrementsContent() {
   );
 }
 
-export default function IncrementsPage() {
+export default function IncrementsPage(props: IncrementsContentProps = {}) {
   return (
     <Suspense fallback={null}>
-      <IncrementsContent />
+      <IncrementsContent {...props} />
     </Suspense>
   );
 }

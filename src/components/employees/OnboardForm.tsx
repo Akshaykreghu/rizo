@@ -8,6 +8,14 @@ import { EmployeeSearch } from '@/components/employees/EmployeeSearch';
 interface SelectOption { value: string; label: string }
 interface JoinDetail { join: Record<string, string> }
 
+// Tolerant option mapper — see the useQuery block below for why this has to accept
+// raw API rows, {code, name} maps and {value, label} maps interchangeably.
+const opt = (codeKey: string, nameKey: string) => (rows: Record<string, unknown>[]): SelectOption[] =>
+  (rows ?? []).map((r) => ({
+    value: String(r[codeKey] ?? r.value ?? ''),
+    label: String(r[nameKey] ?? r.label ?? ''),
+  }));
+
 const EMPTY_FORM = {
   emp_company_id: '', username: '', password: '',
   joining_date: '', emp_branch: '', emp_dept: '', designation: '', emp_grade: '',
@@ -38,35 +46,36 @@ export function OnboardForm({ id, onBack, onOnboarded, showBackLink = true }: On
     },
   });
 
-  const { data: branches = [] } = useQuery<SelectOption[]>({
+  // These lookups share their queryKey (['setup/branches'], etc.) with other pages. React Query
+  // keys the cache by queryKey alone, and across the app the same key is filled with three
+  // different shapes: raw API rows, {branch_code, branch_name} maps, and {value, label} maps
+  // (useLookup/useSetupOptions). Whichever page loads first wins the cache entry, which is why
+  // this dropdown sometimes rendered blank <option>s. Keep queryFn raw and make `select`
+  // tolerant of every shape so render is correct regardless of load order.
+  const { data: branches = [] } = useQuery<Record<string, unknown>[], Error, SelectOption[]>({
     queryKey: ['setup/branches'],
-    queryFn: () => fetch('/api/setup/branches').then((r) => r.json()).then((rows: Record<string, unknown>[]) =>
-      rows.map((r) => ({ value: String(r.branch_code), label: String(r.branch_name) }))
-    ),
+    queryFn: () => fetch('/api/setup/branches').then((r) => r.json()),
+    select: opt('branch_code', 'branch_name'),
   });
-  const { data: departments = [] } = useQuery<SelectOption[]>({
+  const { data: departments = [] } = useQuery<Record<string, unknown>[], Error, SelectOption[]>({
     queryKey: ['setup/departments'],
-    queryFn: () => fetch('/api/setup/departments').then((r) => r.json()).then((rows: Record<string, unknown>[]) =>
-      rows.map((r) => ({ value: String(r.dept_code), label: String(r.dept_name) }))
-    ),
+    queryFn: () => fetch('/api/setup/departments').then((r) => r.json()),
+    select: opt('dept_code', 'dept_name'),
   });
-  const { data: designations = [] } = useQuery<SelectOption[]>({
+  const { data: designations = [] } = useQuery<Record<string, unknown>[], Error, SelectOption[]>({
     queryKey: ['setup/designations'],
-    queryFn: () => fetch('/api/setup/designations').then((r) => r.json()).then((rows: Record<string, unknown>[]) =>
-      rows.map((r) => ({ value: String(r.desig_code), label: String(r.desig_name) }))
-    ),
+    queryFn: () => fetch('/api/setup/designations').then((r) => r.json()),
+    select: opt('desig_code', 'desig_name'),
   });
-  const { data: grades = [] } = useQuery<SelectOption[]>({
+  const { data: grades = [] } = useQuery<Record<string, unknown>[], Error, SelectOption[]>({
     queryKey: ['setup/grades'],
-    queryFn: () => fetch('/api/setup/grades').then((r) => r.json()).then((rows: Record<string, unknown>[]) =>
-      rows.map((r) => ({ value: String(r.grade_code), label: String(r.grade_name) }))
-    ),
+    queryFn: () => fetch('/api/setup/grades').then((r) => r.json()),
+    select: opt('grade_code', 'grade_name'),
   });
-  const { data: structures = [] } = useQuery<SelectOption[]>({
+  const { data: structures = [] } = useQuery<Record<string, unknown>[], Error, SelectOption[]>({
     queryKey: ['setup/salary-structures'],
-    queryFn: () => fetch('/api/setup/salary-structures').then((r) => r.json()).then((rows: Record<string, unknown>[]) =>
-      rows.map((r) => ({ value: String(r.structure_id), label: String(r.structure_name) }))
-    ),
+    queryFn: () => fetch('/api/setup/salary-structures').then((r) => r.json()),
+    select: opt('structure_id', 'structure_name'),
   });
 
   function f(key: keyof typeof EMPTY_FORM) {

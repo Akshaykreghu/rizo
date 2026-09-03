@@ -141,6 +141,43 @@ export async function generateCheckinLogsReport(pool: Pool, params: CheckinLogsP
   return rows;
 }
 
+export interface NonPunchedParams {
+  fromDate: string;
+  toDate: string;
+  criteria: CriteriaSelections;
+}
+
+// Mirrors generatenonpunchedreport() — active employees with zero punches (in or out) anywhere in
+// the date range; a coverage/compliance report, not a per-day one (one row per employee, not per
+// missed day). Legacy's version queries the employee_info view; rewritten against emp_details to
+// match this file's own established convention (every other report here does the same). Legacy's
+// sibling generatenonattendancereport() is deliberately not ported — it's Site Attendance specific
+// (emp_site_detail_timeattandance/site_attendance_register), and Site Attendance is out of scope
+// per the earlier explicit decision to skip that subsystem.
+export async function generateNonPunchedReport(pool: Pool, params: NonPunchedParams) {
+  requireCriteria(params.criteria);
+  const { conditions, args } = buildCriteriaConditions(params.criteria, {
+    Units: 'ed.branch_code', EmployeeDetails: 'ed.emp_pkey',
+  });
+  const [rows] = await pool.execute<RowDataPacket[]>(
+    `SELECT ed.emp_pkey, ed.emp_id, CONCAT(ed.first_name, ' ', COALESCE(ed.last_name, '')) AS emp_name,
+            b.branch_name, d.dept_name
+     FROM emp_details ed
+     LEFT JOIN emp_proff ep ON ep.emp_fkey = ed.emp_pkey
+     LEFT JOIN branches b ON b.branch_code = ed.branch_code
+     LEFT JOIN department d ON d.dept_code = ep.emp_dept
+     WHERE ed.status = 1
+       AND ed.emp_id NOT IN (
+         SELECT DISTINCT da.emp_id FROM device_attandance da
+         WHERE DATE(da.LOGDATE) BETWEEN ? AND ? AND da.C1 IN ('in', 'out') AND da.status = 'Y'
+       )
+       AND ${conditions.join(' AND ')}
+     ORDER BY ed.emp_id`,
+    [params.fromDate, params.toDate, ...args]
+  );
+  return rows;
+}
+
 export interface RegularisationReportParams {
   fromDate: string;
   toDate: string;

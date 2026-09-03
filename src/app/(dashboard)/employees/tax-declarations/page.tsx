@@ -55,12 +55,20 @@ interface WorksheetData {
   slabs?: { from: number; to: number; percent: number; stdDeduction: number; rebate: number; cessPercent: number }[];
 }
 
-export default function TaxDeclarationsPage() {
+interface TaxDeclarationsPageProps {
+  /** When set, the page runs scoped to this one employee: no picker, no header title. */
+  embeddedEmpPkey?: number;
+}
+
+export default function TaxDeclarationsPage({ embeddedEmpPkey }: TaxDeclarationsPageProps = {}) {
+  const embedded = embeddedEmpPkey != null;
   const { slotEl } = useHeaderSlot();
   const { data: session } = useSession();
   const isAdmin = session?.user.userGroup === 1;
   const queryClient = useQueryClient();
-  const [empId, setEmpId] = useState('');
+  const [pickedEmpId, setPickedEmpId] = useState('');
+  const empId = embedded ? String(embeddedEmpPkey) : pickedEmpId;
+  const setEmpId = setPickedEmpId;
   const [drafts, setDrafts] = useState<Record<string, string>>({});
 
   const { data, isLoading } = useQuery<DeclarationData>({
@@ -212,7 +220,7 @@ export default function TaxDeclarationsPage() {
 
   return (
     <div>
-      {slotEl &&
+      {!embedded && slotEl &&
         createPortal(
           <div className="min-w-0">
             <h1 className="font-heading text-2xl font-bold text-[#0F172A] tracking-tight leading-tight truncate">
@@ -225,11 +233,17 @@ export default function TaxDeclarationsPage() {
           slotEl
         )}
 
-      <div className="surface-card rounded-xl px-4 py-2.5 mb-4 max-w-sm">
-        <EmployeeSearch value={empId} onChange={setEmpId} placeholder="Search employee by name or ID" />
-      </div>
+      {embedded && (
+        <h2 className="font-heading text-[20px] font-bold text-[#0F172A] tracking-tight mb-4">Income Tax Declarations</h2>
+      )}
 
-      {!empId && <p className="text-[12.5px] text-slate-400">Select an employee to view their tax declarations.</p>}
+      {!embedded && (
+        <div className="surface-card rounded-xl px-4 py-2.5 mb-4 max-w-sm">
+          <EmployeeSearch value={empId} onChange={setEmpId} placeholder="Search employee by name or ID" />
+        </div>
+      )}
+
+      {!embedded && !empId && <p className="text-[12.5px] text-slate-400">Select an employee to view their tax declarations.</p>}
       {empId && isLoading && <p className="text-[12.5px] text-slate-400">Loading…</p>}
 
       {data?.noFinYear && (

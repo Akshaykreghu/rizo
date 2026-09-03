@@ -9,6 +9,15 @@ import { EmployeeSearch } from '@/components/employees/EmployeeSearch';
 
 interface SelectOption { value: string; label: string }
 
+// Tolerant option mapper — the ['setup/*'] query keys are shared app-wide and get filled
+// with raw API rows, {code, name} maps or {value, label} maps depending on which page loads
+// first. Accept all three so these dropdowns never render blank <option>s.
+const opt = (codeKey: string, nameKey: string) => (rows: Record<string, unknown>[]): SelectOption[] =>
+  (rows ?? []).map((r) => ({
+    value: String(r[codeKey] ?? r.value ?? ''),
+    label: String(r[nameKey] ?? r.label ?? ''),
+  }));
+
 const EMPTY_FORM = {
   emp_id: '', first_name: '', last_name: '', date_of_birth: '',
   mobile_no: '', email: '',
@@ -27,35 +36,32 @@ export default function NewEmployeePage() {
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 
-  const { data: branches = [] } = useQuery<SelectOption[]>({
+  // Shared ['setup/*'] cache keys hold inconsistent shapes across the app — keep queryFn raw
+  // and shape per-component via the tolerant `opt` mapper (see its definition above).
+  const { data: branches = [] } = useQuery<Record<string, unknown>[], Error, SelectOption[]>({
     queryKey: ['setup/branches'],
-    queryFn: () => fetch('/api/setup/branches').then((r) => r.json()).then((rows: Record<string, unknown>[]) =>
-      rows.map((r) => ({ value: String(r.branch_code), label: String(r.branch_name) }))
-    ),
+    queryFn: () => fetch('/api/setup/branches').then((r) => r.json()),
+    select: opt('branch_code', 'branch_name'),
   });
-  const { data: departments = [] } = useQuery<SelectOption[]>({
+  const { data: departments = [] } = useQuery<Record<string, unknown>[], Error, SelectOption[]>({
     queryKey: ['setup/departments'],
-    queryFn: () => fetch('/api/setup/departments').then((r) => r.json()).then((rows: Record<string, unknown>[]) =>
-      rows.map((r) => ({ value: String(r.dept_code), label: String(r.dept_name) }))
-    ),
+    queryFn: () => fetch('/api/setup/departments').then((r) => r.json()),
+    select: opt('dept_code', 'dept_name'),
   });
-  const { data: designations = [] } = useQuery<SelectOption[]>({
+  const { data: designations = [] } = useQuery<Record<string, unknown>[], Error, SelectOption[]>({
     queryKey: ['setup/designations'],
-    queryFn: () => fetch('/api/setup/designations').then((r) => r.json()).then((rows: Record<string, unknown>[]) =>
-      rows.map((r) => ({ value: String(r.desig_code), label: String(r.desig_name) }))
-    ),
+    queryFn: () => fetch('/api/setup/designations').then((r) => r.json()),
+    select: opt('desig_code', 'desig_name'),
   });
-  const { data: grades = [] } = useQuery<SelectOption[]>({
+  const { data: grades = [] } = useQuery<Record<string, unknown>[], Error, SelectOption[]>({
     queryKey: ['setup/grades'],
-    queryFn: () => fetch('/api/setup/grades').then((r) => r.json()).then((rows: Record<string, unknown>[]) =>
-      rows.map((r) => ({ value: String(r.grade_code), label: String(r.grade_name) }))
-    ),
+    queryFn: () => fetch('/api/setup/grades').then((r) => r.json()),
+    select: opt('grade_code', 'grade_name'),
   });
-  const { data: structures = [] } = useQuery<SelectOption[]>({
+  const { data: structures = [] } = useQuery<Record<string, unknown>[], Error, SelectOption[]>({
     queryKey: ['setup/salary-structures'],
-    queryFn: () => fetch('/api/setup/salary-structures').then((r) => r.json()).then((rows: Record<string, unknown>[]) =>
-      rows.map((r) => ({ value: String(r.structure_id), label: String(r.structure_name) }))
-    ),
+    queryFn: () => fetch('/api/setup/salary-structures').then((r) => r.json()),
+    select: opt('structure_id', 'structure_name'),
   });
 
   async function handleSubmit(e: React.FormEvent) {

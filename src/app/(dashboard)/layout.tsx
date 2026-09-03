@@ -12,6 +12,9 @@ export default async function DashboardLayout({
 }) {
   const session = await getServerSession(authOptions);
   if (!session) redirect('/login');
+  // Employee-self-service logins (userGroup 2) get their own minimal shell instead of the
+  // full admin dashboard — every admin page/API route below rejects userGroup!==1 anyway.
+  if (session.user.userGroup !== 1) redirect('/ess');
 
   return (
     <HeaderSlotProvider>

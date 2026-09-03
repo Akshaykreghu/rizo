@@ -136,7 +136,14 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
   );
 }
 
-export default function ResignationsPage() {
+interface ResignationsPageProps {
+  /** When set, the page runs scoped to this one employee: no header title, no filters, employee locked. */
+  embeddedEmpPkey?: number;
+  embeddedEmpName?: string;
+}
+
+export default function ResignationsPage({ embeddedEmpPkey, embeddedEmpName }: ResignationsPageProps = {}) {
+  const embedded = embeddedEmpPkey != null;
   const { slotEl } = useHeaderSlot();
   const queryClient = useQueryClient();
   const [statusFilter, setStatusFilter] = useState('');
@@ -144,7 +151,9 @@ export default function ResignationsPage() {
   const [search, setSearch] = useState('');
   const [showNew, setShowNew] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
-  const [newForm, setNewForm] = useState<Record<string, string>>({ emp_fkey: '' });
+  const [newForm, setNewForm] = useState<Record<string, string>>(
+    embeddedEmpPkey != null ? { emp_fkey: String(embeddedEmpPkey) } : { emp_fkey: '' }
+  );
   const [lastWorkingDayTouched, setLastWorkingDayTouched] = useState(false);
   const [checklistFor, setChecklistFor] = useState<number | null>(null);
   const [checklistForm, setChecklistForm] = useState<Record<string, string>>({});
@@ -157,9 +166,11 @@ export default function ResignationsPage() {
   const [finalizeForm, setFinalizeForm] = useState<Record<string, string>>({});
 
   const { data = [], isLoading } = useQuery<ResignationRow[]>({
-    queryKey: ['resignations', statusFilter, search],
+    queryKey: ['resignations', statusFilter, search, embeddedEmpPkey ?? null],
     queryFn: () =>
-      fetch(`/api/resignations?status=${encodeURIComponent(statusFilter)}&search=${encodeURIComponent(search)}`).then((r) => r.json()),
+      fetch(
+        `/api/resignations?status=${encodeURIComponent(statusFilter)}&search=${encodeURIComponent(search)}${embedded ? `&emp_fkey=${embeddedEmpPkey}` : ''}`
+      ).then((r) => r.json()),
   });
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['resignations'] });
@@ -192,7 +203,7 @@ export default function ResignationsPage() {
       invalidate();
       setShowNew(false);
       setEditingId(null);
-      setNewForm({ emp_fkey: '' });
+      setNewForm({ emp_fkey: embedded ? String(embeddedEmpPkey) : '' });
       setLastWorkingDayTouched(false);
     },
   });
@@ -393,7 +404,7 @@ export default function ResignationsPage() {
 
   return (
     <div>
-      {slotEl &&
+      {!embedded && slotEl &&
         createPortal(
           <div className="min-w-0">
             <h1 className="font-heading text-2xl font-bold text-[#0F172A] tracking-tight leading-tight truncate">
@@ -406,6 +417,10 @@ export default function ResignationsPage() {
           slotEl
         )}
 
+      {embedded && (
+        <h2 className="font-heading text-[20px] font-bold text-[#0F172A] tracking-tight mb-4">Remove Employee</h2>
+      )}
+
       <div className="flex items-center justify-end mb-4">
         <button
           onClick={() => setShowNew(true)}
@@ -415,34 +430,36 @@ export default function ResignationsPage() {
         </button>
       </div>
 
-      <div className="surface-card rounded-xl px-4 py-2.5 mb-4 flex flex-wrap items-center gap-3">
-        <form onSubmit={handleSearch} className="flex gap-2 max-w-sm flex-1">
-          <div className="relative flex-1">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
-            <input
-              type="text"
-              placeholder="Search by name, ID, or reason"
-              value={searchInput}
-              onChange={(e) => setSearchInput(e.target.value)}
-              className={cn(INPUT_CLASS, 'pl-8')}
-            />
-          </div>
-          <button type="submit" className={cn(BTN_BASE, 'bg-white border border-slate-200 hover:bg-slate-50 text-slate-600')}>
-            Search
-          </button>
-        </form>
+      {!embedded && (
+        <div className="surface-card rounded-xl px-4 py-2.5 mb-4 flex flex-wrap items-center gap-3">
+          <form onSubmit={handleSearch} className="flex gap-2 max-w-sm flex-1">
+            <div className="relative flex-1">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Search by name, ID, or reason"
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+                className={cn(INPUT_CLASS, 'pl-8')}
+              />
+            </div>
+            <button type="submit" className={cn(BTN_BASE, 'bg-white border border-slate-200 hover:bg-slate-50 text-slate-600')}>
+              Search
+            </button>
+          </form>
 
-        <select
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-          className={cn(INPUT_CLASS, 'w-auto min-w-[160px]')}
-        >
-          <option value="">All Statuses</option>
-          {STATUS_OPTIONS.map((s) => (
-            <option key={s} value={s}>{s}</option>
-          ))}
-        </select>
-      </div>
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            className={cn(INPUT_CLASS, 'w-auto min-w-[160px]')}
+          >
+            <option value="">All Statuses</option>
+            {STATUS_OPTIONS.map((s) => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </select>
+        </div>
+      )}
 
       <DataTable data={data} columns={columns} pageSize={10} pageSizeOptions={[10, 20, 30, 50]} isLoading={isLoading} />
 
@@ -451,9 +468,11 @@ export default function ResignationsPage() {
           <form onSubmit={(e) => { e.preventDefault(); create.mutate(); }} className="space-y-4">
             <div>
               <label className={LABEL_CLASS}>Employee <span className="text-[color:var(--color-danger)]">*</span></label>
-              {editingId ? (
+              {editingId || embedded ? (
                 <p className="text-[13px] text-slate-700 bg-slate-50 rounded-lg px-3 py-2">
-                  {selectedEmp?.employee ? `${selectedEmp.employee.first_name} ${selectedEmp.employee.last_name ?? ''}` : '…'}
+                  {selectedEmp?.employee
+                    ? `${selectedEmp.employee.first_name} ${selectedEmp.employee.last_name ?? ''}`
+                    : embeddedEmpName ?? '…'}
                 </p>
               ) : (
                 <EmployeeSearch value={newForm.emp_fkey} onChange={(v) => setNewForm((f) => ({ ...f, emp_fkey: v }))} />

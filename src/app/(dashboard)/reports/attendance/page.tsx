@@ -10,7 +10,7 @@ import { cn } from '@/lib/utils';
 import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
 import { DataTable } from '@/components/data-table/DataTable';
 
-type ReportType = 'VerifiedAttendance' | 'DetailedAttendance' | 'OvertimeReport' | 'Overtime' | 'Dashboard' | 'regularisation';
+type ReportType = 'VerifiedAttendance' | 'DetailedAttendance' | 'OvertimeReport' | 'Overtime' | 'Dashboard' | 'regularisation' | 'NonPunched';
 
 const TYPE_META: Record<ReportType, { label: string; dateRange?: boolean; columns: ReportColumn[] }> = {
   VerifiedAttendance: {
@@ -61,6 +61,14 @@ const TYPE_META: Record<ReportType, { label: string; dateRange?: boolean; column
       { key: 'emp_name', label: 'Employee' }, { key: 'branch_name', label: 'Branch' },
       { key: 'att_date', label: 'Date' }, { key: 'direction', label: 'Direction' },
       { key: 'LOGTIME', label: 'Time' }, { key: 'approved', label: 'Status' }, { key: 'remarks', label: 'Remarks' },
+    ],
+  },
+  NonPunched: {
+    label: 'Non-Punched Report',
+    dateRange: true,
+    columns: [
+      { key: 'emp_id', label: 'Employee ID' }, { key: 'emp_name', label: 'Employee' },
+      { key: 'branch_name', label: 'Branch' }, { key: 'dept_name', label: 'Department' },
     ],
   },
 };

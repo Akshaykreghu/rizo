@@ -14,12 +14,17 @@ export async function GET(request: NextRequest) {
   const pool = await getCompanyPool(session.user.companyCode);
   const { searchParams } = new URL(request.url);
   const search = searchParams.get('search') ?? '';
+  const empFkey = searchParams.get('emp_fkey');
   const page = Math.max(1, parseInt(searchParams.get('page') ?? '1') || 1);
   const pageSize = Math.max(1, parseInt(searchParams.get('pageSize') ?? '25') || 25);
   const offset = (page - 1) * pageSize;
 
   const conditions: string[] = ["a.active = '1'"];
   const params: string[] = [];
+  if (empFkey) {
+    conditions.push('a.emp_fkey = ?');
+    params.push(empFkey);
+  }
   if (search) {
     conditions.push('(e.first_name LIKE ? OR e.last_name LIKE ? OR e.emp_id LIKE ?)');
     const like = `%${search}%`;

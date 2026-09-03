@@ -5,15 +5,19 @@ import { getAttPeriod, isLeaveAlreadyApplied } from '@/lib/attendance';
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket, ResultSetHeader } from 'mysql2';
 
-// Ports RegularisationController's live admin flow (adminindexnew/listadminregularizationnew),
-// admin-only per project decision (no employee self-service/hierarchy-manager actor in this pass).
+// Ports RegularisationController's live admin flow (adminindexnew/listadminregularizationnew).
+// Legacy has no manager-approval hierarchy for this (is_manager/parent on emp_details are unused
+// dead columns — confirmed, no controller reads them for routing), so employee self-service
+// submissions go straight into the same admin pending queue admin-raised ones do; userGroup 2
+// callers are scoped to their own emp_fkey on both GET and POST, admins see everyone.
 // Table: employee_regularaization (sic — matches legacy's real, misspelled table name).
 
 const STATUS_MAP: Record<string, string> = { pending: 'P', approved: 'A', rejected: 'R' };
 
 export async function GET(request: NextRequest) {
   const session = await getServerSession(authOptions);
-  if (!session || session.user.userGroup !== 1) {
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (session.user.userGroup !== 1 && !session.user.empFkey) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -28,9 +32,15 @@ export async function GET(request: NextRequest) {
 
   const conditions = ['er.att_date BETWEEN ? AND ?', 'er.status = 1'];
   const values: (string | number)[] = [period.start, period.end];
-  if (branch) {
-    conditions.push('ed.branch_code = ?');
-    values.push(branch);
+  if (session.user.userGroup === 1) {
+    if (branch) {
+      conditions.push('ed.branch_code = ?');
+      values.push(branch);
+    }
+  } else {
+    // Employee self-service: only ever your own requests, regardless of what's in the query string.
+    conditions.push('ed.emp_pkey = ?');
+    values.push(session.user.empFkey!);
   }
   if (status && STATUS_MAP[status]) {
     conditions.push('er.approved = ?');
@@ -53,14 +63,18 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   const session = await getServerSession(authOptions);
-  if (!session || session.user.userGroup !== 1) {
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (session.user.userGroup !== 1 && !session.user.empFkey) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   const body = await request.json();
-  const { empFkey, attDate, direction, logTime, remarks } = body as {
+  const { attDate, direction, logTime, remarks } = body as {
     empFkey: number; attDate: string; direction: 'in' | 'out'; logTime: string; remarks?: string;
   };
+  // Employee self-service can only ever raise a request for themselves — the emp_fkey comes from
+  // the session, not the request body, regardless of what a tampered payload sends.
+  const empFkey = session.user.userGroup === 1 ? body.empFkey : session.user.empFkey;
   if (!empFkey || !attDate || !direction || !logTime) {
     return NextResponse.json({ error: 'empFkey, attDate, direction and logTime are required' }, { status: 400 });
   }

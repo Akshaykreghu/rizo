@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { EmployeeSearch } from '@/components/employees/EmployeeSearch';
-import { Plus, Check, X } from 'lucide-react';
+import { Plus, Check, X, CheckCheck } from 'lucide-react';
 import type { ColumnDef } from '@tanstack/react-table';
 import { cn } from '@/lib/utils';
 import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
@@ -53,6 +53,7 @@ export default function RegularisationPage() {
   const [showRaise, setShowRaise] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [form, setForm] = useState({ empFkey: '', attDate: '', direction: 'in' as 'in' | 'out', logTime: '', remarks: '' });
+  const [checked, setChecked] = useState<Set<number>>(new Set());
 
   const { data: branches = [] } = useLookup('setup/branches', 'branch_code', (r) => String(r.branch_name));
 
@@ -98,7 +99,58 @@ export default function RegularisationPage() {
     onError: (err: Error) => setMessage(err.message),
   });
 
+  const bulkDecide = useMutation({
+    mutationFn: (vars: { decision: 'approve' | 'reject' }) =>
+      fetch('/api/attendance/regularisation/bulk-decide', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: Array.from(checked), decision: vars.decision }),
+      }).then(async (r) => {
+        const body = await r.json();
+        if (!r.ok) throw new Error(body.error ?? 'Failed to update requests');
+        return body as { succeeded: number[]; failed: { id: number; reason: string }[] };
+      }),
+    onSuccess: (body) => {
+      setChecked(new Set());
+      setMessage(
+        body.failed.length
+          ? `${body.succeeded.length} updated, ${body.failed.length} failed (${body.failed[0].reason})`
+          : `${body.succeeded.length} request(s) updated`
+      );
+      refetch();
+    },
+    onError: (err: Error) => setMessage(err.message),
+  });
+
+  const pendingRows = rows.filter((r) => r.approved === 'P');
+  const allPendingChecked = pendingRows.length > 0 && pendingRows.every((r) => checked.has(r.id));
+
   const columns: ColumnDef<RegRow, unknown>[] = [
+    ...(status === 'pending'
+      ? [{
+          id: 'select',
+          header: () => (
+            <input
+              type="checkbox"
+              checked={allPendingChecked}
+              onChange={(e) => setChecked(e.target.checked ? new Set(pendingRows.map((r) => r.id)) : new Set())}
+            />
+          ),
+          meta: { className: 'w-8' },
+          cell: ({ row }: { row: { original: RegRow } }) => (
+            <input
+              type="checkbox"
+              checked={checked.has(row.original.id)}
+              onClick={(e) => e.stopPropagation()}
+              onChange={(e) => setChecked((prev) => {
+                const next = new Set(prev);
+                if (e.target.checked) next.add(row.original.id); else next.delete(row.original.id);
+                return next;
+              })}
+            />
+          ),
+        } as ColumnDef<RegRow, unknown>]
+      : []),
     { id: 'employee', header: 'Employee', cell: ({ row }) => <>{row.original.first_name} {row.original.last_name} <span className="text-slate-400 text-[11px]">({row.original.emp_id})</span></> },
     { accessorKey: 'branch_name', header: 'Branch' },
     { accessorKey: 'att_date', header: 'Date' },
@@ -163,7 +215,25 @@ export default function RegularisationPage() {
           slotEl
         )}
 
-      <div className="flex items-center justify-end mb-4">
+      <div className="flex items-center justify-end gap-2 mb-4">
+        {checked.size > 0 && (
+          <>
+            <button
+              onClick={() => bulkDecide.mutate({ decision: 'approve' })}
+              disabled={bulkDecide.isPending}
+              className={cn(BTN_BASE, 'bg-[color:var(--color-success-soft)] text-[color:var(--color-success-dark)] hover:bg-[color:var(--color-success)]/20')}
+            >
+              <CheckCheck className="w-3.5 h-3.5" /> Approve ({checked.size})
+            </button>
+            <button
+              onClick={() => bulkDecide.mutate({ decision: 'reject' })}
+              disabled={bulkDecide.isPending}
+              className={cn(BTN_BASE, 'bg-[color:var(--color-danger)]/10 text-[color:var(--color-danger-dark)] hover:bg-[color:var(--color-danger)]/20')}
+            >
+              <X className="w-3.5 h-3.5" /> Reject ({checked.size})
+            </button>
+          </>
+        )}
         <button
           onClick={() => setShowRaise(true)}
           className={cn(BTN_BASE, 'bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)] text-white')}
@@ -175,18 +245,18 @@ export default function RegularisationPage() {
       <div className="surface-card rounded-xl px-4 py-2.5 mb-4 flex flex-wrap items-end gap-3">
         <div>
           <label className="block text-[11.5px] font-medium text-slate-500 mb-1">Month</label>
-          <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className={INPUT_CLASS} />
+          <input type="month" value={month} onChange={(e) => { setMonth(e.target.value); setChecked(new Set()); }} className={INPUT_CLASS} />
         </div>
         <div>
           <label className="block text-[11.5px] font-medium text-slate-500 mb-1">Branch</label>
-          <select value={branch} onChange={(e) => setBranch(e.target.value)} className={cn(INPUT_CLASS, 'min-w-[160px]')}>
+          <select value={branch} onChange={(e) => { setBranch(e.target.value); setChecked(new Set()); }} className={cn(INPUT_CLASS, 'min-w-[160px]')}>
             <option value="">All branches</option>
             {branches.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
         </div>
         <div>
           <label className="block text-[11.5px] font-medium text-slate-500 mb-1">Status</label>
-          <select value={status} onChange={(e) => setStatus(e.target.value)} className={INPUT_CLASS}>
+          <select value={status} onChange={(e) => { setStatus(e.target.value); setChecked(new Set()); }} className={INPUT_CLASS}>
             <option value="pending">Pending</option>
             <option value="approved">Approved</option>
             <option value="rejected">Rejected</option>

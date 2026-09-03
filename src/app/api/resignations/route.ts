@@ -20,9 +20,14 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const status = searchParams.get('status') ?? '';
   const search = searchParams.get('search') ?? '';
+  const empFkey = searchParams.get('emp_fkey');
 
   const conditions = ['rr.status = 1'];
   const values: (string | number)[] = [];
+  if (empFkey) {
+    conditions.push('rr.emp_fkey = ?');
+    values.push(empFkey);
+  }
   if (status) {
     conditions.push('rr.Resignation_status = ?');
     values.push(status);

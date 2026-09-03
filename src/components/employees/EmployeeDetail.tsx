@@ -24,12 +24,19 @@ const SECTION_ACCENT = {
 } as const;
 
 function useSetupOptions(path: string, codeKey: string, nameKey: string) {
-  return useQuery<SelectOption[]>({
+  // The ['setup/*'] query keys are shared app-wide and get filled with inconsistent shapes
+  // (raw API rows, {code, name} maps, {value, label} maps) depending on which page loads
+  // first — React Query keys the cache by queryKey alone, so the first writer wins and the
+  // others read a shape they can't render (blank <option>s). Cache the raw rows and shape
+  // per-component via `select`, falling back to value/label so any cached shape still renders.
+  return useQuery<Record<string, unknown>[], Error, SelectOption[]>({
     queryKey: [path],
-    queryFn: () =>
-      fetch(`/api/${path}`).then((r) => r.json()).then((rows: Record<string, unknown>[]) =>
-        rows.map((r) => ({ value: String(r[codeKey]), label: String(r[nameKey]) }))
-      ),
+    queryFn: () => fetch(`/api/${path}`).then((r) => r.json()),
+    select: (rows) =>
+      (rows ?? []).map((r) => ({
+        value: String(r[codeKey] ?? r.value ?? ''),
+        label: String(r[nameKey] ?? r.label ?? ''),
+      })),
   });
 }
 

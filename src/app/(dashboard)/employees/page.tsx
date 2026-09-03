@@ -1,9 +1,10 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import dynamic from 'next/dynamic';
+import { useQuery } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
-import { Plus, Search, UserX, UserCheck, Eye, KeyRound, ListTree } from 'lucide-react';
+import { Plus, Search, Eye, KeyRound, ListTree, Package, Receipt, TrendingUp, UserMinus, IndianRupee } from 'lucide-react';
 import { DataTable } from '@/components/data-table/DataTable';
 import { Avatar } from '@/components/ui/Avatar';
 import { Modal } from '@/components/ui/Modal';
@@ -11,6 +12,13 @@ import { FloatingActionPanel, type FloatingAction } from '@/components/ui/Floati
 import { EmployeeDetail } from '@/components/employees/EmployeeDetail';
 import { AccessManageModal } from '@/components/employees/AccessManageModal';
 import { MenuAllocationModal } from '@/components/employees/MenuAllocationModal';
+
+// Lazy-loaded so these heavy pages stay out of the main /employees bundle until a modal opens.
+const AllocateAssetsPage = dynamic(() => import('./assets/page'), { ssr: false });
+const TaxDeclarationsPage = dynamic(() => import('./tax-declarations/page'), { ssr: false });
+const PromotionApprovalPage = dynamic(() => import('./promotions/page'), { ssr: false });
+const ResignationsPage = dynamic(() => import('./resignations/page'), { ssr: false });
+const SalaryUpdatePage = dynamic(() => import('../payroll/increments/page'), { ssr: false });
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { cn, formatDate } from '@/lib/utils';
 import { STATUS_FILTERS } from '@/lib/statusFilters';
@@ -60,7 +68,6 @@ export default function EmployeesPage({
   onBranchChange,
 }: EmployeesPageProps) {
   const router = useRouter();
-  const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
   const [searchInput, setSearchInput] = useState('');
   const debouncedSearchInput = useDebouncedValue(searchInput, 300);
@@ -70,6 +77,11 @@ export default function EmployeesPage({
   const [modalOpen, setModalOpen] = useState(false);
   const [accessModalOpen, setAccessModalOpen] = useState(false);
   const [menuAllocationOpen, setMenuAllocationOpen] = useState(false);
+  const [assetsOpen, setAssetsOpen] = useState(false);
+  const [taxOpen, setTaxOpen] = useState(false);
+  const [promoOpen, setPromoOpen] = useState(false);
+  const [salaryOpen, setSalaryOpen] = useState(false);
+  const [removeOpen, setRemoveOpen] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
   const search = embedded ? (searchProp ?? '') : debouncedSearchInput;
@@ -100,16 +112,6 @@ export default function EmployeesPage({
     queryFn: () =>
       fetch(`/api/employees?page=${page}&pageSize=${pageSize}&search=${search}&status=${status}&branch=${branch}`)
         .then((r) => r.json()),
-  });
-
-  const toggleStatus = useMutation({
-    mutationFn: ({ empPkey, newStatus }: { empPkey: number; newStatus: number }) =>
-      fetch(`/api/employees/${empPkey}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: newStatus }),
-      }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['employees'] }),
   });
 
   const columns: ColumnDef<Employee, unknown>[] = [
@@ -193,31 +195,23 @@ export default function EmployeesPage({
   ];
 
   const selectedEmployee = data?.data?.find((e: Employee) => e.emp_pkey === selectedEmpPkey);
-  const panelActions: FloatingAction[] = selectedEmployee
-    ? [
-        { key: 'access', label: 'Manage Access', icon: KeyRound, variant: 'default', onClick: () => setAccessModalOpen(true) },
-        { key: 'menu-allocation', label: 'Menu Allocation', icon: ListTree, variant: 'default', onClick: () => setMenuAllocationOpen(true) },
-        ...(selectedEmployee.status === 2
-          ? []
-          : [
-              selectedEmployee.status === 1
-                ? {
-                    key: 'deactivate',
-                    label: 'Deactivate',
-                    icon: UserX,
-                    variant: 'danger' as const,
-                    onClick: () => toggleStatus.mutate({ empPkey: selectedEmployee.emp_pkey, newStatus: 0 }),
-                  }
-                : {
-                    key: 'activate',
-                    label: 'Activate',
-                    icon: UserCheck,
-                    variant: 'success' as const,
-                    onClick: () => toggleStatus.mutate({ empPkey: selectedEmployee.emp_pkey, newStatus: 1 }),
-                  },
-            ]),
-      ]
-    : [];
+  const selectedEmpName = selectedEmployee
+    ? `${selectedEmployee.first_name} ${selectedEmployee.last_name ?? ''} (${selectedEmployee.emp_id})`.replace(/\s+/g, ' ').trim()
+    : '';
+  // The action widget is only meaningful for active employees — hidden for inactive (status 0)
+  // and resigned/terminated (status 2).
+  const panelActions: FloatingAction[] =
+    selectedEmployee && selectedEmployee.status === 1
+      ? [
+          { key: 'access', label: 'Access', icon: KeyRound, variant: 'default', onClick: () => setAccessModalOpen(true) },
+          { key: 'menu-allocation', label: 'Menu', icon: ListTree, variant: 'default', onClick: () => setMenuAllocationOpen(true) },
+          { key: 'assets', label: 'Assets', icon: Package, variant: 'default', onClick: () => setAssetsOpen(true) },
+          { key: 'tax', label: 'Tax', icon: Receipt, variant: 'default', onClick: () => setTaxOpen(true) },
+          { key: 'promotion', label: 'Promotion', icon: TrendingUp, variant: 'default', onClick: () => setPromoOpen(true) },
+          { key: 'salary', label: 'Salary', icon: IndianRupee, variant: 'default', onClick: () => setSalaryOpen(true) },
+          { key: 'remove', label: 'Remove', icon: UserMinus, variant: 'danger-solid', onClick: () => setRemoveOpen(true) },
+        ]
+      : [];
 
   return (
     <div>
@@ -289,7 +283,7 @@ export default function EmployeesPage({
         isRowSelected={(row) => selectedEmpPkey === row.emp_pkey}
       />
 
-      <FloatingActionPanel visible={selectedEmpPkey !== null} actions={panelActions} />
+      <FloatingActionPanel visible={panelActions.length > 0} actions={panelActions} />
 
       <Modal open={modalOpen} onClose={() => setModalOpen(false)} className="max-w-[1100px] rounded-[22px]">
         {selectedEmpPkey !== null && (
@@ -312,6 +306,33 @@ export default function EmployeesPage({
           <MenuAllocationModal empPkey={selectedEmpPkey} onClose={() => setMenuAllocationOpen(false)} />
         )}
       </Modal>
+
+      <Modal open={assetsOpen} onClose={() => setAssetsOpen(false)} className="max-w-[1100px] rounded-[22px]">
+        {selectedEmpPkey !== null && (
+          <AllocateAssetsPage embeddedEmpPkey={selectedEmpPkey} embeddedEmpName={selectedEmpName} />
+        )}
+      </Modal>
+
+      <Modal open={taxOpen} onClose={() => setTaxOpen(false)} className="max-w-[1100px] rounded-[22px]">
+        {selectedEmpPkey !== null && <TaxDeclarationsPage embeddedEmpPkey={selectedEmpPkey} />}
+      </Modal>
+
+      <Modal open={promoOpen} onClose={() => setPromoOpen(false)} className="max-w-[1100px] rounded-[22px]">
+        {selectedEmpPkey !== null && (
+          <PromotionApprovalPage embeddedEmpPkey={selectedEmpPkey} embeddedEmpName={selectedEmpName} />
+        )}
+      </Modal>
+
+      <Modal open={removeOpen} onClose={() => setRemoveOpen(false)} className="max-w-[1100px] rounded-[22px]">
+        {selectedEmpPkey !== null && (
+          <ResignationsPage embeddedEmpPkey={selectedEmpPkey} embeddedEmpName={selectedEmpName} />
+        )}
+      </Modal>
+
+      {/* Salary Update brings its own full-screen <Modal>, so it is not wrapped here. */}
+      {salaryOpen && selectedEmpPkey !== null && (
+        <SalaryUpdatePage embeddedEmpPkey={selectedEmpPkey} onClose={() => setSalaryOpen(false)} />
+      )}
 
       {toast && (
         <div

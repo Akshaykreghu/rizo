@@ -102,7 +102,6 @@ export const MODULES: ModuleMeta[] = [
       { label: 'Register', href: '/attendance/register' },
       { label: 'Regularisation', href: '/attendance/regularisation' },
       { label: 'Shift Planner', href: '/attendance/shift-planner' },
-      { label: 'Overtime', href: '/attendance/overtime' },
     ],
   },
   {

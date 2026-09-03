@@ -1,7 +1,7 @@
 'use client';
 
 import { Suspense, useState } from 'react';
-import { signIn } from 'next-auth/react';
+import { signIn, getSession } from 'next-auth/react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
@@ -17,7 +17,7 @@ type LoginForm = z.infer<typeof loginSchema>;
 function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const callbackUrl = searchParams.get('callbackUrl') || '/dashboard';
+  const explicitCallbackUrl = searchParams.get('callbackUrl');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -55,7 +55,14 @@ function LoginForm() {
       return;
     }
 
-    router.push(callbackUrl);
+    // Route by role when no explicit destination was requested — admins to the full dashboard,
+    // employee self-service logins (userGroup 2) to their own minimal shell.
+    if (explicitCallbackUrl) {
+      router.push(explicitCallbackUrl);
+    } else {
+      const session = await getSession();
+      router.push(session?.user.userGroup === 1 ? '/dashboard' : '/ess');
+    }
     router.refresh();
   }
 

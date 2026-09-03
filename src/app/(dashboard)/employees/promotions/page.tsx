@@ -62,24 +62,38 @@ const STATUS_TABS = [
   { value: 'R', label: 'Rejected' },
 ];
 
-export default function PromotionApprovalPage() {
+interface PromotionApprovalPageProps {
+  /** When set, the page runs scoped to this one employee: no header title, list + create locked to them. */
+  embeddedEmpPkey?: number;
+  embeddedEmpName?: string;
+}
+
+export default function PromotionApprovalPage({ embeddedEmpPkey, embeddedEmpName }: PromotionApprovalPageProps = {}) {
+  const embedded = embeddedEmpPkey != null;
   const { slotEl } = useHeaderSlot();
   const queryClient = useQueryClient();
   const [statusTab, setStatusTab] = useState('N');
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [viewRow, setViewRow] = useState<PromotionRow | null>(null);
-  const [form, setForm] = useState<Record<string, string>>({ emp_fkey: '' });
+  const [form, setForm] = useState<Record<string, string>>(
+    embeddedEmpPkey != null ? { emp_fkey: String(embeddedEmpPkey), _emp_name: embeddedEmpName ?? '' } : { emp_fkey: '' }
+  );
+
+  const createSeed = (): Record<string, string> =>
+    embedded
+      ? { emp_fkey: String(embeddedEmpPkey), _emp_name: embeddedEmpName ?? '' }
+      : { emp_fkey: '' };
 
   function closeModal() {
     setShowModal(false);
     setEditingId(null);
-    setForm({ emp_fkey: '' });
+    setForm(createSeed());
   }
 
   function openCreate() {
     setEditingId(null);
-    setForm({ emp_fkey: '' });
+    setForm(createSeed());
     setShowModal(true);
   }
 
@@ -103,8 +117,9 @@ export default function PromotionApprovalPage() {
   }
 
   const { data = [], isLoading } = useQuery<PromotionRow[]>({
-    queryKey: ['promotions', statusTab],
-    queryFn: () => fetch(`/api/promotions?status=${statusTab}`).then((r) => r.json()),
+    queryKey: ['promotions', statusTab, embeddedEmpPkey ?? null],
+    queryFn: () =>
+      fetch(`/api/promotions?status=${statusTab}${embedded ? `&emp_fkey=${embeddedEmpPkey}` : ''}`).then((r) => r.json()),
   });
 
   const { data: designations = [] } = useLookup('setup/designations', 'desig_code', (r) => String(r.desig_name));
@@ -150,7 +165,7 @@ export default function PromotionApprovalPage() {
 
   return (
     <div>
-      {slotEl &&
+      {!embedded && slotEl &&
         createPortal(
           <div className="min-w-0">
             <h1 className="font-heading text-2xl font-bold text-[#0F172A] tracking-tight leading-tight truncate">
@@ -162,6 +177,10 @@ export default function PromotionApprovalPage() {
           </div>,
           slotEl
         )}
+
+      {embedded && (
+        <h2 className="font-heading text-[20px] font-bold text-[#0F172A] tracking-tight mb-4">Promotion Approval</h2>
+      )}
 
       <div className="flex items-center justify-end mb-4">
         <button
@@ -287,8 +306,8 @@ export default function PromotionApprovalPage() {
             <form onSubmit={(e) => { e.preventDefault(); create.mutate(); }} className="space-y-4">
               <div>
                 <label className="block text-[12px] font-medium text-slate-600 mb-1.5">Employee <span className="text-[color:var(--color-danger)]">*</span></label>
-                {editingId ? (
-                  <div className={cn(INPUT_CLASS, 'w-full bg-slate-50 text-slate-500')}>{form._emp_name}</div>
+                {editingId || embedded ? (
+                  <div className={cn(INPUT_CLASS, 'w-full bg-slate-50 text-slate-500')}>{form._emp_name || embeddedEmpName}</div>
                 ) : (
                   <EmployeeSearch value={form.emp_fkey} onChange={(v) => setForm((f) => ({ ...f, emp_fkey: v }))} />
                 )}
