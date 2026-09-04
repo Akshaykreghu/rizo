@@ -142,23 +142,42 @@ export async function saveStructureDetails(
       // procedure genuinely compares two real inputs (LEAST(structure_det_value,
       // formula-derived amount)); the value side must survive, not be overwritten by the
       // formula's result (SAL-014's actual root cause).
-      if (!d.formula) {
-        throw new FormulaError(`"${name}" needs a formula (it's set to Limit, which compares a Value against a formula). Open the Formula Builder to add one.`);
+      if (d.formula) {
+        const formulaValue = evaluateFormulaOrThrowHelpfully(d.formula, itemValues, exampleGross, name);
+        derivedPerc = exampleGross > 0 ? (formulaValue * 100) / exampleGross : 0;
+        calEquation = d.formula;
+        formulaDisplay = d.formula;
+        itemValues[token] = Math.min(detValue, formulaValue);
+      } else {
+        // No formula on a formula-bearing operator: persist the row verbatim the way legacy's
+        // savesalarystructuresetup() does (empty cal_equation/equation, perc derived from the
+        // value alone) instead of blocking the save. Legacy has never validated this — and
+        // ~200 migrated rows tenant-wide carry exactly this shape (operator 'formula'/'limit',
+        // empty calequation, value 0). They compute to 0 and are dropped by the breakup proc's
+        // own value<>0/perc<>0 cursor, so they stay invisible; a genuinely half-configured row
+        // (a real amount, no formula) still behaves as a manual entry of that amount, same as
+        // legacy. A *malformed* (non-empty, unparseable) formula still throws — that path is
+        // unchanged.
+        derivedPerc = exampleGross > 0 ? (detValue * 100) / exampleGross : 0;
+        calEquation = '';
+        formulaDisplay = '';
+        itemValues[token] = detValue;
       }
-      const formulaValue = evaluateFormulaOrThrowHelpfully(d.formula, itemValues, exampleGross, name);
-      derivedPerc = exampleGross > 0 ? (formulaValue * 100) / exampleGross : 0;
-      calEquation = d.formula;
-      formulaDisplay = d.formula;
-      itemValues[token] = Math.min(detValue, formulaValue);
     } else if (FORMULA_ONLY_OPERATORS.has(d.structure_det_operator)) {
-      if (!d.formula) {
-        throw new FormulaError(`"${name}" needs a formula (its calculation type requires one). Open the Formula Builder to add one, or switch it to Fixed Amount or Manually Entered instead.`);
+      if (d.formula) {
+        detValue = evaluateFormulaOrThrowHelpfully(d.formula, itemValues, exampleGross, name);
+        derivedPerc = exampleGross > 0 ? (detValue * 100) / exampleGross : 0;
+        calEquation = d.formula;
+        formulaDisplay = d.formula;
+        itemValues[token] = detValue;
+      } else {
+        // See the 'limit' branch above — legacy persists a formula-type row with no formula
+        // as-is rather than erroring; do the same.
+        derivedPerc = exampleGross > 0 ? (detValue * 100) / exampleGross : 0;
+        calEquation = '';
+        formulaDisplay = '';
+        itemValues[token] = detValue;
       }
-      detValue = evaluateFormulaOrThrowHelpfully(d.formula, itemValues, exampleGross, name);
-      derivedPerc = exampleGross > 0 ? (detValue * 100) / exampleGross : 0;
-      calEquation = d.formula;
-      formulaDisplay = d.formula;
-      itemValues[token] = detValue;
     } else {
       derivedPerc = exampleGross > 0 ? (detValue * 100) / exampleGross : 0;
     }

@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Pencil, PowerOff, Search, Calculator } from 'lucide-react';
+import { Plus, Pencil, PowerOff, Search, Eye } from 'lucide-react';
 import { formatCurrency } from '@/lib/utils';
 import { DataTable } from '@/components/data-table/DataTable';
 import { Modal } from '@/components/ui/Modal';
@@ -85,7 +85,7 @@ export function SalaryStructurePanel() {
             className="p-1.5 rounded hover:bg-gray-100 text-gray-500 hover:text-indigo-600 transition-colors"
             title="Preview breakup"
           >
-            <Calculator className="w-4 h-4" />
+            <Eye className="w-4 h-4" />
           </button>
           <button
             onClick={() => setModalTarget(row.original.structure_id)}
