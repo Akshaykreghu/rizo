@@ -23,7 +23,7 @@ export function SalaryStructurePanel() {
   const [deactivateConfirm, setDeactivateConfirm] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
-  const [activeOnly, setActiveOnly] = useState(false);
+  const [activeOnly, setActiveOnly] = useState(true);
   // 'new' | a structure id being edited | null (closed)
   const [modalTarget, setModalTarget] = useState<'new' | number | null>(null);
 
