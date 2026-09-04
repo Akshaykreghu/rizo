@@ -347,11 +347,15 @@ export async function alterSalaryStructure(
       ? new Date(proff.joining_date).toISOString().slice(0, 10)
       : '';
 
+    // Legacy reads $arr_shd[0] off a `GROUP BY emp_fkey` query; all of an employee's detail rows
+    // in one hike carry the same dates, so take the first row directly (a bare GROUP BY with
+    // non-aggregated selects is rejected under only_full_group_by, which this connection enables).
     const [[draftDates]] = await pool.execute<RowDataPacket[]>(
       `SELECT with_effect_from, next_increment_date, payout_month
        FROM salary_hike_details
        WHERE salary_hike_fkey = ? AND emp_fkey = ? AND status = 1
-       GROUP BY emp_fkey`,
+       ORDER BY salary_hike_details_pkey
+       LIMIT 1`,
       [hikePkey, empFkey]
     );
 

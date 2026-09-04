@@ -141,11 +141,13 @@ export async function POST(request: NextRequest) {
 
     const empPkey = result.insertId;
 
+    // Salary structure and CTC are not set from the employee form — matching legacy, they are
+    // allocated via Bulk Policies -> Salary and the CTC-upload step.
     if (body.joining_date || body.emp_branch || body.emp_dept || body.designation || body.emp_grade) {
       await connection.execute(
         `INSERT INTO emp_proff
-           (emp_fkey, joining_date, emp_branch, emp_dept, designation, emp_grade, emp_type, attr1, probation, structure_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           (emp_fkey, joining_date, emp_branch, emp_dept, designation, emp_grade, emp_type, attr1, probation)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           empPkey,
           body.joining_date ?? null,
@@ -156,22 +158,6 @@ export async function POST(request: NextRequest) {
           body.emp_type ?? null,
           body.attr1 ?? null,
           body.probation ? Number(body.probation) : null,
-          body.structure_id ? Number(body.structure_id) : null,
-        ]
-      );
-    }
-
-    if (body.emp_anual_ctc) {
-      await connection.execute(
-        `INSERT INTO emp_ctc_upload
-           (emp_fkey, emp_anual_ctc, emp_monthly_ctc, created_by, start_date_effective)
-         VALUES (?, ?, ?, ?, ?)`,
-        [
-          empPkey,
-          Number(body.emp_anual_ctc),
-          body.emp_monthly_ctc ? Number(body.emp_monthly_ctc) : null,
-          session.user.loginUserId,
-          body.joining_date || new Date().toISOString().slice(0, 10),
         ]
       );
     }

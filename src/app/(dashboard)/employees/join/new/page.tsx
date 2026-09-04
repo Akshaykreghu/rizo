@@ -1,15 +1,16 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { NewJoinForm } from '@/components/employees/NewJoinForm';
+import { JoinDetail } from '@/components/employees/JoinDetail';
 
 export default function NewJoinPage() {
   const router = useRouter();
 
   return (
-    <NewJoinForm
-      onBack={() => router.back()}
-      onCreated={(empJoinPkey) => router.push(`/employees/join/${empJoinPkey}`)}
+    <JoinDetail
+      onBack={() => router.push('/employees/join')}
+      onCreated={(empJoinPkey) => router.replace(`/employees/join/${empJoinPkey}`)}
+      onFinished={() => router.push('/employees/join')}
     />
   );
 }

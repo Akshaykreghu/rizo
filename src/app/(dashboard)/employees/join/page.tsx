@@ -11,7 +11,6 @@ import { Avatar } from '@/components/ui/Avatar';
 import { Modal } from '@/components/ui/Modal';
 import { FloatingActionPanel, type FloatingAction } from '@/components/ui/FloatingActionPanel';
 import { JoinDetail } from '@/components/employees/JoinDetail';
-import { NewJoinForm } from '@/components/employees/NewJoinForm';
 import { OnboardForm } from '@/components/employees/OnboardForm';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
@@ -56,7 +55,6 @@ export default function EmployeeJoinPage() {
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
-  const [newJoinOpen, setNewJoinOpen] = useState(false);
   const [onboardId, setOnboardId] = useState<number | null>(null);
   const [joinEditDirty, setJoinEditDirty] = useState(false);
 
@@ -102,12 +100,12 @@ export default function EmployeeJoinPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['employees/join'] }),
   });
 
+  // JoinDetail (create mode) calls this after step 1 is saved; adopt the new id so the same
+  // open modal continues into the remaining steps as an edit of that record.
   function handleJoinCreated(empJoinPkey: number) {
-    setNewJoinOpen(false);
+    setSelectedJoinId(empJoinPkey);
     queryClient.invalidateQueries({ queryKey: ['employees/join'] });
     queryClient.invalidateQueries({ queryKey: ['employees/join/count'] });
-    setSelectedJoinId(empJoinPkey);
-    setModalOpen(true);
   }
 
   function handleOnboarded() {
@@ -325,7 +323,7 @@ export default function EmployeeJoinPage() {
           <div className="flex items-center gap-2">
             <button
               key={`new-join-${tab}`}
-              onClick={() => setNewJoinOpen(true)}
+              onClick={() => { setSelectedJoinId(null); setJoinEditDirty(false); setModalOpen(true); }}
               className="cta-pulse flex items-center gap-1.5 bg-[color:var(--color-primary)] hover:bg-[#1E88E5] active:bg-[#1976D2] hover:scale-[1.03] active:scale-100 text-white px-3 py-1.5 rounded-[9px] text-[12.5px] font-semibold shadow-sm transition-all duration-[180ms]"
             >
               <Plus className="w-3.5 h-3.5" />
@@ -445,19 +443,16 @@ export default function EmployeeJoinPage() {
         <>
           <FloatingActionPanel visible={selectedJoinId !== null} actions={joinPanelActions} />
           <Modal open={modalOpen} onClose={closeJoinEditModal} className="max-w-[1000px] rounded-[22px]">
-            {selectedJoinId !== null && (
+            {modalOpen && (
               <JoinDetail
-                id={String(selectedJoinId)}
+                id={selectedJoinId !== null ? String(selectedJoinId) : undefined}
                 onBack={closeJoinEditModal}
                 showBackLink={false}
                 onDirtyChange={setJoinEditDirty}
+                onCreated={handleJoinCreated}
                 onFinished={() => setModalOpen(false)}
               />
             )}
-          </Modal>
-
-          <Modal open={newJoinOpen} onClose={() => setNewJoinOpen(false)}>
-            <NewJoinForm onBack={() => setNewJoinOpen(false)} onCreated={handleJoinCreated} showBackLink={false} />
           </Modal>
 
           <Modal open={onboardId !== null} onClose={() => setOnboardId(null)}>

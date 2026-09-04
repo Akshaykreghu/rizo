@@ -6,19 +6,12 @@ import { ArrowLeft } from 'lucide-react';
 import { EmployeeSearch } from '@/components/employees/EmployeeSearch';
 import { useSetupOptions } from '@/lib/setupOptions';
 
-interface SelectOption { value: string; label: string }
 interface JoinDetail { join: Record<string, string> }
-const opt = (codeKey: string, nameKey: string) => (rows: Record<string, unknown>[]): SelectOption[] =>
-  (rows ?? []).map((r) => ({
-    value: String(r[codeKey] ?? r.value ?? ''),
-    label: String(r[nameKey] ?? r.label ?? ''),
-  }));
 
 const EMPTY_FORM = {
   emp_company_id: '', username: '', password: '',
   joining_date: '', emp_branch: '', emp_dept: '', designation: '', emp_grade: '',
   emp_type: '', attr1: '', probation: '',
-  structure_id: '', emp_anual_ctc: '', emp_monthly_ctc: '',
 };
 
 interface OnboardFormProps {
@@ -48,7 +41,6 @@ export function OnboardForm({ id, onBack, onOnboarded, showBackLink = true }: On
   const { data: departments = [] } = useSetupOptions('setup/departments', 'dept_code', 'dept_name');
   const { data: designations = [] } = useSetupOptions('setup/designations', 'desig_code', 'desig_name');
   const { data: grades = [] } = useSetupOptions('setup/grades', 'grade_code', 'grade_name');
-  const { data: structures = [] } = useSetupOptions('setup/salary-structures', 'structure_id', 'structure_name');
 
   function f(key: keyof typeof EMPTY_FORM) {
     return {
@@ -182,28 +174,6 @@ export function OnboardForm({ id, onBack, onOnboarded, showBackLink = true }: On
                 value={form.attr1}
                 onChange={(empPkey) => setForm((prev) => ({ ...prev, attr1: empPkey }))}
               />
-            </div>
-          </div>
-        </section>
-
-        <section>
-          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Salary</h2>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="label">Salary Structure</label>
-              <select className="input" {...f('structure_id')}>
-                <option value="">Select structure</option>
-                {structures.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
-              </select>
-            </div>
-            <div />
-            <div>
-              <label className="label">Annual CTC</label>
-              <input type="number" className="input" {...f('emp_anual_ctc')} />
-            </div>
-            <div>
-              <label className="label">Monthly CTC</label>
-              <input type="number" className="input" {...f('emp_monthly_ctc')} />
             </div>
           </div>
         </section>

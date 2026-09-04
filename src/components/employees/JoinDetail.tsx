@@ -26,6 +26,17 @@ const DOCUMENT_TYPES = ['Aadhaar', 'PAN', 'Passport', 'Driving License', 'Voter 
 
 const PAGE_TURN_MS = 620;
 
+// Seed for "New Join" (create) mode — the full set of columns POST /api/employees/join
+// accepts. Y/N flags default to 'N'. Matches the former NewJoinForm's EMPTY_FORM.
+const EMPTY_FORM: Record<string, string> = {
+  first_name: '', last_name: '', date_of_birth: '', email: '', mobile_no: '', address: '',
+  id_card: '', pincode: '', district: '', state: '', blood: '', maritual_status: '',
+  guradian: '', relation_guardian: '', classification: '', nationality_id: '', country_origin: '',
+  bank: '', bank_branch: '', ifsc_code: '', account_no: '', pf: '', company_pf: '', previous_member_id: '',
+  esi_dispensary: '', esi: '', eps: 'N', pan_no: '', international_worker: 'N', locomotive: 'N',
+  hearing: 'N', visual: 'N', physical_handicap: 'N', wps_code: '', lwf_code: '', profile_image_url: '',
+};
+
 const STEPS = [
   { key: 'personal', label: 'Personal', title: 'Personal Details', subtitle: 'Basic personal information about the employee.', accent: 'var(--color-primary)', accentSoft: 'var(--color-primary-soft)' },
   { key: 'statutory', label: 'Statutory', title: 'Statutory Details', subtitle: 'PF, ESI, tax and compliance information.', accent: 'var(--color-accent)', accentSoft: 'var(--color-accent-soft)' },
@@ -46,7 +57,8 @@ function toFormState(join: Record<string, string>): Record<string, string> {
 }
 
 interface JoinDetailProps {
-  id: string;
+  /** Existing join record id. Omit for "New Join" (create) mode. */
+  id?: string;
   /** Called when the user wants to leave this view (navigate back or close a modal). */
   onBack: () => void;
   /** Set to false to hide the "Back" link, e.g. when a modal already provides a close control. */
@@ -55,12 +67,19 @@ interface JoinDetailProps {
   onDirtyChange?: (dirty: boolean) => void;
   /** Called once the final step has been saved successfully. Defaults to onBack. */
   onFinished?: () => void;
+  /** Create mode only: called with the new record's id after step 1 is saved. */
+  onCreated?: (empJoinPkey: number) => void;
 }
 
-export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onFinished }: JoinDetailProps) {
+export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onFinished, onCreated }: JoinDetailProps) {
   const queryClient = useQueryClient();
-  const [form, setForm] = useState<Record<string, string>>({});
-  const [savedSnapshot, setSavedSnapshot] = useState('');
+  const [createdId, setCreatedId] = useState<number | null>(null);
+  const effectiveId = id ?? (createdId != null ? String(createdId) : undefined);
+  const isCreate = !effectiveId;
+
+  const [form, setForm] = useState<Record<string, string>>(() => (id ? {} : { ...EMPTY_FORM }));
+  const [savedSnapshot, setSavedSnapshot] = useState(() => (id ? '' : JSON.stringify({ ...EMPTY_FORM })));
+  const [formError, setFormError] = useState('');
   const [docFile, setDocFile] = useState('');
   const [step, setStep] = useState(0);
   const [completed, setCompleted] = useState<Set<number>>(new Set());
@@ -70,6 +89,12 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
   const stepRef = useRef<HTMLDivElement>(null);
   const contentWrapperRef = useRef<HTMLDivElement>(null);
   const transitionTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Seed `form` from the server exactly once per record. Without this, the refetch that
+  // every "Save & Continue" triggers would clobber edits made on a later step.
+  const seeded = useRef(false);
+  // True while the `id` prop is catching up to an id we just created ourselves — that
+  // transition must NOT re-seed the form (it holds the values we just submitted).
+  const justCreated = useRef(false);
 
   useEffect(() => {
     return () => {
@@ -78,9 +103,10 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
   }, []);
 
   const { data, isLoading, isError } = useQuery<JoinDetailData>({
-    queryKey: ['employees/join', id],
+    queryKey: ['employees/join', effectiveId],
+    enabled: !!effectiveId,
     queryFn: async () => {
-      const res = await fetch(`/api/employees/join/${id}`);
+      const res = await fetch(`/api/employees/join/${effectiveId}`);
       if (!res.ok) throw new Error((await res.json()).error ?? 'Failed to load join record');
       return res.json();
     },
@@ -88,8 +114,19 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
 
   const { data: nationalities = [] } = useSetupRows<NationalityOption>('setup/nationalities');
 
+  // Switching to a different existing record (host changed `id`) should allow a fresh seed;
+  // the create -> edit transition of our own new record should not.
   useEffect(() => {
-    if (data?.join) {
+    if (justCreated.current) {
+      justCreated.current = false;
+      return;
+    }
+    seeded.current = false;
+  }, [id]);
+
+  useEffect(() => {
+    if (data?.join && !seeded.current) {
+      seeded.current = true;
       const initial = toFormState(data.join);
       setForm(initial);
       setSavedSnapshot(JSON.stringify(initial));
@@ -107,14 +144,32 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
     el?.focus();
   }, [step]);
 
+  const createJoin = useMutation({
+    mutationFn: async () => {
+      const res = await fetch('/api/employees/join', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      });
+      if (!res.ok) throw new Error((await res.json()).error ?? 'Failed to create join record');
+      return res.json() as Promise<{ emp_join_pkey: number }>;
+    },
+  });
+
   const savePersonal = useMutation({
-    mutationFn: () => fetch(`/api/employees/join/${id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(form),
-    }),
+    mutationFn: async () => {
+      const res = await fetch(`/api/employees/join/${effectiveId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      });
+      if (!res.ok) throw new Error((await res.json()).error ?? 'Failed to save');
+      return res.json();
+    },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['employees/join'] }),
   });
+
+  const pending = isCreate ? createJoin.isPending : savePersonal.isPending;
 
   function f(key: string) {
     return {
@@ -140,20 +195,22 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
 
   function addChild(type: 'documents' | 'education' | 'experience' | 'family') {
     return async (values: Record<string, string>) => {
-      await fetch(`/api/employees/join/${id}/${type}`, {
+      if (!effectiveId) return;
+      await fetch(`/api/employees/join/${effectiveId}/${type}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(type === 'documents' ? { ...values, files: docFile } : values),
       });
       if (type === 'documents') setDocFile('');
-      queryClient.invalidateQueries({ queryKey: ['employees/join', id] });
+      queryClient.invalidateQueries({ queryKey: ['employees/join', effectiveId] });
     };
   }
 
   function removeChild(type: 'documents' | 'education' | 'experience' | 'family') {
     return async (rowId: number) => {
-      await fetch(`/api/employees/join/${id}/${type}/${rowId}`, { method: 'DELETE' });
-      queryClient.invalidateQueries({ queryKey: ['employees/join', id] });
+      if (!effectiveId) return;
+      await fetch(`/api/employees/join/${effectiveId}/${type}/${rowId}`, { method: 'DELETE' });
+      queryClient.invalidateQueries({ queryKey: ['employees/join', effectiveId] });
     };
   }
 
@@ -172,37 +229,51 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
     }, PAGE_TURN_MS);
   }
 
-  function saveAndContinue() {
-    if (step === 0) {
-      const errors = {
-        date_of_birth: dobError(form.date_of_birth ?? '') ?? '',
-        mobile_no: mobileError(form.mobile_no ?? '') ?? '',
-        id_card: aadhaarError(form.id_card ?? '') ?? '',
-        classification: form.classification ? '' : 'Gender is required',
-      };
-      if (errors.date_of_birth || errors.mobile_no || errors.id_card || errors.classification) {
-        setFieldErrors(errors);
-        return;
-      }
+  function validateStep0(): boolean {
+    const errors = {
+      date_of_birth: dobError(form.date_of_birth ?? '') ?? '',
+      mobile_no: mobileError(form.mobile_no ?? '') ?? '',
+      id_card: aadhaarError(form.id_card ?? '') ?? '',
+      classification: form.classification ? '' : 'Gender is required',
+    };
+    if (errors.date_of_birth || errors.mobile_no || errors.id_card || errors.classification) {
+      setFieldErrors(errors);
+      return false;
     }
     setFieldErrors({});
-    savePersonal.mutate(undefined, {
-      onSuccess: () => {
-        setSavedSnapshot(JSON.stringify(form));
-        setCompleted((prev) => new Set(prev).add(step));
-        if (step < STEPS.length - 1) goToStep(step + 1);
-      },
-    });
+    return true;
   }
 
-  function finish() {
-    savePersonal.mutate(undefined, {
-      onSuccess: () => {
-        setSavedSnapshot(JSON.stringify(form));
-        setCompleted((prev) => new Set(prev).add(step));
-        (onFinished ?? onBack)();
-      },
-    });
+  async function persist(): Promise<boolean> {
+    setFormError('');
+    try {
+      if (isCreate) {
+        const { emp_join_pkey } = await createJoin.mutateAsync();
+        justCreated.current = true;
+        seeded.current = true; // we already hold the just-submitted values
+        setCreatedId(emp_join_pkey);
+        onCreated?.(emp_join_pkey);
+        queryClient.invalidateQueries({ queryKey: ['employees/join'] });
+      } else {
+        await savePersonal.mutateAsync();
+      }
+      setSavedSnapshot(JSON.stringify(form));
+      setCompleted((prev) => new Set(prev).add(step));
+      return true;
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : String(err));
+      return false;
+    }
+  }
+
+  async function saveAndContinue() {
+    if (step === 0 && !validateStep0()) return;
+    if (await persist() && step < STEPS.length - 1) goToStep(step + 1);
+  }
+
+  async function finish() {
+    if (step === 0 && !validateStep0()) return;
+    if (await persist()) (onFinished ?? onBack)();
   }
 
   function FieldError({ children }: { children?: string }) {
@@ -210,7 +281,7 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
     return <p className="text-xs text-[color:var(--color-danger)] mt-1.5">{children}</p>;
   }
 
-  if (isError) {
+  if (effectiveId && isError) {
     return (
       <div className="text-sm">
         <p className="text-red-600 mb-3">Couldn&apos;t load this join record. It may have been removed, or you may need to sign in again.</p>
@@ -220,12 +291,23 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
       </div>
     );
   }
-  if (isLoading || !data) return <p className="text-sm text-gray-500">Loading…</p>;
+  // Only block on the fetch when there is nothing to show yet (pure edit, first load).
+  // After the create -> edit handoff the form is already populated, so skip the flash.
+  if (!isCreate && effectiveId && (isLoading || !data) && Object.keys(form).length === 0) {
+    return <p className="text-sm text-gray-500">Loading…</p>;
+  }
 
   const isFirst = step === 0;
   const isLast = step === STEPS.length - 1;
   const embedded = !showBackLink;
   const activeStepForUI = transitioning ? transitioning.to : step;
+
+  const documents = data?.documents ?? [];
+  const education = data?.education ?? [];
+  const experience = data?.experience ?? [];
+  const family = data?.family ?? [];
+
+  const headerName = `${form.first_name ?? ''} ${form.last_name ?? ''}`.trim() || (isCreate ? 'New Joiner' : '');
 
   function renderStepFields(idx: number) {
     if (idx === 0) {
@@ -419,6 +501,14 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
       );
     }
 
+    if (isCreate) {
+      return (
+        <p className="text-sm text-slate-500">
+          Save the previous steps first — documents, education, experience and family can be added once the record exists.
+        </p>
+      );
+    }
+
     return (
       <div className="space-y-8">
         <section>
@@ -429,7 +519,7 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
           </div>
           <RepeatableRows
             pkeyField="emp_doc_pkey"
-            rows={data!.documents}
+            rows={documents}
             addLabel="Add document"
             onAdd={addChild('documents')}
             onRemove={removeChild('documents')}
@@ -449,7 +539,7 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
           <h3 className="text-[12px] font-semibold text-slate-500 uppercase tracking-wider mb-3">Education</h3>
           <RepeatableRows
             pkeyField="education_pkey"
-            rows={data!.education}
+            rows={education}
             addLabel="Add education"
             onAdd={addChild('education')}
             onRemove={removeChild('education')}
@@ -466,7 +556,7 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
           <h3 className="text-[12px] font-semibold text-slate-500 uppercase tracking-wider mb-3">Work Experience</h3>
           <RepeatableRows
             pkeyField="experience_pkey"
-            rows={data!.experience}
+            rows={experience}
             addLabel="Add experience"
             onAdd={addChild('experience')}
             onRemove={removeChild('experience')}
@@ -485,7 +575,7 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
           <h3 className="text-[12px] font-semibold text-slate-500 uppercase tracking-wider mb-3">Family</h3>
           <RepeatableRows
             pkeyField="emp_family_pkey"
-            rows={data!.family}
+            rows={family}
             addLabel="Add family member"
             onAdd={addChild('family')}
             onRemove={removeChild('family')}
@@ -530,16 +620,16 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
         )}
         <div className="flex items-center gap-3 pr-14">
           <AvatarUpload
-            name={`${data.join.first_name} ${data.join.last_name ?? ''}`}
-            imageUrl={form.profile_image_url || data.join.profile_image_url}
+            name={headerName || 'New Joiner'}
+            imageUrl={form.profile_image_url || data?.join.profile_image_url}
             onUploaded={(path) => setForm((prev) => ({ ...prev, profile_image_url: path }))}
             className="w-10 h-10 flex-shrink-0"
           />
           <div className="min-w-0">
             <h1 className="font-heading text-[20px] font-bold text-[#0F172A] tracking-tight leading-tight truncate">
-              {data.join.first_name} {data.join.last_name}
+              {headerName || 'New Joiner'}
             </h1>
-            <p className="text-[13px] text-slate-500 mt-0.5">Employee onboarding</p>
+            <p className="text-[13px] text-slate-500 mt-0.5">{isCreate ? 'New employee join' : 'Employee onboarding'}</p>
           </div>
         </div>
 
@@ -625,40 +715,43 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
       </div>
 
       {/* Sticky footer */}
-      <div className="flex-shrink-0 flex items-center justify-between gap-2 px-6 py-4 border-t border-slate-100 bg-white/95 backdrop-blur-sm rounded-b-2xl">
-        {isFirst ? (
-          <button
-            onClick={onBack}
-            className="px-4 py-2.5 rounded-xl text-sm font-medium text-slate-500 hover:bg-slate-100 transition-colors duration-[180ms]"
-          >
-            Cancel
-          </button>
-        ) : (
-          <button
-            onClick={() => goToStep(step - 1)}
-            className="px-4 py-2.5 rounded-xl text-sm font-medium text-slate-500 hover:bg-slate-100 transition-colors duration-[180ms]"
-          >
-            ← Back
-          </button>
-        )}
+      <div className="flex-shrink-0 px-6 py-4 border-t border-slate-100 bg-white/95 backdrop-blur-sm rounded-b-2xl">
+        {formError && <p className="text-xs text-[color:var(--color-danger)] mb-2">{formError}</p>}
+        <div className="flex items-center justify-between gap-2">
+          {isFirst ? (
+            <button
+              onClick={onBack}
+              className="px-4 py-2.5 rounded-xl text-sm font-medium text-slate-500 hover:bg-slate-100 transition-colors duration-[180ms]"
+            >
+              Cancel
+            </button>
+          ) : (
+            <button
+              onClick={() => goToStep(step - 1)}
+              className="px-4 py-2.5 rounded-xl text-sm font-medium text-slate-500 hover:bg-slate-100 transition-colors duration-[180ms]"
+            >
+              ← Back
+            </button>
+          )}
 
-        {isLast ? (
-          <button
-            onClick={finish}
-            disabled={savePersonal.isPending}
-            className="px-5 py-2.5 rounded-xl text-sm font-semibold bg-[color:var(--color-primary)] hover:scale-[1.03] disabled:opacity-50 disabled:hover:scale-100 text-white shadow-lg shadow-[color:var(--color-primary)]/20 transition-all duration-[180ms]"
-          >
-            {savePersonal.isPending ? 'Saving…' : 'Done'}
-          </button>
-        ) : (
-          <button
-            onClick={saveAndContinue}
-            disabled={savePersonal.isPending}
-            className="px-5 py-2.5 rounded-xl text-sm font-semibold bg-[color:var(--color-primary)] hover:scale-[1.03] disabled:opacity-50 disabled:hover:scale-100 text-white shadow-lg shadow-[color:var(--color-primary)]/20 transition-all duration-[180ms]"
-          >
-            {savePersonal.isPending ? 'Saving…' : 'Save & Continue →'}
-          </button>
-        )}
+          {isLast ? (
+            <button
+              onClick={finish}
+              disabled={pending}
+              className="px-5 py-2.5 rounded-xl text-sm font-semibold bg-[color:var(--color-primary)] hover:scale-[1.03] disabled:opacity-50 disabled:hover:scale-100 text-white shadow-lg shadow-[color:var(--color-primary)]/20 transition-all duration-[180ms]"
+            >
+              {pending ? 'Saving…' : 'Done'}
+            </button>
+          ) : (
+            <button
+              onClick={saveAndContinue}
+              disabled={pending}
+              className="px-5 py-2.5 rounded-xl text-sm font-semibold bg-[color:var(--color-primary)] hover:scale-[1.03] disabled:opacity-50 disabled:hover:scale-100 text-white shadow-lg shadow-[color:var(--color-primary)]/20 transition-all duration-[180ms]"
+            >
+              {pending ? 'Saving…' : 'Save & Continue →'}
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

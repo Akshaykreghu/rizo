@@ -126,11 +126,14 @@ export async function PUT(
       [empPkey]
     );
 
+    // Salary structure and CTC are not edited from the employee form — matching legacy, they
+    // are managed via Bulk Policies -> Salary and the CTC-upload step. emp_proff.structure_id
+    // is left to its emp_config trigger.
     if (existingProff.length) {
       await connection.execute(
         `UPDATE emp_proff SET
            joining_date = ?, emp_branch = ?, emp_dept = ?, designation = ?, emp_grade = ?,
-           emp_type = ?, attr1 = ?, probation = ?, structure_id = ?, day_time_seq = ?,
+           emp_type = ?, attr1 = ?, probation = ?, day_time_seq = ?,
            HOLIDAY_GROUP_ID = ?, LEAVEPOLICY_GROUP_ID = ?
          WHERE emp_fkey = ?`,
         [
@@ -138,7 +141,6 @@ export async function PUT(
           body.designation ?? null, body.emp_grade ?? null,
           body.emp_type ?? null, body.attr1 ?? null,
           body.probation ? Number(body.probation) : null,
-          body.structure_id ? Number(body.structure_id) : null,
           body.day_time_seq ? Number(body.day_time_seq) : null,
           body.holiday_group_id ? Number(body.holiday_group_id) : null,
           body.leavepolicy_group_id ? Number(body.leavepolicy_group_id) : null,
@@ -148,42 +150,17 @@ export async function PUT(
     } else {
       await connection.execute(
         `INSERT INTO emp_proff
-           (emp_fkey, joining_date, emp_branch, emp_dept, designation, emp_grade, emp_type, attr1, probation, structure_id, day_time_seq, HOLIDAY_GROUP_ID, LEAVEPOLICY_GROUP_ID)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           (emp_fkey, joining_date, emp_branch, emp_dept, designation, emp_grade, emp_type, attr1, probation, day_time_seq, HOLIDAY_GROUP_ID, LEAVEPOLICY_GROUP_ID)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           empPkey, body.joining_date ?? null, body.emp_branch ?? null, body.emp_dept ?? null,
           body.designation ?? null, body.emp_grade ?? null, body.emp_type ?? null, body.attr1 ?? null,
           body.probation ? Number(body.probation) : null,
-          body.structure_id ? Number(body.structure_id) : null,
           body.day_time_seq ? Number(body.day_time_seq) : null,
           body.holiday_group_id ? Number(body.holiday_group_id) : null,
           body.leavepolicy_group_id ? Number(body.leavepolicy_group_id) : null,
         ]
       );
-    }
-
-    if (body.emp_anual_ctc) {
-      const [existingCtc] = await connection.execute<RowDataPacket[]>(
-        'SELECT emp_ctc_upload_pkey FROM emp_ctc_upload WHERE emp_fkey = ? AND status = 1 ORDER BY emp_ctc_upload_pkey DESC LIMIT 1',
-        [empPkey]
-      );
-      if (existingCtc.length) {
-        await connection.execute(
-          'UPDATE emp_ctc_upload SET emp_anual_ctc = ?, emp_monthly_ctc = ? WHERE emp_ctc_upload_pkey = ?',
-          [Number(body.emp_anual_ctc), body.emp_monthly_ctc ? Number(body.emp_monthly_ctc) : null, existingCtc[0].emp_ctc_upload_pkey]
-        );
-      } else {
-        await connection.execute(
-          `INSERT INTO emp_ctc_upload (emp_fkey, emp_anual_ctc, emp_monthly_ctc, created_by, start_date_effective)
-           VALUES (?, ?, ?, ?, ?)`,
-          [
-            empPkey, Number(body.emp_anual_ctc),
-            body.emp_monthly_ctc ? Number(body.emp_monthly_ctc) : null,
-            session.user.loginUserId,
-            body.joining_date || new Date().toISOString().slice(0, 10),
-          ]
-        );
-      }
     }
 
     await connection.commit();

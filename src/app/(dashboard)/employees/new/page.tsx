@@ -14,7 +14,6 @@ const EMPTY_FORM = {
   id_card: '', lwf_code: '',
   joining_date: '', emp_branch: '', emp_dept: '', designation: '', emp_grade: '',
   emp_type: '', attr1: '', probation: '',
-  structure_id: '', emp_anual_ctc: '', emp_monthly_ctc: '',
   pan_no: '', name_as_on_pan: '', pf: '', company_pf: '', eps: '', esi: '', esi_dispensary: '',
   bank_name: '', bank_branch_name: '', branch_address: '', name_as_per_bank: '', ifsc_code: '', account_no: '',
 };
@@ -29,7 +28,6 @@ export default function NewEmployeePage() {
   const { data: departments = [] } = useSetupOptions('setup/departments', 'dept_code', 'dept_name');
   const { data: designations = [] } = useSetupOptions('setup/designations', 'desig_code', 'desig_name');
   const { data: grades = [] } = useSetupOptions('setup/grades', 'grade_code', 'grade_name');
-  const { data: structures = [] } = useSetupOptions('setup/salary-structures', 'structure_id', 'structure_name');
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -201,24 +199,8 @@ export default function NewEmployeePage() {
         </section>
 
         <section>
-          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Salary &amp; Statutory</h2>
+          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Statutory</h2>
           <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="label">Salary Structure</label>
-              <select className="input" {...f('structure_id')}>
-                <option value="">Select structure</option>
-                {structures.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
-              </select>
-            </div>
-            <div />
-            <div>
-              <label className="label">Annual CTC</label>
-              <input type="number" className="input" {...f('emp_anual_ctc')} />
-            </div>
-            <div>
-              <label className="label">Monthly CTC</label>
-              <input type="number" className="input" {...f('emp_monthly_ctc')} />
-            </div>
             <div>
               <label className="label">PAN Number</label>
               <input className="input" {...f('pan_no')} />

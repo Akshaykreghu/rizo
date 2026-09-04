@@ -18,8 +18,8 @@ export async function POST(
   const { id } = await params;
   const rawBody = (await request.json()) as Record<string, string | undefined>;
   // Frontend form fields default to '' rather than null/undefined, which `??` doesn't catch —
-  // blank out to null so optional DATE/numeric columns (joining_date, probation, structure_id,
-  // emp_anual_ctc, emp_monthly_ctc) don't hit MySQL's strict-mode ER_TRUNCATED_WRONG_VALUE.
+  // blank out to null so optional DATE/numeric columns (joining_date, probation) don't hit
+  // MySQL's strict-mode ER_TRUNCATED_WRONG_VALUE.
   const body = Object.fromEntries(
     Object.entries(rawBody).map(([k, v]) => [k, v === '' ? null : v])
   ) as Record<string, string | null>;
@@ -107,33 +107,23 @@ export async function POST(
     );
     const empPkey = empResult.insertId;
 
+    // Salary structure and CTC are deliberately NOT set here — matching legacy, they are
+    // allocated afterward via Bulk Policies -> Salary and the CTC-upload step, never through
+    // the onboarding form. Leaving emp_proff.structure_id NULL also lets its emp_config_bi
+    // trigger set it when the structure is assigned.
     await connection.execute(
       `INSERT INTO emp_proff
          (emp_fkey, joining_date, emp_company_id, emp_type, designation, emp_dept, emp_grade,
-          emp_branch, attr1, probation, structure_id, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          emp_branch, attr1, probation, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         empPkey, body.joining_date ?? null, body.emp_company_id, body.emp_type ?? null,
         body.designation ?? null, body.emp_dept ?? null, body.emp_grade ?? null,
         body.emp_branch ?? null, body.attr1 ?? null,
         body.probation ? Number(body.probation) : null,
-        body.structure_id ? Number(body.structure_id) : null,
         session.user.loginUserId,
       ]
     );
-
-    if (body.emp_anual_ctc) {
-      await connection.execute(
-        `INSERT INTO emp_ctc_upload (emp_fkey, emp_anual_ctc, emp_monthly_ctc, created_by, start_date_effective)
-         VALUES (?, ?, ?, ?, ?)`,
-        [
-          empPkey, Number(body.emp_anual_ctc),
-          body.emp_monthly_ctc ? Number(body.emp_monthly_ctc) : null,
-          session.user.loginUserId,
-          body.joining_date || new Date().toISOString().slice(0, 10),
-        ]
-      );
-    }
 
     const passwordHash = await bcrypt.hash(body.password, 12);
     await connection.execute(

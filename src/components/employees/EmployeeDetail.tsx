@@ -95,9 +95,6 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
         leavepolicy_group_id: data.professional?.LEAVEPOLICY_GROUP_ID != null ? String(data.professional.LEAVEPOLICY_GROUP_ID) : '',
         attr1: data.professional?.attr1 ?? '',
         probation: data.professional?.probation != null ? String(data.professional.probation) : '',
-        structure_id: data.professional?.structure_id != null ? String(data.professional.structure_id) : '',
-        emp_anual_ctc: data.ctc?.emp_anual_ctc != null ? String(data.ctc.emp_anual_ctc) : '',
-        emp_monthly_ctc: data.ctc?.emp_monthly_ctc != null ? String(data.ctc.emp_monthly_ctc) : '',
       });
     }
   }, [data]);
@@ -380,23 +377,6 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
           <SectionHeader icon={Wallet} accent="success">Salary &amp; Statutory</SectionHeader>
           {editing ? (
             <div className="space-y-3.5">
-              <div>
-                <label className={LABEL_CLASS}>Salary Structure</label>
-                <select className={INPUT_CLASS} {...f('structure_id')}>
-                  <option value="">Select structure</option>
-                  {structures.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
-                </select>
-              </div>
-              <div className="grid grid-cols-2 gap-3.5">
-                <div>
-                  <label className={LABEL_CLASS}>Annual CTC</label>
-                  <input type="number" className={INPUT_CLASS} {...f('emp_anual_ctc')} />
-                </div>
-                <div>
-                  <label className={LABEL_CLASS}>Monthly CTC</label>
-                  <input type="number" className={INPUT_CLASS} {...f('emp_monthly_ctc')} />
-                </div>
-              </div>
               <div className="grid grid-cols-2 gap-3.5">
                 <div>
                   <label className={LABEL_CLASS}>PAN Number</label>
