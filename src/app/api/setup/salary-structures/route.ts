@@ -3,7 +3,10 @@ import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket, ResultSetHeader } from 'mysql2';
-import { saveStructureDetails, structureHeaderError, type StructureDetailInput } from '@/lib/salaryStructureSave';
+import {
+  saveStructureDetails, structureHeaderError, structureNameTaken,
+  FIXED_DAYS_LOCKED_COMPANIES, DEFAULT_FIXED_DAYS, type StructureDetailInput,
+} from '@/lib/salaryStructureSave';
 import { FormulaError } from '@/lib/salaryFormula';
 
 // GET response shape (structure_id/structure_name only) is load-bearing for existing
@@ -51,6 +54,17 @@ export async function POST(request: NextRequest) {
   const pool = await getCompanyPool(session.user.companyCode);
   const exampleGross = Number(body.structure_eg_amt) || 0;
 
+  // Legacy checkstructureexists() — name must be unique among active structures.
+  if (await structureNameTaken(pool, body.structure_name, 0)) {
+    return NextResponse.json({ error: 'A salary structure with this name already exists' }, { status: 409 });
+  }
+
+  // fixed_days is not admin-settable for the special-companies list — legacy omits it from the
+  // save entirely, letting the column keep its default of 30.
+  const fixedDays = FIXED_DAYS_LOCKED_COMPANIES.has(session.user.companyCode.toUpperCase())
+    ? DEFAULT_FIXED_DAYS
+    : Number(body.fixed_days) || DEFAULT_FIXED_DAYS;
+
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
@@ -65,7 +79,7 @@ export async function POST(request: NextRequest) {
        VALUES (?, ?, ?, ?, ?, ?, ?, UNIX_TIMESTAMP(), CURDATE(), CURDATE(), 1)`,
       [
         session.user.companyCode, body.structure_name, body.prorate_code ?? '', body.prorate_desc ?? '',
-        Number(body.fixed_days) || 30, body.defined_structure_for ?? '', exampleGross,
+        fixedDays, body.defined_structure_for ?? '', exampleGross,
       ]
     );
 

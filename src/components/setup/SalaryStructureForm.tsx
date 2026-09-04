@@ -1,9 +1,9 @@
 'use client';
 
-import { Fragment, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useQuery, useMutation } from '@tanstack/react-query';
-import { ArrowLeft, Plus, Trash2, Calculator, AlertTriangle, Wand2, Pencil } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, Wand2, Pencil } from 'lucide-react';
 import { formatCurrency } from '@/lib/utils';
 import { evaluateSalaryFormula, formatFormulaForDisplay } from '@/lib/salaryFormula';
 import { FormulaBuilder } from './FormulaBuilder';
@@ -35,15 +35,6 @@ interface StructureDetail {
   structure_det_depends: number | null;
   structure_formula: string | null;
   structure_det_calequation: string | null;
-}
-
-interface BreakupLine {
-  head_name: string;
-  amount: number;
-  is_deduction: 'Y' | 'N';
-  head_desc: string;
-  is_employer_contribution: boolean;
-  formula_warning: string | null;
 }
 
 const OPERATORS = [
@@ -102,9 +93,6 @@ export function SalaryStructureForm({ structureId, onBack, showBackLink = true, 
   // purpose and was confusing admins about which category a component added there lands in.
   const [rows, setRows] = useState<DetailRow[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [previewGross, setPreviewGross] = useState('');
-  const [preview, setPreview] = useState<{ data: BreakupLine[]; net: number; employer_cost: number } | null>(null);
-  const [previewError, setPreviewError] = useState<string | null>(null);
   const [builderRowKey, setBuilderRowKey] = useState<string | null>(null);
   const [rawEditRows, setRawEditRows] = useState<Set<string>>(new Set());
 
@@ -147,12 +135,6 @@ export function SalaryStructureForm({ structureId, onBack, showBackLink = true, 
         formula: d.structure_det_calequation ?? d.structure_formula ?? '',
       })));
     }
-    // SAL-004: show a live breakdown immediately using the structure's own example gross,
-    // instead of requiring a manual gross entry + Calculate click before anything is visible.
-    if (!previewGross && s.structure_eg_amt) {
-      setPreviewGross(String(s.structure_eg_amt));
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [existing]);
 
   function validateHeader(): boolean {
@@ -204,24 +186,6 @@ export function SalaryStructureForm({ structureId, onBack, showBackLink = true, 
     },
     onError: (err) => setError(String(err instanceof Error ? err.message : err)),
   });
-
-  const runPreview = useMutation({
-    mutationFn: async () => {
-      const res = await fetch(`/api/setup/salary-structures/${structureId}/breakup?gross=${Number(previewGross) || 0}`);
-      if (!res.ok) throw new Error((await res.json()).error ?? 'Preview failed');
-      return res.json();
-    },
-    onSuccess: (data) => { setPreview(data); setPreviewError(null); },
-    onError: (err) => setPreviewError(String(err instanceof Error ? err.message : err)),
-  });
-
-  // Auto-runs once the structure and its example gross have loaded (SAL-004).
-  useEffect(() => {
-    if (isEdit && previewGross && !preview && !runPreview.isPending) {
-      runPreview.mutate();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [previewGross]);
 
   const itemByPkey = new Map(items.map((i) => [i.salary_head_item_pkey, i]));
 
@@ -299,19 +263,6 @@ export function SalaryStructureForm({ structureId, onBack, showBackLink = true, 
   const sectionOrder = [
     ...categoriesInOrder,
     ...(rowsByCategory.has(UNCATEGORIZED) ? [UNCATEGORIZED] : []),
-  ];
-
-  // Mirrors the edit form's own category sections above it, instead of one long flat list an
-  // admin has to mentally re-group by scanning for the "Employer cost" tag / red deduction text.
-  const previewByCategory = new Map<string, BreakupLine[]>();
-  for (const row of preview?.data ?? []) {
-    const cat = row.head_desc || 'Other';
-    if (!previewByCategory.has(cat)) previewByCategory.set(cat, []);
-    previewByCategory.get(cat)!.push(row);
-  }
-  const previewCategoryOrder = [
-    ...categoriesInOrder.filter((c) => previewByCategory.has(c)),
-    ...Array.from(previewByCategory.keys()).filter((c) => !categoriesInOrder.includes(c)),
   ];
 
   function updateRow(key: string, patch: Partial<DetailRow>) {
@@ -472,20 +423,24 @@ export function SalaryStructureForm({ structureId, onBack, showBackLink = true, 
   }
 
   return (
-    <div>
-      {showBackLink && (
-        <button
-          onClick={goBack}
-          className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 mb-5 transition-colors"
-        >
-          <ArrowLeft className="w-4 h-4" /> Back to Salary Structures
-        </button>
-      )}
+    <div className="-m-6 flex flex-col max-h-[calc(90vh-3rem)]">
+      {/* Sticky header — heading + close button stay put while the form body scrolls. */}
+      <div className="flex-shrink-0 bg-white/95 backdrop-blur-sm border-b border-slate-100 px-6 pt-6 pb-4 rounded-t-2xl pr-14">
+        {showBackLink && (
+          <button
+            onClick={goBack}
+            className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 mb-3 transition-colors"
+          >
+            <ArrowLeft className="w-4 h-4" /> Back to Salary Structures
+          </button>
+        )}
+        <h1 className="text-2xl font-semibold text-gray-900">
+          {isEdit ? 'Edit Salary Structure' : 'New Salary Structure'}
+        </h1>
+      </div>
 
-      <h1 className="text-2xl font-semibold text-gray-900 mb-6">
-        {isEdit ? 'Edit Salary Structure' : 'New Salary Structure'}
-      </h1>
-
+      {/* Scrolling body */}
+      <div className="flex-1 overflow-y-auto px-6 py-6">
       <div className="bg-white rounded-xl border border-gray-200 p-6 space-y-4 max-w-3xl">
         <div className="grid grid-cols-2 gap-4">
           <div>
@@ -572,12 +527,13 @@ export function SalaryStructureForm({ structureId, onBack, showBackLink = true, 
           </div>
         )}
       </div>
+      </div>
 
-      {error && (
-        <div className="mt-4 max-w-5xl bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-sm text-red-600">{error}</div>
-      )}
-
-      <div className="mt-6 flex gap-3">
+      {/* Sticky footer — Save stays reachable without scrolling the form. */}
+      <div className="flex-shrink-0 border-t border-slate-100 bg-white/95 backdrop-blur-sm px-6 py-4 rounded-b-2xl">
+        {error && (
+          <div className="mb-3 max-w-5xl bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-sm text-red-600">{error}</div>
+        )}
         <button
           onClick={() => { if (validateHeader()) save.mutate(); }}
           disabled={save.isPending}
@@ -586,91 +542,6 @@ export function SalaryStructureForm({ structureId, onBack, showBackLink = true, 
           {save.isPending ? 'Saving…' : 'Save Structure'}
         </button>
       </div>
-
-      {isEdit && (
-        <div className="mt-10 max-w-2xl">
-          <h2 className="text-lg font-semibold text-gray-900 mb-3 flex items-center gap-2">
-            <Calculator className="w-4 h-4" /> Preview Breakup
-          </h2>
-          <div className="bg-white rounded-xl border border-gray-200 p-4">
-            <div className="flex items-end gap-3 mb-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Monthly Gross</label>
-                <input
-                  type="number"
-                  value={previewGross}
-                  onChange={(e) => setPreviewGross(e.target.value)}
-                  className="w-48 px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                />
-              </div>
-              <button
-                onClick={() => runPreview.mutate()}
-                disabled={runPreview.isPending}
-                className="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm transition-colors"
-              >
-                {runPreview.isPending ? 'Calculating…' : 'Calculate'}
-              </button>
-            </div>
-            {previewError && <p className="text-sm text-red-500 mb-2">{previewError}</p>}
-            {preview && (
-              <table className="w-full text-sm">
-                <tbody className="divide-y divide-gray-100">
-                  {previewCategoryOrder.map((category) => {
-                    const rows = previewByCategory.get(category)!;
-                    const subtotal = rows.reduce((sum, r) => sum + r.amount, 0);
-                    return (
-                      <Fragment key={category}>
-                        <tr>
-
-                          <td colSpan={2} className="pt-3 pb-1 text-xs font-semibold text-gray-500 uppercase tracking-wide">
-                            {category}
-                          </td>
-                        </tr>
-                        {rows.map((row, i) => (
-                          <tr key={`${category}-${i}`}>
-                            <td className="py-1.5 pl-2 text-gray-700">
-                              {row.head_name}
-                              {row.is_employer_contribution && (
-                                <span className="ml-1.5 text-[10px] font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-1.5 py-0.5">
-                                  Employer cost
-                                </span>
-                              )}
-                              {row.formula_warning && (
-                                <span title={row.formula_warning} className="ml-1.5 inline-flex text-amber-500">
-                                  <AlertTriangle className="w-3 h-3 inline" />
-                                </span>
-                              )}
-                            </td>
-                            <td className={`py-1.5 text-right ${row.is_deduction === 'Y' ? 'text-red-600' : 'text-gray-800'}`}>
-                              {formatCurrency(row.amount)}
-                            </td>
-                          </tr>
-                        ))}
-                        {rows.length > 1 && (
-                          <tr key={`${category}-subtotal`} className="text-xs text-gray-500">
-                            <td className="py-1 pl-2">Subtotal</td>
-                            <td className="py-1 text-right">{formatCurrency(subtotal)}</td>
-                          </tr>
-                        )}
-                      </Fragment>
-                    );
-                  })}
-                  <tr className="font-semibold">
-                    <td className="py-1.5 text-gray-900">Net (employee take-home)</td>
-                    <td className="py-1.5 text-right text-gray-900">{formatCurrency(preview.net)}</td>
-                  </tr>
-                  {preview.employer_cost !== 0 && (
-                    <tr className="text-xs text-gray-500">
-                      <td className="py-1 text-gray-500">Employer contributions (not included above)</td>
-                      <td className="py-1 text-right text-gray-500">{formatCurrency(preview.employer_cost)}</td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            )}
-          </div>
-        </div>
-      )}
 
       <FormulaBuilder
         open={builderRowKey !== null}

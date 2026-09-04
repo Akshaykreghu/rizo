@@ -24,13 +24,17 @@ export async function GET(request: NextRequest) {
   if (buildable) {
     // Every item eligible for the Salary Structure builder, across all live heads —
     // status=1 AND value='Y' on the item, and the parent head itself active — matching
-    // SalaryStructureController's own filter exactly.
+    // SalaryStructureController::form()'s own filter. On a `basic`-plan tenant legacy further
+    // restricts to heads flagged `plan='basic'` (heads 1/4/5 only); other plans see them all.
+    const [[cci]] = await pool.execute<RowDataPacket[]>('SELECT plan FROM comp_contact_info LIMIT 1');
+    const planBasic = String(cci?.plan ?? '').toLowerCase() === 'basic';
     const [rows] = await pool.execute<RowDataPacket[]>(
       `SELECT shi.salary_head_item_pkey, shi.item, shi.item_type, shi.head_fkey,
               sh.head_desc, sh.head_operator, sh.salary_head_order1
        FROM salary_head_items shi
        JOIN salary_heads sh ON sh.head_pkey = shi.head_fkey
        WHERE shi.status = 1 AND shi.value = 'Y' AND sh.status = 1
+         ${planBasic ? "AND sh.plan = 'basic'" : ''}
        ORDER BY sh.salary_head_order1, shi.salary_head_item_order1`
     );
     return NextResponse.json(rows);

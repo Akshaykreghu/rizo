@@ -1,6 +1,34 @@
-import type { PoolConnection } from 'mysql2/promise';
+import type { Pool, PoolConnection } from 'mysql2/promise';
 import type { RowDataPacket } from 'mysql2';
 import { buildItemToken, evaluateSalaryFormula, FormulaError } from './salaryFormula';
+
+// Tenants for which legacy's SalaryStructureController neither shows nor persists a per-structure
+// `fixed_days` override (savesalarystructuresetup / form / loadSalaryStructureDetails all gate on
+// `!in_array($company_code, $specialCompanies)` — form.ctp:258,633). For them the column keeps
+// its schema default of 30. This is a DIFFERENT list from SPECIAL_COMPANIES in
+// salaryStructureAllocate.ts (that one is legacy's addEmpToSallary ctc-upload-reset list) — kept
+// separate on purpose so the two don't get "consolidated" into one wrong list later.
+export const FIXED_DAYS_LOCKED_COMPANIES = new Set([
+  'HRBL', 'KWMT', 'AIMA', 'ESNP', 'MBCT', 'MRBS', 'STCL', 'VGNN', 'ABSG', 'VGFS', 'VSFS',
+  'DRRC', 'DJIC', 'AGNG', 'AYRK', 'SRTS', 'SHYD', 'GTRA',
+]);
+
+// salary_structure.fixed_days is `int NOT NULL DEFAULT '30'` (schema/mypayrol_mpm121.sql:248374).
+export const DEFAULT_FIXED_DAYS = 30;
+
+// Ports legacy's checkstructureexists() — a structure name must be unique among the tenant's
+// currently-active structures. `excludeId` (0 on create) lets an edit keep its own name.
+export async function structureNameTaken(
+  db: Pool | PoolConnection,
+  name: string,
+  excludeId: number
+): Promise<boolean> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    'SELECT COUNT(*) AS cnt FROM salary_structure WHERE structure_name = ? AND structure_active = 1 AND structure_id <> ?',
+    [name.trim(), excludeId]
+  );
+  return Number(rows[0]?.cnt ?? 0) > 0;
+}
 
 export interface StructureDetailInput {
   salary_head_item_fkey: number;

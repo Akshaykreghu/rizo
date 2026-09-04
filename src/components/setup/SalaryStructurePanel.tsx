@@ -2,11 +2,12 @@
 
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Pencil, PowerOff, Search } from 'lucide-react';
+import { Plus, Pencil, PowerOff, Search, Calculator } from 'lucide-react';
 import { formatCurrency } from '@/lib/utils';
 import { DataTable } from '@/components/data-table/DataTable';
 import { Modal } from '@/components/ui/Modal';
 import { SalaryStructureForm } from '@/components/setup/SalaryStructureForm';
+import { SalaryStructurePreview } from '@/components/setup/SalaryStructurePreview';
 import type { ColumnDef } from '@tanstack/react-table';
 
 interface StructureListItem {
@@ -21,6 +22,7 @@ interface StructureListItem {
 export function SalaryStructurePanel() {
   const queryClient = useQueryClient();
   const [deactivateConfirm, setDeactivateConfirm] = useState<number | null>(null);
+  const [previewTarget, setPreviewTarget] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [activeOnly, setActiveOnly] = useState(true);
@@ -78,6 +80,13 @@ export function SalaryStructurePanel() {
       header: '',
       cell: ({ row }) => (
         <div className="flex items-center justify-end gap-2">
+          <button
+            onClick={() => setPreviewTarget(row.original.structure_id)}
+            className="p-1.5 rounded hover:bg-gray-100 text-gray-500 hover:text-indigo-600 transition-colors"
+            title="Preview breakup"
+          >
+            <Calculator className="w-4 h-4" />
+          </button>
           <button
             onClick={() => setModalTarget(row.original.structure_id)}
             className="p-1.5 rounded hover:bg-gray-100 text-gray-500 hover:text-indigo-600 transition-colors"
@@ -162,6 +171,10 @@ export function SalaryStructurePanel() {
             onSaved={handleSaved}
           />
         )}
+      </Modal>
+
+      <Modal open={previewTarget !== null} onClose={() => setPreviewTarget(null)} className="max-w-2xl">
+        {previewTarget !== null && <SalaryStructurePreview structureId={previewTarget} />}
       </Modal>
     </div>
   );

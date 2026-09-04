@@ -2,7 +2,10 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
 import { FormulaError } from '@/lib/salaryFormula';
-import { saveStructureDetails, structureHeaderError, type StructureDetailInput } from '@/lib/salaryStructureSave';
+import {
+  saveStructureDetails, structureHeaderError, structureNameTaken,
+  FIXED_DAYS_LOCKED_COMPANIES, DEFAULT_FIXED_DAYS, type StructureDetailInput,
+} from '@/lib/salaryStructureSave';
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket } from 'mysql2';
 
@@ -64,6 +67,15 @@ export async function PUT(
   const pool = await getCompanyPool(session.user.companyCode);
   const exampleGross = Number(body.structure_eg_amt) || 0;
 
+  // Legacy checkstructureexists() — name must stay unique among active structures (this row excepted).
+  if (await structureNameTaken(pool, body.structure_name, Number(id))) {
+    return NextResponse.json({ error: 'A salary structure with this name already exists' }, { status: 409 });
+  }
+
+  // For the special-companies list legacy never writes fixed_days — an edit leaves whatever is
+  // already in the column, same as create leaves the default.
+  const fixedDaysLocked = FIXED_DAYS_LOCKED_COMPANIES.has(session.user.companyCode.toUpperCase());
+
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
@@ -73,10 +85,11 @@ export async function PUT(
     // whatever placeholder/legacy value already sits in those columns.
     await connection.execute(
       `UPDATE salary_structure SET structure_name = ?, prorate_code = ?, prorate_desc = ?,
-              fixed_days = ?, defined_structure_for = ?, structure_eg_amt = ?, structure_active = ?
+              ${fixedDaysLocked ? '' : 'fixed_days = ?,'} defined_structure_for = ?, structure_eg_amt = ?, structure_active = ?
        WHERE structure_id = ?`,
       [
-        body.structure_name, body.prorate_code ?? '', body.prorate_desc ?? '', Number(body.fixed_days) || 30,
+        body.structure_name, body.prorate_code ?? '', body.prorate_desc ?? '',
+        ...(fixedDaysLocked ? [] : [Number(body.fixed_days) || DEFAULT_FIXED_DAYS]),
         body.defined_structure_for ?? '', exampleGross,
         body.structure_active !== undefined ? Number(body.structure_active) : 1, id,
       ]
