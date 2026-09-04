@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useSetupRows } from '@/lib/setupOptions';
 import { Plus, Trash2, ArrowRightCircle, Search, Download, UploadCloud, Users, UserCheck, UserPlus, FileSpreadsheet, X, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { cn, formatDate } from '@/lib/utils';
 import { DataTable } from '@/components/data-table/DataTable';
@@ -64,11 +65,7 @@ export default function EmployeeJoinPage() {
     setModalOpen(false);
   }
 
-  const { data: branches = [] } = useQuery<BranchOption[]>({
-    queryKey: ['setup/branches'],
-    queryFn: () => fetch('/api/setup/branches').then((r) => r.json()),
-    enabled: tab === 'all',
-  });
+  const { data: branches = [] } = useSetupRows<BranchOption>('setup/branches', { enabled: tab === 'all' });
 
   useEffect(() => {
     setPage(1);

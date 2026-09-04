@@ -6,6 +6,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { EmployeeSearch } from '@/components/employees/EmployeeSearch';
 import { MenuTree, type MenuNode } from '@/components/employees/MenuTree';
 import { cn } from '@/lib/utils';
+import { useSetupRows } from '@/lib/setupOptions';
 import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
 
 const BTN_BASE =
@@ -38,12 +39,7 @@ export default function MenuAllocationPage() {
     enabled: !!empFkey,
   });
 
-  const { data: branches = [] } = useQuery<BranchOption[]>({
-    queryKey: ['setup/branches'],
-    queryFn: () => fetch('/api/setup/branches').then((r) => r.json()).then((rows: Record<string, unknown>[]) =>
-      rows.map((r) => ({ branch_code: String(r.branch_code), branch_name: String(r.branch_name) }))
-    ),
-  });
+  const { data: branches = [] } = useSetupRows<BranchOption>('setup/branches');
 
   useEffect(() => {
     if (data?.assigned) setChecked(new Set(data.assigned));

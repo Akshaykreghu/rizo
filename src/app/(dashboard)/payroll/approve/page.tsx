@@ -3,6 +3,7 @@
 import { Suspense, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useSetupRows } from '@/lib/setupOptions';
 import { CheckCircle2, Undo2, FileText } from 'lucide-react';
 import type { ColumnDef } from '@tanstack/react-table';
 import { cn, formatCurrency } from '@/lib/utils';
@@ -69,10 +70,7 @@ function ApprovePayrollContent() {
   const [message, setMessage] = useState<string | null>(null);
   const [slipId, setSlipId] = useState<number | null>(null);
 
-  const { data: branches = [] } = useQuery<Branch[]>({
-    queryKey: ['setup/branches'],
-    queryFn: () => fetch('/api/setup/branches').then((r) => r.json()),
-  });
+  const { data: branches = [] } = useSetupRows<Branch>('setup/branches');
 
   const { data: employeesResp } = useQuery<{ data: Employee[] }>({
     queryKey: ['employees', branch],

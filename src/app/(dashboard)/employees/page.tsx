@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { useQuery } from '@tanstack/react-query';
+import { useSetupRows } from '@/lib/setupOptions';
 import { useRouter } from 'next/navigation';
 import { Plus, Search, Eye, KeyRound, ListTree, Package, Receipt, TrendingUp, UserMinus, IndianRupee } from 'lucide-react';
 import { DataTable } from '@/components/data-table/DataTable';
@@ -101,11 +102,7 @@ export default function EmployeesPage({
     return () => clearTimeout(t);
   }, [toast]);
 
-  const { data: branches = [] } = useQuery<BranchOption[]>({
-    queryKey: ['setup/branches'],
-    queryFn: () => fetch('/api/setup/branches').then((r) => r.json()),
-    enabled: !embedded,
-  });
+  const { data: branches = [] } = useSetupRows<BranchOption>('setup/branches', { enabled: !embedded });
 
   const { data, isLoading } = useQuery({
     queryKey: ['employees', page, pageSize, search, status, branch],

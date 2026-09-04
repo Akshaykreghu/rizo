@@ -1,5 +1,6 @@
 import type { Pool, RowDataPacket, ResultSetHeader } from 'mysql2/promise';
 import { evaluateArithmetic } from './salaryFormula';
+import { allocateSalaryStructure } from './salaryStructureAllocate';
 
 // Shared helpers for Salary Increments (SalaryIncrementController.php port). Covers the
 // single-employee flow at both levels — gross (item='N') and per-component (item='Y') — plus the
@@ -237,6 +238,264 @@ export async function processIncrement(pool: Pool, hikePkey: number, userId: str
   }
 
   return { success, notProcessed, invalidSalary };
+}
+
+// ---------------------------------------------------------------------------
+// Structure-change pre-pass (mirrors SalaryIncrementController::alterSalaryStructure())
+// ---------------------------------------------------------------------------
+//
+// The legacy "Process" button (view.ctp) chains alterSalaryStructure -> process/processItem
+// whenever salary_hike.structure_change = 'Y'. This function is that first step: for every
+// employee in the batch whose drafted structure differs from their current one (or who has no
+// structure yet), run the statutory / salary gates and then move them onto the target structure
+// via allocateSalaryStructure() (shared with Bulk Policy Allocation). processIncrement() /
+// processItemIncrement() then find emp_proff.structure_id already aligned and proceed normally;
+// employees blocked here keep their old structure and are skipped by those functions' existing
+// structure_change guard — exactly as in legacy.
+
+export interface AlterStructurePerEmployee {
+  emp_fkey: number;
+  emp_name: string;
+  ok: boolean;
+  note?: string;
+  formula_warnings: string[];
+}
+
+export interface AlterStructureResult {
+  perEmployee: AlterStructurePerEmployee[];
+  missingFields: string[];
+  wrongSalary: string[];
+}
+
+// Resolves with_effect_from / payout_month with the same fallback rules processIncrement() uses
+// inline (kept separate here to avoid touching that verified path).
+async function resolveEffectiveDates(
+  pool: Pool,
+  args: {
+    empFkey: number;
+    currentStructureId: number;
+    joiningDate: string;
+    rawWithEffectFrom: unknown;
+    rawPayoutMonth: unknown;
+  }
+): Promise<{ withEffectFrom: string; payoutMonth: string }> {
+  const { empFkey, currentStructureId, joiningDate } = args;
+
+  let withEffectFrom = args.rawWithEffectFrom
+    ? new Date(args.rawWithEffectFrom as string).toISOString().slice(0, 10)
+    : '';
+  if (!withEffectFrom || withEffectFrom === '0000-00-00') {
+    withEffectFrom = currentStructureId === 0 ? joiningDate : new Date().toISOString().slice(0, 10);
+  }
+
+  let payoutMonth = args.rawPayoutMonth
+    ? new Date(args.rawPayoutMonth as string).toISOString().slice(0, 10)
+    : '';
+  if (!payoutMonth || payoutMonth === '0000-00-00') {
+    if (currentStructureId === 0) {
+      payoutMonth = joiningDate ? `${joiningDate.slice(0, 7)}-01` : `${new Date().toISOString().slice(0, 7)}-01`;
+    } else {
+      const [[latest]] = await pool.execute<RowDataPacket[]>(
+        `SELECT MAX(month_year) AS latest FROM payroll_master WHERE emp_fkey = ? AND action = 'Processed'`,
+        [empFkey]
+      );
+      if (latest?.latest) {
+        payoutMonth = `${shiftMonth(String(latest.latest), 1)}-01`;
+      } else if (joiningDate) {
+        payoutMonth = `${shiftMonth(joiningDate.slice(0, 7), 1)}-01`;
+      } else {
+        payoutMonth = `${new Date().toISOString().slice(0, 7)}-01`;
+      }
+    }
+  }
+  return { withEffectFrom, payoutMonth };
+}
+
+export async function alterSalaryStructure(
+  pool: Pool,
+  hikePkey: number,
+  userId: string,
+  companyCode: string
+): Promise<AlterStructureResult> {
+  const [pairs] = await pool.execute<RowDataPacket[]>(
+    `SELECT DISTINCT emp_fkey, structure_id FROM salary_hike_details
+     WHERE salary_hike_fkey = ? AND status = 1`,
+    [hikePkey]
+  );
+
+  const perEmployee: AlterStructurePerEmployee[] = [];
+  const missingFields: string[] = [];
+  const wrongSalary: string[] = [];
+
+  for (const pair of pairs) {
+    const targetStructureId = Number(pair.structure_id);
+    const empFkey = Number(pair.emp_fkey);
+    if (targetStructureId === 0) continue; // legacy: `if ($structure_id != 0)`
+
+    const [[proff]] = await pool.execute<RowDataPacket[]>(
+      `SELECT structure_id, joining_date, emp_company_id, emp_type, emp_branch
+       FROM emp_proff WHERE emp_fkey = ?`,
+      [empFkey]
+    );
+    const [[nameRow]] = await pool.execute<RowDataPacket[]>(
+      `SELECT CONCAT(EmpName, ' - ', employee_id) AS emp_name FROM employee_info WHERE emp_pkey = ?`,
+      [empFkey]
+    );
+    const empName = String(nameRow?.emp_name ?? '').trim();
+    const currentStructureId = Number(proff?.structure_id ?? 0);
+    const joiningDate: string = proff?.joining_date
+      ? new Date(proff.joining_date).toISOString().slice(0, 10)
+      : '';
+
+    const [[draftDates]] = await pool.execute<RowDataPacket[]>(
+      `SELECT with_effect_from, next_increment_date, payout_month
+       FROM salary_hike_details
+       WHERE salary_hike_fkey = ? AND emp_fkey = ? AND status = 1
+       GROUP BY emp_fkey`,
+      [hikePkey, empFkey]
+    );
+
+    const { withEffectFrom, payoutMonth } = await resolveEffectiveDates(pool, {
+      empFkey,
+      currentStructureId,
+      joiningDate,
+      rawWithEffectFrom: draftDates?.with_effect_from,
+      rawPayoutMonth: draftDates?.payout_month,
+    });
+    const nextIncrementDate = draftDates?.next_increment_date
+      ? new Date(draftDates.next_increment_date).toISOString().slice(0, 10)
+      : null;
+
+    // Joining-date guard (legacy silently `continue`s here).
+    if (!joiningDate || joiningDate > withEffectFrom) {
+      perEmployee.push({ emp_fkey: empFkey, emp_name: empName, ok: false, note: 'Joining date missing or after the effective date.', formula_warnings: [] });
+      continue;
+    }
+
+    // total = SUM(new_amount) over the draft's Direct / head_fkey=1 rows (legacy `arr_total`).
+    const [[totalRow]] = await pool.execute<RowDataPacket[]>(
+      `SELECT SUM(new_amount) AS amount FROM salary_hike_details shd
+       WHERE shd.salary_hike_fkey = ? AND shd.emp_fkey = ? AND shd.status = 1
+         AND (shd.item <> 'Y' OR shd.salary_head_item_fkey IN (
+           SELECT salary_head_item_pkey FROM salary_head_items
+           WHERE head_fkey = 1 AND item_part = 'Direct' AND status = 1))`,
+      [hikePkey, empFkey]
+    );
+    const total = Number(totalRow?.amount ?? 0);
+
+    const [[structRow]] = await pool.execute<RowDataPacket[]>(
+      `SELECT structure_eg_amt FROM salary_structure WHERE structure_id = ? AND structure_active = 1`,
+      [targetStructureId]
+    );
+    const structureEgAmt = Number(structRow?.structure_eg_amt ?? 0);
+
+    // Statutory-field pre-check — port of legacy's `arr_statuttory_fields` UNION query.
+    const [[statRow]] = await pool.execute<RowDataPacket[]>(
+      `SELECT GROUP_CONCAT(DISTINCT missing_item SEPARATOR ', ') AS missing_fields FROM (
+         SELECT 'UAN No' AS missing_item
+         FROM salary_structure_details ssd
+         LEFT JOIN salary_head_items shi ON shi.salary_head_item_pkey = ssd.salary_head_item_fkey
+         LEFT JOIN emp_details ed ON ed.emp_pkey = ?
+         WHERE ssd.structure_id = ? AND ssd.structure_det_value <> 0
+           AND (UPPER(shi.item) LIKE '%EPF%' OR UPPER(shi.item) LIKE '%PF%' OR UPPER(shi.item) LIKE '%PROVIDENT FUND%')
+           AND (ed.company_pf IS NULL OR TRIM(ed.pf) = '')
+         UNION ALL
+         SELECT 'ESI No'
+         FROM salary_structure_details ssd
+         LEFT JOIN salary_head_items shi ON shi.salary_head_item_pkey = ssd.salary_head_item_fkey
+         LEFT JOIN emp_details ed ON ed.emp_pkey = ?
+         WHERE ssd.structure_id = ? AND ssd.structure_det_value <> 0
+           AND shi.item LIKE '%ESI%' AND (ed.esi IS NULL OR TRIM(ed.esi) = '')
+         UNION ALL
+         SELECT 'LWF Registration Number'
+         FROM salary_structure_details ssd
+         LEFT JOIN salary_head_items shi ON shi.salary_head_item_pkey = ssd.salary_head_item_fkey
+         LEFT JOIN emp_details ed ON ed.emp_pkey = ?
+         WHERE ssd.structure_id = ? AND ssd.structure_det_value <> 0
+           AND shi.item LIKE '%LWF%' AND (ed.lwf_code IS NULL OR TRIM(ed.lwf_code) = '')
+         UNION ALL
+         SELECT 'PAN No'
+         FROM salary_structure_details ssd
+         LEFT JOIN tax_salary_components tsc ON tsc.salary_head_item_Fkey = ssd.salary_head_item_fkey
+         LEFT JOIN emp_details ed ON ed.emp_pkey = ?
+         WHERE ssd.structure_id = ? AND ssd.structure_det_value <> 0
+           AND TRIM(tsc.tax_salary_components_name) = 'TDS' AND (ed.pan_no IS NULL OR TRIM(ed.pan_no) = '')
+       ) t`,
+      [empFkey, targetStructureId, empFkey, targetStructureId, empFkey, targetStructureId, empFkey, targetStructureId]
+    );
+    const missing = String(statRow?.missing_fields ?? '').trim();
+    if (missing) {
+      missingFields.push(`Fields missing for ${empName} : ${missing}`);
+      perEmployee.push({ emp_fkey: empFkey, emp_name: empName, ok: false, note: `Missing: ${missing}`, formula_warnings: [] });
+      continue;
+    }
+
+    // Wrong-salary gate (legacy: `if ($structure_eg_amt > $total)`).
+    if (structureEgAmt > total) {
+      wrongSalary.push(`Incorrect salary for ${empName}`);
+      perEmployee.push({ emp_fkey: empFkey, emp_name: empName, ok: false, note: `New salary ${total} is below the structure minimum ${structureEgAmt}.`, formula_warnings: [] });
+      continue;
+    }
+
+    if (targetStructureId === currentStructureId) {
+      // Nothing to move (legacy pushes response[]=0 for this case).
+      perEmployee.push({ emp_fkey: empFkey, emp_name: empName, ok: false, note: 'Already on the target structure.', formula_warnings: [] });
+      continue;
+    }
+
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+
+      // First-time allocation: seed a CTC row so sal_structure_distribution_fn has an active
+      // emp_ctc_transaction to work against. Legacy inserts via the EmployeeCTC model, which maps
+      // to emp_ctc_upload; its AFTER INSERT trigger (emp_ctc_upload_ai) creates the
+      // emp_ctc_transaction row. Only for no-current-structure employees with no CTC yet.
+      if (currentStructureId === 0) {
+        const [[ctcRow]] = await conn.execute<RowDataPacket[]>(
+          'SELECT COUNT(*) AS cnt FROM emp_ctc_transaction WHERE emp_fkey = ? AND end_date_effective IS NULL',
+          [empFkey]
+        );
+        if (Number(ctcRow?.cnt ?? 0) === 0) {
+          if (total <= 0) { await conn.rollback(); continue; }
+          const empType = String(proff?.emp_type ?? '').trim().toUpperCase();
+          const annualCtc = empType === 'DAILY WAGES' || empType === 'HOURLY WAGES' ? total : total * 12;
+          // approved_by is `int` live even though legacy writes the string login id into it;
+          // left NULL here (same divergence already documented in processIncrement()).
+          await conn.execute(
+            `INSERT INTO emp_ctc_upload
+               (emp_fkey, emp_anual_ctc, emp_monthly_ctc, arrear_salary, pay_out_month, created_by,
+                start_date_effective, approved_by, next_increment_date, branch, status)
+             VALUES (?, ?, ?, 'N', ?, ?, ?, NULL, ?, ?, 1)`,
+            [
+              empFkey, annualCtc, total, payoutMonth, userId, withEffectFrom,
+              nextIncrementDate, proff?.emp_branch ?? null,
+            ]
+          );
+        }
+      }
+
+      const { ok, formulaWarnings } = await allocateSalaryStructure(conn, {
+        companyCode, userId, empFkey, structureId: targetStructureId,
+      });
+
+      await conn.commit();
+      perEmployee.push({
+        emp_fkey: empFkey,
+        emp_name: empName,
+        ok,
+        note: ok ? undefined : 'sal_structure_distribution_fn returned 0 — no structure rows were created.',
+        formula_warnings: formulaWarnings,
+      });
+    } catch (err) {
+      await conn.rollback();
+      throw err;
+    } finally {
+      conn.release();
+    }
+  }
+
+  return { perEmployee, missingFields, wrongSalary };
 }
 
 // ---------------------------------------------------------------------------

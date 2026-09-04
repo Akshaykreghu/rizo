@@ -1,6 +1,7 @@
 'use client';
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useSetupRows } from '@/lib/setupOptions';
 import { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, Upload, Image as ImageIcon } from 'lucide-react';
@@ -254,11 +255,10 @@ export default function CompanyProfilePage() {
     queryFn: () => fetch('/api/setup/compliance').then((r) => r.json()),
   });
 
-  const { data: finYearBranches = [] } = useQuery<{ branch_code: string; branch_name: string }[]>({
-    queryKey: ['setup/branches'],
-    queryFn: () => fetch('/api/setup/branches').then((r) => r.json()),
-    enabled: tab === 'financial-year',
-  });
+  const { data: finYearBranches = [] } = useSetupRows<{ branch_code: string; branch_name: string }>(
+    'setup/branches',
+    { enabled: tab === 'financial-year' },
+  );
 
   useEffect(() => {
     if (!data) return;

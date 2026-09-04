@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useSetupRows } from '@/lib/setupOptions';
 import { Plus, Pencil, X } from 'lucide-react';
 import type { ColumnDef } from '@tanstack/react-table';
 import { cn } from '@/lib/utils';
@@ -44,10 +45,7 @@ export function DevicesPanel() {
     queryFn: () => fetch('/api/setup/devices').then((r) => r.json()),
   });
 
-  const { data: branches = [] } = useQuery<Branch[]>({
-    queryKey: ['setup/branches'],
-    queryFn: () => fetch('/api/setup/branches').then((r) => r.json()),
-  });
+  const { data: branches = [] } = useSetupRows<Branch>('setup/branches');
 
   const save = useMutation({
     mutationFn: async (data: FormState) => {

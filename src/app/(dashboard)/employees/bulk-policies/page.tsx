@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Search, Settings } from 'lucide-react';
 import { HierarchyMover } from '@/components/employees/HierarchyMover';
+import { SalaryStructureAllocator } from '@/components/employees/SalaryStructureAllocator';
 import { cn } from '@/lib/utils';
 import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
 
@@ -21,7 +22,7 @@ const SECTIONS: { type: string; title: string; lookupPath: string; valueKey: str
   { type: 'SHIFT', title: 'Shift Allocation', lookupPath: 'setup/shifts', valueKey: 'day_time_seq', labelFn: (r) => String(r.day_time_desc) },
   { type: 'LEAVE', title: 'Leave Policy', lookupPath: 'setup/leavepolicy-groups', valueKey: 'LEAVEPOLICY_GROUP_ID', labelFn: (r) => String(r.LEAVEPOLICY_GROUP_NAME) },
   { type: 'HOLIDAY', title: 'Holiday', lookupPath: 'setup/holiday-groups', valueKey: 'HOLIDAY_GROUP_ID', labelFn: (r) => String(r.HOLIDAY_GROUP_NAME) },
-  { type: 'SALARY', title: 'Salary Structure', lookupPath: 'setup/salary-structures', valueKey: 'structure_id', labelFn: (r) => String(r.structure_name) },
+  // SALARY is handled by <SalaryStructureAllocator/> (3-panel allocate/de-allocate), not PolicySection.
   { type: 'NOTICEPER', title: 'Notice Period', lookupPath: 'setup/notice-periods', valueKey: 'notice_pkey', labelFn: (r) => `${r.description} (${r.notice_days} days)` },
   { type: 'DIVISION', title: 'Division', lookupPath: 'setup/divisions', valueKey: 'id', labelFn: (r) => String(r.div_name) },
   { type: 'SECTION', title: 'Section', lookupPath: 'setup/sections', valueKey: 'id', labelFn: (r) => String(r.section_name) },
@@ -196,6 +197,7 @@ export default function BulkPoliciesPage() {
         </div>
       </div>
 
+      {activeTab === 'SALARY' && <SalaryStructureAllocator key="SALARY" />}
       {activeSection && <PolicySection key={activeSection.type} {...activeSection} employees={employees} />}
       {activeTab === 'HIERARCHY' && <HierarchyMover key="HIERARCHY" type="HIERARCHY" title="Employee Hierarchy" employees={employees} />}
       {activeTab === 'LAPPR' && <HierarchyMover key="LAPPR" type="LAPPR" title="Leave Hierarchy" employees={employees} />}

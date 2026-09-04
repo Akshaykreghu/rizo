@@ -3,22 +3,14 @@
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
+import { useSetupOptions } from '@/lib/setupOptions';
 import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
 import { AttendanceGrid, type AttendanceDay, type AttendanceRow } from '@/components/attendance/AttendanceGrid';
 import { ATTENDANCE_LEGEND, getCellColor } from '@/lib/attendance';
 import { cn } from '@/lib/utils';
 import { ShieldCheck, ShieldOff, X, Clock, Timer, LogIn, LogOut, Lock, Plus, Layers, Eye, EyeOff, BadgeCheck } from 'lucide-react';
 
-interface Option { value: string; label: string }
-
-function useLookup(path: string, valueKey: string, labelFn: (r: Record<string, unknown>) => string) {
-  return useQuery<Option[]>({
-    queryKey: [path],
-    queryFn: () => fetch(`/api/${path}`).then((r) => r.json()).then((rows: Record<string, unknown>[]) =>
-      rows.map((r) => ({ value: String(r[valueKey]), label: labelFn(r) }))
-    ),
-  });
-}
+const useLookup = useSetupOptions;
 
 function currentMonth() {
   const d = new Date();

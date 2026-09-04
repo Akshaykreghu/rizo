@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useSetupOptions } from '@/lib/setupOptions';
 import { Plus, X, Check, Ban, Eye, Pencil } from 'lucide-react';
 import { EmployeeSearch } from '@/components/employees/EmployeeSearch';
 import { cn, formatDate } from '@/lib/utils';
@@ -45,16 +46,7 @@ interface PromotionRow {
   promotion_status: string;
 }
 
-interface Option { value: string; label: string }
-
-function useLookup(path: string, valueKey: string, labelFn: (r: Record<string, unknown>) => string) {
-  return useQuery<Option[]>({
-    queryKey: [path],
-    queryFn: () => fetch(`/api/${path}`).then((r) => r.json()).then((rows: Record<string, unknown>[]) =>
-      rows.map((r) => ({ value: String(r[valueKey]), label: labelFn(r) }))
-    ),
-  });
-}
+const useLookup = useSetupOptions;
 
 const STATUS_TABS = [
   { value: 'N', label: 'Pending' },

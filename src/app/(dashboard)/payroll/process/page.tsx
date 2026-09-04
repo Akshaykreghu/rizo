@@ -3,6 +3,7 @@
 import { Suspense, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useSetupRows } from '@/lib/setupOptions';
 import { ListFilter, PlayCircle, XCircle, FileText } from 'lucide-react';
 import type { ColumnDef, Row } from '@tanstack/react-table';
 import { cn, formatCurrency } from '@/lib/utils';
@@ -84,10 +85,7 @@ function ProcessPayrollContent() {
   const [listed, setListed] = useState(false);
   const [slipId, setSlipId] = useState<number | null>(null);
 
-  const { data: branches = [] } = useQuery<Branch[]>({
-    queryKey: ['setup/branches'],
-    queryFn: () => fetch('/api/setup/branches').then((r) => r.json()),
-  });
+  const { data: branches = [] } = useSetupRows<Branch>('setup/branches');
 
   const { data: employeesResp } = useQuery<{ data: Employee[] }>({
     queryKey: ['employees', branch],

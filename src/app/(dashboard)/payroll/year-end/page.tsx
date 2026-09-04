@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useSetupRows } from '@/lib/setupOptions';
 import { Archive, ArrowRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
@@ -38,10 +39,7 @@ export default function YearEndPage() {
   const [message, setMessage] = useState<string | null>(null);
   const [confirmProcess, setConfirmProcess] = useState(false);
 
-  const { data: branches = [] } = useQuery<Branch[]>({
-    queryKey: ['setup/branches'],
-    queryFn: () => fetch('/api/setup/branches').then((r) => r.json()),
-  });
+  const { data: branches = [] } = useSetupRows<Branch>('setup/branches');
 
   const { data, isLoading } = useQuery<YearEndData>({
     queryKey: ['payroll/year-end', branch],

@@ -7,6 +7,7 @@ import { Lock, Unlock, Smartphone, RotateCcw, KeyRound, X, Search, Users } from 
 import { DataTable } from '@/components/data-table/DataTable';
 import type { ColumnDef } from '@tanstack/react-table';
 import { cn } from '@/lib/utils';
+import { useSetupRows } from '@/lib/setupOptions';
 import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
 
 const INPUT_CLASS =
@@ -403,12 +404,7 @@ function BulkAccessModal({ onClose, onDone }: { onClose: () => void; onDone: (me
   const [branch, setBranch] = useState('');
   const [password, setPassword] = useState('');
 
-  const { data: branches = [] } = useQuery<BranchOption[]>({
-    queryKey: ['setup/branches'],
-    queryFn: () => fetch('/api/setup/branches').then((r) => r.json()).then((rows: Record<string, unknown>[]) =>
-      rows.map((r) => ({ branch_code: String(r.branch_code), branch_name: String(r.branch_name) }))
-    ),
-  });
+  const { data: branches = [] } = useSetupRows<BranchOption>('setup/branches');
 
   const passwordTooShort = !!password && password.length < MIN_PASSWORD_LENGTH;
 

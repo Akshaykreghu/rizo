@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useSetupOptions } from '@/lib/setupOptions';
 import { Plus, Pencil, Trash2, Play, Undo2, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
@@ -21,16 +22,7 @@ interface AppliedRow {
   exceptionAppliedPkey: number; ruleId: number; ruleName: string; branchCode: string;
   branchName: string | null; appliedDate: string; monthYear: string; createdBy: string | null;
 }
-interface Option { value: string; label: string }
-
-function useLookup(path: string, valueKey: string, labelFn: (r: Record<string, unknown>) => string) {
-  return useQuery<Option[]>({
-    queryKey: [path],
-    queryFn: () => fetch(`/api/${path}`).then((r) => r.json()).then((rows: Record<string, unknown>[]) =>
-      rows.map((r) => ({ value: String(r[valueKey]), label: labelFn(r) }))
-    ),
-  });
-}
+const useLookup = useSetupOptions;
 
 function currentMonth() {
   const d = new Date();

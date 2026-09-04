@@ -47,7 +47,9 @@ export async function GET(
   const [[empRows], [proffRows], [ctcRows]] = await Promise.all([
     pool.execute<RowDataPacket[]>(
       `SELECT e.*, b.branch_name AS emp_branch_name, d.dept_name, ds.desig_name, g.grade_name,
-              m.first_name AS manager_first_name, m.last_name AS manager_last_name
+              m.first_name AS manager_first_name, m.last_name AS manager_last_name,
+              wdtp.day_time_desc AS shift_name, hg.HOLIDAY_GROUP_NAME AS holiday_group_name,
+              lpg.LEAVEPOLICY_GROUP_NAME AS leave_policy_group_name
        FROM emp_details e
        LEFT JOIN emp_proff p ON p.emp_fkey = e.emp_pkey
        LEFT JOIN branches b ON b.branch_code = p.emp_branch
@@ -55,6 +57,9 @@ export async function GET(
        LEFT JOIN designation ds ON ds.desig_code = p.designation
        LEFT JOIN grade g ON g.grade_code = p.emp_grade
        LEFT JOIN emp_details m ON m.emp_pkey = p.attr1
+       LEFT JOIN working_day_time_procedures wdtp ON wdtp.day_time_seq = p.day_time_seq
+       LEFT JOIN holiday_group hg ON hg.HOLIDAY_GROUP_ID = p.HOLIDAY_GROUP_ID
+       LEFT JOIN leavepolicy_group lpg ON lpg.LEAVEPOLICY_GROUP_ID = p.LEAVEPOLICY_GROUP_ID
        WHERE e.emp_pkey = ?`,
       [empPkey]
     ),
@@ -125,7 +130,8 @@ export async function PUT(
       await connection.execute(
         `UPDATE emp_proff SET
            joining_date = ?, emp_branch = ?, emp_dept = ?, designation = ?, emp_grade = ?,
-           emp_type = ?, attr1 = ?, probation = ?, structure_id = ?
+           emp_type = ?, attr1 = ?, probation = ?, structure_id = ?, day_time_seq = ?,
+           HOLIDAY_GROUP_ID = ?, LEAVEPOLICY_GROUP_ID = ?
          WHERE emp_fkey = ?`,
         [
           body.joining_date ?? null, body.emp_branch ?? null, body.emp_dept ?? null,
@@ -133,19 +139,25 @@ export async function PUT(
           body.emp_type ?? null, body.attr1 ?? null,
           body.probation ? Number(body.probation) : null,
           body.structure_id ? Number(body.structure_id) : null,
+          body.day_time_seq ? Number(body.day_time_seq) : null,
+          body.holiday_group_id ? Number(body.holiday_group_id) : null,
+          body.leavepolicy_group_id ? Number(body.leavepolicy_group_id) : null,
           empPkey,
         ]
       );
     } else {
       await connection.execute(
         `INSERT INTO emp_proff
-           (emp_fkey, joining_date, emp_branch, emp_dept, designation, emp_grade, emp_type, attr1, probation, structure_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           (emp_fkey, joining_date, emp_branch, emp_dept, designation, emp_grade, emp_type, attr1, probation, structure_id, day_time_seq, HOLIDAY_GROUP_ID, LEAVEPOLICY_GROUP_ID)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           empPkey, body.joining_date ?? null, body.emp_branch ?? null, body.emp_dept ?? null,
           body.designation ?? null, body.emp_grade ?? null, body.emp_type ?? null, body.attr1 ?? null,
           body.probation ? Number(body.probation) : null,
           body.structure_id ? Number(body.structure_id) : null,
+          body.day_time_seq ? Number(body.day_time_seq) : null,
+          body.holiday_group_id ? Number(body.holiday_group_id) : null,
+          body.leavepolicy_group_id ? Number(body.leavepolicy_group_id) : null,
         ]
       );
     }

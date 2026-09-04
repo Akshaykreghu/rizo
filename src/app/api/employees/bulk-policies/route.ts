@@ -4,10 +4,11 @@ import { getCompanyPool } from '@/lib/db';
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket } from 'mysql2';
 
-// Mirrors legacy EmployeeConfigController.php's addEmpTo{Shift,Leave,Holiday,Notice,Sallary,Div,Section,Grade}:
+// Mirrors legacy EmployeeConfigController.php's addEmpTo{Shift,Leave,Holiday,Notice,Div,Section,Grade}:
 // an emp_config audit row per employee, plus updating the live emp_proff column those
 // features actually read from. Employee Hierarchy and Leave Hierarchy are a separate
-// mover-UI workflow, handled by /api/employees/hierarchy instead.
+// mover-UI workflow, handled by /api/employees/hierarchy instead. Salary Structure has its
+// own 3-panel allocate/de-allocate workflow at /api/employees/bulk-policies/salary.
 const TYPE_CONFIG: Record<string, { empProffColumn: string; resolveValue?: true }> = {
   SHIFT: { empProffColumn: 'day_time_seq' },
   LEAVE: { empProffColumn: 'LEAVEPOLICY_GROUP_ID' },
@@ -31,37 +32,14 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'type, policy_id, and emp_fkeys[] are required' }, { status: 400 });
   }
 
-  const pool = await getCompanyPool(session.user.companyCode);
-
   if (type === 'SALARY') {
-    const results: { emp_fkey: number; success: boolean }[] = [];
-    for (const empFkey of emp_fkeys) {
-      const [[row]] = await pool.execute<RowDataPacket[]>(
-        'SELECT sal_structure_distribution_fn(?, ?, ?, ?) AS result',
-        [session.user.companyCode, empFkey, policy_id, session.user.loginUserId]
-      );
-      const success = Number(row.result) === 1;
-      results.push({ emp_fkey: empFkey, success });
-      if (success) {
-        const [[emp]] = await pool.execute<RowDataPacket[]>(
-          'SELECT branch_code FROM emp_details WHERE emp_pkey = ?',
-          [empFkey]
-        );
-        await pool.execute(
-          `INSERT INTO emp_config (type, company_code, branch_code, emp_fkey, policy_id, created_by, status)
-           VALUES ('SALARY', ?, ?, ?, ?, ?, 1)`,
-          [session.user.companyCode, emp?.branch_code ?? null, empFkey, policy_id, session.user.loginUserId]
-        );
-      }
-    }
-    const failed = results.filter((r) => !r.success).map((r) => r.emp_fkey);
-    return NextResponse.json({
-      success: true,
-      assigned: results.filter((r) => r.success).length,
-      failed,
-      failedNote: failed.length ? 'These employees likely have no active CTC assigned yet — assign CTC first.' : undefined,
-    });
+    return NextResponse.json(
+      { error: 'Salary Structure allocation uses /api/employees/bulk-policies/salary' },
+      { status: 400 }
+    );
   }
+
+  const pool = await getCompanyPool(session.user.companyCode);
 
   const config = TYPE_CONFIG[type];
   if (!config) {

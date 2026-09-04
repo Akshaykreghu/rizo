@@ -4,6 +4,7 @@ import { useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { useQuery, useMutation } from '@tanstack/react-query';
+import { useSetupRows } from '@/lib/setupOptions';
 import { Download, Upload, ArrowLeft } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
@@ -24,10 +25,7 @@ export default function ImportEmployeePage() {
   const [branch, setBranch] = useState('');
   const [result, setResult] = useState<UploadResult | null>(null);
 
-  const { data: branches = [] } = useQuery<BranchOption[]>({
-    queryKey: ['setup/branches'],
-    queryFn: () => fetch('/api/setup/branches').then((r) => r.json()),
-  });
+  const { data: branches = [] } = useSetupRows<BranchOption>('setup/branches');
 
   const upload = useMutation({
     mutationFn: (file: File) => {

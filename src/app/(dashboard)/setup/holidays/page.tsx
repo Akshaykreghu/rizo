@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery } from '@tanstack/react-query';
+import { useSetupRows } from '@/lib/setupOptions';
 import { SetupCrudPage } from '@/components/setup/SetupCrudPage';
 import { cn } from '@/lib/utils';
 import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
@@ -31,10 +32,7 @@ export default function HolidaysPage() {
   const [tab, setTab] = useState<Tab>('groups');
   const [selectedGroupId, setSelectedGroupId] = useState<number | null>(null);
 
-  const { data: branches = [] } = useQuery<Branch[]>({
-    queryKey: ['setup/branches'],
-    queryFn: () => fetch('/api/setup/branches').then((r) => r.json()),
-  });
+  const { data: branches = [] } = useSetupRows<Branch>('setup/branches');
 
   const { data: groups = [] } = useQuery<HolidayGroup[]>({
     queryKey: ['setup/holiday-groups'],

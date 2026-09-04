@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useSetupRows } from '@/lib/setupOptions';
 import { Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { AvatarUpload } from '@/components/ui/AvatarUpload';
@@ -85,10 +86,7 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
     },
   });
 
-  const { data: nationalities = [] } = useQuery<NationalityOption[]>({
-    queryKey: ['setup/nationalities'],
-    queryFn: () => fetch('/api/setup/nationalities').then((r) => r.json()),
-  });
+  const { data: nationalities = [] } = useSetupRows<NationalityOption>('setup/nationalities');
 
   useEffect(() => {
     if (data?.join) {

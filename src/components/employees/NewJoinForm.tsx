@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useSetupRows } from '@/lib/setupOptions';
 import { ArrowLeft } from 'lucide-react';
 import { FileUploadField } from '@/components/employees/FileUploadField';
 import { dobError, mobileError, aadhaarError } from '@/lib/validation';
@@ -30,10 +30,7 @@ export function NewJoinForm({ onBack, onCreated, showBackLink = true }: NewJoinF
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 
-  const { data: nationalities = [] } = useQuery<NationalityOption[]>({
-    queryKey: ['setup/nationalities'],
-    queryFn: () => fetch('/api/setup/nationalities').then((r) => r.json()),
-  });
+  const { data: nationalities = [] } = useSetupRows<NationalityOption>('setup/nationalities');
 
   function f(key: keyof typeof EMPTY_FORM) {
     return {

@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery } from '@tanstack/react-query';
+import { useSetupRows } from '@/lib/setupOptions';
 import { Download } from 'lucide-react';
 import type { ColumnDef } from '@tanstack/react-table';
 import { cn, formatCurrency } from '@/lib/utils';
@@ -41,10 +42,7 @@ export default function TdsReportPage() {
   const [branch, setBranch] = useState('');
   const [month, setMonth] = useState(currentMonthYear());
 
-  const { data: branches = [] } = useQuery<Branch[]>({
-    queryKey: ['setup/branches'],
-    queryFn: () => fetch('/api/setup/branches').then((r) => r.json()),
-  });
+  const { data: branches = [] } = useSetupRows<Branch>('setup/branches');
 
   const { data, isLoading } = useQuery<{ rows: TdsRow[] }>({
     queryKey: ['reports/tds', branch, month],

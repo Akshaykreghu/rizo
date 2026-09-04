@@ -8,8 +8,7 @@ import { AvatarUpload } from '@/components/ui/AvatarUpload';
 import { EmployeeSearch } from '@/components/employees/EmployeeSearch';
 import { RepeatableRows } from '@/components/employees/RepeatableRows';
 import { DocumentUploadField } from '@/components/employees/DocumentUploadField';
-
-interface SelectOption { value: string; label: string }
+import { useSetupOptions } from '@/lib/setupOptions';
 
 const DOCUMENT_TYPES = ['Aadhaar', 'PAN', 'Passport', 'Driving License', 'Voter ID', 'Educational Certificate', 'Offer Letter', 'Relieving Letter', 'Other'];
 
@@ -23,22 +22,6 @@ const SECTION_ACCENT = {
   success: 'bg-[color:var(--color-success)]/10 text-[color:var(--color-success)]',
 } as const;
 
-function useSetupOptions(path: string, codeKey: string, nameKey: string) {
-  // The ['setup/*'] query keys are shared app-wide and get filled with inconsistent shapes
-  // (raw API rows, {code, name} maps, {value, label} maps) depending on which page loads
-  // first — React Query keys the cache by queryKey alone, so the first writer wins and the
-  // others read a shape they can't render (blank <option>s). Cache the raw rows and shape
-  // per-component via `select`, falling back to value/label so any cached shape still renders.
-  return useQuery<Record<string, unknown>[], Error, SelectOption[]>({
-    queryKey: [path],
-    queryFn: () => fetch(`/api/${path}`).then((r) => r.json()),
-    select: (rows) =>
-      (rows ?? []).map((r) => ({
-        value: String(r[codeKey] ?? r.value ?? ''),
-        label: String(r[nameKey] ?? r.label ?? ''),
-      })),
-  });
-}
 
 interface EmployeeDetailProps {
   id: string;
@@ -70,6 +53,9 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
   const { data: designations = [] } = useSetupOptions('setup/designations', 'desig_code', 'desig_name');
   const { data: grades = [] } = useSetupOptions('setup/grades', 'grade_code', 'grade_name');
   const { data: structures = [] } = useSetupOptions('setup/salary-structures', 'structure_id', 'structure_name');
+  const { data: shifts = [] } = useSetupOptions('setup/shifts', 'day_time_seq', 'day_time_desc');
+  const { data: holidayGroups = [] } = useSetupOptions('setup/holiday-groups', 'HOLIDAY_GROUP_ID', 'HOLIDAY_GROUP_NAME');
+  const { data: leavePolicyGroups = [] } = useSetupOptions('setup/leavepolicy-groups', 'LEAVEPOLICY_GROUP_ID', 'LEAVEPOLICY_GROUP_NAME');
 
   useEffect(() => {
     if (data?.employee && data?.professional !== undefined) {
@@ -104,6 +90,9 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
         designation: data.professional?.designation ?? '',
         emp_grade: data.professional?.emp_grade ?? '',
         emp_type: data.professional?.emp_type ?? '',
+        day_time_seq: data.professional?.day_time_seq != null ? String(data.professional.day_time_seq) : '',
+        holiday_group_id: data.professional?.HOLIDAY_GROUP_ID != null ? String(data.professional.HOLIDAY_GROUP_ID) : '',
+        leavepolicy_group_id: data.professional?.LEAVEPOLICY_GROUP_ID != null ? String(data.professional.LEAVEPOLICY_GROUP_ID) : '',
         attr1: data.professional?.attr1 ?? '',
         probation: data.professional?.probation != null ? String(data.professional.probation) : '',
         structure_id: data.professional?.structure_id != null ? String(data.professional.structure_id) : '',
@@ -345,6 +334,9 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                 { key: 'emp_dept', label: 'Department', opts: departments },
                 { key: 'designation', label: 'Designation', opts: designations },
                 { key: 'emp_grade', label: 'Grade', opts: grades },
+                { key: 'day_time_seq', label: 'Shift Policy', opts: shifts },
+                { key: 'holiday_group_id', label: 'Holiday Group', opts: holidayGroups },
+                { key: 'leavepolicy_group_id', label: 'Leave Policy Group', opts: leavePolicyGroups },
               ].map(({ key, label, opts }) => (
                 <div key={key}>
                   <label className={LABEL_CLASS}>{label}</label>
@@ -373,6 +365,9 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
               <InfoRow label="Department" value={emp.dept_name} />
               <InfoRow label="Designation" value={emp.desig_name} />
               <InfoRow label="Grade" value={emp.grade_name} />
+              <InfoRow label="Shift Policy" value={emp.shift_name} />
+              <InfoRow label="Holiday Group" value={emp.holiday_group_name} />
+              <InfoRow label="Leave Policy Group" value={emp.leave_policy_group_name} />
               <InfoRow label="Employment Type" value={prof?.emp_type} />
               <InfoRow label="Probation (days)" value={prof?.probation} />
               <InfoRow label="Reporting Manager" value={emp.manager_first_name ? `${emp.manager_first_name} ${emp.manager_last_name ?? ''}` : ''} />

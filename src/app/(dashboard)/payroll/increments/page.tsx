@@ -402,14 +402,21 @@ function IncrementsContent({ embeddedEmpPkey, onClose }: IncrementsContentProps 
       const res = await fetch(`/api/payroll/increments/${id}/process`, { method: 'POST' });
       const b = await res.json();
       if (!res.ok) throw new Error(b.error ?? 'Processing failed');
-      return b as { success: boolean; notProcessed: string[]; invalidSalary: string[] };
+      return b as {
+        success: boolean;
+        notProcessed: string[];
+        invalidSalary: string[];
+        structureResult?: { missingFields: string[]; wrongSalary: string[] };
+      };
     },
     onSuccess: (b) => {
-      if (b.notProcessed.length || b.invalidSalary.length) {
-        setMessage([...b.notProcessed, ...b.invalidSalary].join('; '));
-      } else {
-        setMessage('Increment processed.');
-      }
+      const problems = [
+        ...(b.structureResult?.missingFields ?? []),
+        ...(b.structureResult?.wrongSalary ?? []),
+        ...b.notProcessed,
+        ...b.invalidSalary,
+      ];
+      setMessage(problems.length ? problems.join('; ') : 'Increment processed.');
       queryClient.invalidateQueries({ queryKey: ['payroll/increments'] });
     },
     onError: (err: Error) => setMessage(err.message),
@@ -968,8 +975,8 @@ function IncrementsContent({ embeddedEmpPkey, onClose }: IncrementsContentProps 
               <button onClick={() => setViewId(null)} className="text-slate-400 hover:text-slate-600 text-sm">Close</button>
             </div>
             {batch?.hike?.structure_change === 'Y' && (
-              <p className="text-[12px] text-amber-700 flex items-center gap-1 mb-3">
-                <AlertTriangle className="w-3.5 h-3.5" /> This is a structure-change increment. Structure-change processing is not yet available here — processing will skip these employees.
+              <p className="text-[12px] text-slate-500 flex items-center gap-1 mb-3">
+                <AlertTriangle className="w-3.5 h-3.5 text-amber-500" /> This increment also moves the employee onto a different salary structure. Processing runs the statutory / minimum-salary checks first; an employee that fails them keeps their current structure and is not processed.
               </p>
             )}
             {batch?.hike?.remarks && <p className="text-[12.5px] text-slate-500 mb-3">Remarks: {batch.hike.remarks}</p>}

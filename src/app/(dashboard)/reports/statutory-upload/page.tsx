@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery, useMutation } from '@tanstack/react-query';
+import { useSetupRows } from '@/lib/setupOptions';
 import { Download, Play } from 'lucide-react';
 import type { ColumnDef } from '@tanstack/react-table';
 import { cn, formatCurrency } from '@/lib/utils';
@@ -71,10 +72,7 @@ export default function StatutoryUploadPage() {
   const [rows, setRows] = useState<EpfContributionRow[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  const { data: branches } = useQuery<Branch[]>({
-    queryKey: ['setup/branches'],
-    queryFn: () => fetch('/api/setup/branches').then((r) => r.json()),
-  });
+  const { data: branches } = useSetupRows<Branch>('setup/branches');
 
   const generate = useMutation({
     mutationFn: async () => {

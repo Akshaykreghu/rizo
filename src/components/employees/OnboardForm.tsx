@@ -4,12 +4,10 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft } from 'lucide-react';
 import { EmployeeSearch } from '@/components/employees/EmployeeSearch';
+import { useSetupOptions } from '@/lib/setupOptions';
 
 interface SelectOption { value: string; label: string }
 interface JoinDetail { join: Record<string, string> }
-
-// Tolerant option mapper — see the useQuery block below for why this has to accept
-// raw API rows, {code, name} maps and {value, label} maps interchangeably.
 const opt = (codeKey: string, nameKey: string) => (rows: Record<string, unknown>[]): SelectOption[] =>
   (rows ?? []).map((r) => ({
     value: String(r[codeKey] ?? r.value ?? ''),
@@ -46,37 +44,11 @@ export function OnboardForm({ id, onBack, onOnboarded, showBackLink = true }: On
     },
   });
 
-  // These lookups share their queryKey (['setup/branches'], etc.) with other pages. React Query
-  // keys the cache by queryKey alone, and across the app the same key is filled with three
-  // different shapes: raw API rows, {branch_code, branch_name} maps, and {value, label} maps
-  // (useLookup/useSetupOptions). Whichever page loads first wins the cache entry, which is why
-  // this dropdown sometimes rendered blank <option>s. Keep queryFn raw and make `select`
-  // tolerant of every shape so render is correct regardless of load order.
-  const { data: branches = [] } = useQuery<Record<string, unknown>[], Error, SelectOption[]>({
-    queryKey: ['setup/branches'],
-    queryFn: () => fetch('/api/setup/branches').then((r) => r.json()),
-    select: opt('branch_code', 'branch_name'),
-  });
-  const { data: departments = [] } = useQuery<Record<string, unknown>[], Error, SelectOption[]>({
-    queryKey: ['setup/departments'],
-    queryFn: () => fetch('/api/setup/departments').then((r) => r.json()),
-    select: opt('dept_code', 'dept_name'),
-  });
-  const { data: designations = [] } = useQuery<Record<string, unknown>[], Error, SelectOption[]>({
-    queryKey: ['setup/designations'],
-    queryFn: () => fetch('/api/setup/designations').then((r) => r.json()),
-    select: opt('desig_code', 'desig_name'),
-  });
-  const { data: grades = [] } = useQuery<Record<string, unknown>[], Error, SelectOption[]>({
-    queryKey: ['setup/grades'],
-    queryFn: () => fetch('/api/setup/grades').then((r) => r.json()),
-    select: opt('grade_code', 'grade_name'),
-  });
-  const { data: structures = [] } = useQuery<Record<string, unknown>[], Error, SelectOption[]>({
-    queryKey: ['setup/salary-structures'],
-    queryFn: () => fetch('/api/setup/salary-structures').then((r) => r.json()),
-    select: opt('structure_id', 'structure_name'),
-  });
+  const { data: branches = [] } = useSetupOptions('setup/branches', 'branch_code', 'branch_name');
+  const { data: departments = [] } = useSetupOptions('setup/departments', 'dept_code', 'dept_name');
+  const { data: designations = [] } = useSetupOptions('setup/designations', 'desig_code', 'desig_name');
+  const { data: grades = [] } = useSetupOptions('setup/grades', 'grade_code', 'grade_name');
+  const { data: structures = [] } = useSetupOptions('setup/salary-structures', 'structure_id', 'structure_name');
 
   function f(key: keyof typeof EMPTY_FORM) {
     return {
