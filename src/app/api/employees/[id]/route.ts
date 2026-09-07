@@ -4,6 +4,12 @@ import { getCompanyPool } from '@/lib/db';
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket } from 'mysql2';
 
+// The edit form submits blank optional fields as '', not undefined — `x ?? null` leaves those
+// as '', which MySQL rejects for DATE / INT columns (e.g. date_of_birth, attr1) under strict
+// mode and 500s the request. Normalise '' to null before binding.
+const nn = (v: unknown): string | number | null =>
+  v === '' || v == null ? null : (v as string | number);
+
 export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -109,14 +115,14 @@ export async function PUT(
          bank_name = ?, branch_name = ?, branch_address = ?, name_as_per_bank = ?, ifsc_code = ?, account_no = ?
        WHERE emp_pkey = ?`,
       [
-        body.first_name, body.last_name, body.date_of_birth ?? null,
-        body.mobile_no ?? null, body.email ?? null,
-        body.classification ?? null, body.blood ?? null, body.maritual_status ?? null, body.profile_pic ?? null,
-        body.id_card ?? null, body.lwf_code ?? null,
-        body.pan_no ?? null, body.name_as_on_pan ?? null, body.pf ?? null, body.company_pf ?? null,
-        body.eps ?? null, body.esi ?? null, body.esi_dispensary ?? null,
-        body.bank_name ?? null, body.bank_branch_name ?? null, body.branch_address ?? null,
-        body.name_as_per_bank ?? null, body.ifsc_code ?? null, body.account_no ?? null,
+        body.first_name, body.last_name, nn(body.date_of_birth),
+        nn(body.mobile_no), nn(body.email),
+        nn(body.classification), nn(body.blood), nn(body.maritual_status), nn(body.profile_pic),
+        nn(body.id_card), nn(body.lwf_code),
+        nn(body.pan_no), nn(body.name_as_on_pan), nn(body.pf), nn(body.company_pf),
+        nn(body.eps), nn(body.esi), nn(body.esi_dispensary),
+        nn(body.bank_name), nn(body.bank_branch_name), nn(body.branch_address),
+        nn(body.name_as_per_bank), nn(body.ifsc_code), nn(body.account_no),
         empPkey,
       ]
     );
@@ -137,9 +143,9 @@ export async function PUT(
            HOLIDAY_GROUP_ID = ?, LEAVEPOLICY_GROUP_ID = ?
          WHERE emp_fkey = ?`,
         [
-          body.joining_date ?? null, body.emp_branch ?? null, body.emp_dept ?? null,
-          body.designation ?? null, body.emp_grade ?? null,
-          body.emp_type ?? null, body.attr1 ?? null,
+          nn(body.joining_date), nn(body.emp_branch), nn(body.emp_dept),
+          nn(body.designation), nn(body.emp_grade),
+          nn(body.emp_type), body.attr1 ? Number(body.attr1) : null,
           body.probation ? Number(body.probation) : null,
           body.day_time_seq ? Number(body.day_time_seq) : null,
           body.holiday_group_id ? Number(body.holiday_group_id) : null,
@@ -153,8 +159,8 @@ export async function PUT(
            (emp_fkey, joining_date, emp_branch, emp_dept, designation, emp_grade, emp_type, attr1, probation, day_time_seq, HOLIDAY_GROUP_ID, LEAVEPOLICY_GROUP_ID)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
-          empPkey, body.joining_date ?? null, body.emp_branch ?? null, body.emp_dept ?? null,
-          body.designation ?? null, body.emp_grade ?? null, body.emp_type ?? null, body.attr1 ?? null,
+          empPkey, nn(body.joining_date), nn(body.emp_branch), nn(body.emp_dept),
+          nn(body.designation), nn(body.emp_grade), nn(body.emp_type), body.attr1 ? Number(body.attr1) : null,
           body.probation ? Number(body.probation) : null,
           body.day_time_seq ? Number(body.day_time_seq) : null,
           body.holiday_group_id ? Number(body.holiday_group_id) : null,
@@ -167,7 +173,11 @@ export async function PUT(
     return NextResponse.json({ success: true });
   } catch (err) {
     await connection.rollback();
-    throw err;
+    console.error('PUT /api/employees/[id] failed:', err);
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : 'Failed to update employee' },
+      { status: 500 }
+    );
   } finally {
     connection.release();
   }

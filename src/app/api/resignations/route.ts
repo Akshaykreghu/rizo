@@ -18,7 +18,6 @@ export async function GET(request: NextRequest) {
 
   const pool = await getCompanyPool(session.user.companyCode);
   const { searchParams } = new URL(request.url);
-  const status = searchParams.get('status') ?? '';
   const search = searchParams.get('search') ?? '';
   const empFkey = searchParams.get('emp_fkey');
 
@@ -28,21 +27,19 @@ export async function GET(request: NextRequest) {
     conditions.push('rr.emp_fkey = ?');
     values.push(empFkey);
   }
-  if (status) {
-    conditions.push('rr.Resignation_status = ?');
-    values.push(status);
-  }
+  // Legacy listemployees() supports a name search only: CONCAT(first_name,' ',last_name) LIKE.
   if (search) {
-    conditions.push('(e.first_name LIKE ? OR e.last_name LIKE ? OR e.emp_id LIKE ? OR rr.Reason LIKE ?)');
-    values.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
+    conditions.push("CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) LIKE ?");
+    values.push(`%${search}%`);
   }
 
   const [rows] = await pool.execute<RowDataPacket[]>(
-    `SELECT rr.Resignation_pkey, rr.emp_fkey, rr.authorised_to, rr.applied_date, rr.Reason,
-            rr.Reason_Desc, rr.Comments_to_manager, rr.Last_workingday, rr.contact_no, rr.Resignation_status,
+    `SELECT rr.Resignation_pkey, rr.emp_fkey, rr.applied_date, rr.Reason,
+            rr.Reason_Desc, rr.Last_workingday, rr.Resignation_status,
             e.first_name, e.last_name, e.emp_id,
             b.branch_name,
-            t.terminate_pkey, t.is_authorized, t.is_approved, t.last_approved_working_date, t.remarks,
+            t.terminate_pkey, t.is_authorized, t.is_approved, t.submitted_date, t.last_applied_date,
+            t.last_working_date, t.last_approved_working_date, t.notice_period, t.remarks,
             ra.resignation_accept_pkey, ra.chek_formalities, ra.chek_assets, ra.chek_leave
      FROM resignation_requests rr
      JOIN emp_details e ON e.emp_pkey = rr.emp_fkey
@@ -67,25 +64,52 @@ export async function POST(request: NextRequest) {
   const pool = await getCompanyPool(session.user.companyCode);
   const today = new Date().toISOString().slice(0, 10);
 
+  // Legacy's Separation form (form.ctp) lets the admin enter three distinct dates: the
+  // resignation-submitted date (which feeds all settlement day-count math), the last applied
+  // working date, and an approved last working date that may differ from the notice-derived one.
+  // Missing values fall back the way legacy's asper_notice() JS auto-fills them.
+  const dateSubmitted = String(body.date_submitted || today).slice(0, 10);
+  const lastApplied = String(body.applied_date || dateSubmitted).slice(0, 10);
+  const lastWorkingDay = String(body.last_workingday || '').slice(0, 10);
+  const lastApprovedWd = String(body.last_approved_workingday || lastWorkingDay).slice(0, 10);
+  const remarks = String(body.remarks ?? '').slice(0, 30); // termination.remarks is varchar(30)
+
+  // Legacy form.ctp validation: applied/approved dates cannot precede the submitted date.
+  if (lastApplied < dateSubmitted) {
+    return NextResponse.json({ error: 'Last Applied Working Date cannot be before the Resignation Submitted date' }, { status: 400 });
+  }
+  if (lastApprovedWd < dateSubmitted) {
+    return NextResponse.json({ error: 'Last Approved Working Date cannot be before the Resignation Submitted date' }, { status: 400 });
+  }
+
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
 
-    // Deactivate any prior cancelled termination row for this employee — legacy keeps history
-    // rather than overwriting.
-    await connection.execute(
-      "UPDATE termination SET status = 0 WHERE emp_fkey = ? AND status = 1",
+    // Legacy's form() excludes employees who already have an active termination row from the
+    // New dropdown entirely (emp_pkey NOT IN (SELECT emp_fkey FROM termination WHERE status = 1)).
+    // Block a duplicate filing rather than silently voiding the in-progress one. Withdrawn/cancelled
+    // rows (status = 0 / Resignation_status Cancelled) don't block a fresh resignation.
+    const [[inProgress]] = await connection.execute<RowDataPacket[]>(
+      `SELECT rr.Resignation_pkey FROM resignation_requests rr
+       WHERE rr.emp_fkey = ? AND rr.status = 1 AND rr.Resignation_status NOT IN ('Completed', 'Cancelled')
+       LIMIT 1`,
       [body.emp_fkey]
     );
+    if (inProgress) {
+      await connection.rollback();
+      return NextResponse.json({ error: 'This employee already has a resignation in progress' }, { status: 409 });
+    }
 
+    // authorised_to / Comments_to_manager / contact_no belong to legacy's employee self-service
+    // request flow, not the admin Separation form ported here — legacy's own Terminate()
+    // self-authorises admin separations (authorized_by = 0) and never sets those columns, so we
+    // store 0 / '' and don't surface the fields.
     const [result] = await connection.execute<ResultSetHeader>(
       `INSERT INTO resignation_requests
-         (emp_fkey, authorised_to, Reason, Reason_Desc, Comments_to_manager, Last_workingday, contact_no)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [
-        body.emp_fkey, body.authorised_to, body.reason, body.reason_desc ?? '',
-        body.comments_to_manager ?? '', body.last_workingday, body.contact_no ?? '',
-      ]
+         (emp_fkey, authorised_to, Reason, Reason_Desc, Comments_to_manager, applied_date, Last_workingday, contact_no)
+       VALUES (?, 0, ?, ?, '', ?, ?, '')`,
+      [body.emp_fkey, body.reason, body.reason_desc ?? '', dateSubmitted, lastWorkingDay]
     );
     const resignationPkey = result.insertId;
 
@@ -102,10 +126,10 @@ export async function POST(request: NextRequest) {
           last_approved_working_date, notice_period, act_last_working_day, remarks,
           working_days_settled, leave_balance, approved_balance, days_attendance, encashed_days,
           payroll_days, amt_paid_by_empaddition, amt_paid_by_empdeduction, status)
-       VALUES (?, ?, ?, ?, 'N', 0, 'N', 0, ?, ?, ?, ?, ?, ?, ?, '', 0, 0, 0, 0, 0, 0, 0, 0, 1)`,
+       VALUES (?, ?, ?, ?, 'N', 0, 'N', 0, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 0, 0, 0, 0, 0, 1)`,
       [
-        body.emp_fkey, body.reason, body.last_workingday, body.reason_desc ?? '',
-        today, today, body.last_workingday, resignationPkey, body.last_workingday, noticeDays, body.last_workingday,
+        body.emp_fkey, body.reason, lastWorkingDay, body.reason_desc ?? '',
+        dateSubmitted, lastApplied, lastWorkingDay, resignationPkey, lastApprovedWd, noticeDays, lastApprovedWd, remarks,
       ]
     );
 

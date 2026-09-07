@@ -26,7 +26,7 @@ import {
 // SQL error surface via the transaction rollback if something's actually wrong.
 
 export async function PUT(
-  request: NextRequest,
+  _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await getServerSession(authOptions);
@@ -35,15 +35,17 @@ export async function PUT(
   }
 
   const { id } = await params;
-  const body = await request.json();
   const pool = await getCompanyPool(session.user.companyCode);
 
   const ctx = await getTerminationContext(pool, id);
   if (!ctx) return NextResponse.json({ error: 'Resignation request not found' }, { status: 404 });
 
-  const monthYear = String(body.month_year ?? new Date().toISOString().slice(0, 7));
-  const presantDays = Number(body.presant_days ?? 0);
-  const encashDays = Number(body.encash_days ?? 0);
+  // Legacy approves() (GRTL path) takes no settlement-parameter inputs: it derives month_year
+  // from last_approved_working_date and calls final_settle_pay_prc with presant_days = '0',
+  // encash_days = '0'.
+  const monthYear = ctx.lastApprovedWd.slice(0, 7);
+  const presantDays = 0;
+  const encashDays = 0;
 
   const connection = await pool.getConnection();
   try {
@@ -63,18 +65,25 @@ export async function PUT(
     const dayStats = await computeDayCountStats(connection, ctx, presantDays);
     const noticePay = computeNoticePay(ctx, dayStats.offsActual);
 
-    // Settlement breakdown read-back — the central gap this pass closes: legacy shows the real
-    // emp_settle_slip lines final_settle_pay_prc just computed; the prior version of this endpoint
-    // only returned the bare procedure message.
+    // Settlement breakdown read-back. Legacy get_emp_settle_slip() (non-KWMT path) splits the
+    // emp_settle_slip rows four ways by type and sign:
+    //   Settlement summary — ADDITIONS: type = 'SALARY' AND salary_amount >= 0
+    //   Settlement summary — DEDUCTIONS: type = 'SALARY' AND salary_amount <  0
+    //   OTHERS — ADDITION:  type != 'SALARY' AND salary_amount >= 0  (editable in approves.ctp)
+    //   OTHERS — DEDUCTION: type != 'SALARY' AND salary_amount <  0  (editable)
     const [settleRows] = await connection.execute<RowDataPacket[]>(
-      `SELECT salary_head_item_desc, salary_amount, type
+      `SELECT emp_settle_slip_pkey, salary_head_item_desc, salary_amount, type
        FROM emp_settle_slip WHERE emp_fkey = ? AND status = 'Y'
        ORDER BY emp_settle_slip_pkey`,
       [ctx.empFkey]
     );
-    const additions = settleRows.filter((r) => Number(r.salary_amount) > 0);
-    const deductions = settleRows.filter((r) => Number(r.salary_amount) <= 0);
-    const netSalary = settleRows.reduce((sum, r) => sum + Number(r.salary_amount), 0);
+    const isSalary = (r: RowDataPacket) => String(r.type) === 'SALARY';
+    const sum = (rows: RowDataPacket[]) => rows.reduce((s, r) => s + Number(r.salary_amount), 0);
+    const additions = settleRows.filter((r) => isSalary(r) && Number(r.salary_amount) >= 0);
+    const deductions = settleRows.filter((r) => isSalary(r) && Number(r.salary_amount) < 0);
+    const otherAdditions = settleRows.filter((r) => !isSalary(r) && Number(r.salary_amount) >= 0);
+    const otherDeductions = settleRows.filter((r) => !isSalary(r) && Number(r.salary_amount) < 0);
+    const netSalary = sum(settleRows);
 
     const { loans, assets } = await getLoansAndAssets(connection, ctx.empFkey);
 
@@ -99,6 +108,12 @@ export async function PUT(
         employee: { first_name: ctx.firstName, last_name: ctx.lastName },
         additions,
         deductions,
+        additionsTotal: sum(additions),
+        deductionsTotal: sum(deductions),
+        otherAdditions,
+        otherDeductions,
+        otherAdditionsTotal: sum(otherAdditions),
+        otherDeductionsTotal: sum(otherDeductions),
         netSalary,
         noticePay,
         encashableLeaveBalance,

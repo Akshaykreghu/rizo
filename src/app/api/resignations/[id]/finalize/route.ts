@@ -3,16 +3,20 @@ import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket } from 'mysql2';
+import { getTerminationContext, computeRemovalDays } from '@/lib/settlement';
 
-// Mirrors legacy removeemps(): the terminal step, only reachable after admin approval. Flips
-// emp_details.status to 2 (Terminated), clears OTHER employees' hierarchy references to this
-// now-terminated manager (not this employee's own attr1), deactivates their HIERARCHY emp_config
-// rows, and marks outstanding payroll/settlement/leave-encashment rows settled. The
-// working-days/payroll-days figures legacy computes from attendance are accepted as admin input
-// here since Attendance Register doesn't exist in this port yet.
+// Mirrors legacy removeemps() (the non-KWMT/GRTL path): the terminal step, only reachable after
+// admin approval. It takes no form — legacy fires a confirm() then one POST. It:
+//  - flips emp_details.status to 2 (Terminated)
+//  - clears OTHER employees' hierarchy references to this now-terminated manager (emp_proff.attr1)
+//  - deactivates their HIERARCHY emp_config rows
+//  - marks outstanding payroll / settlement / leave-encashment rows settled
+//  - writes ONLY working_days_settled + payroll_days back to termination, both computed server-side
+//    from the resignation window (see computeRemovalDays). The other termination columns are left
+//    untouched, exactly as removeemps() leaves them.
 
 export async function POST(
-  request: NextRequest,
+  _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await getServerSession(authOptions);
@@ -21,7 +25,6 @@ export async function POST(
   }
 
   const { id } = await params;
-  const body = await request.json();
   const pool = await getCompanyPool(session.user.companyCode);
 
   const [[req]] = await pool.execute<RowDataPacket[]>(
@@ -37,6 +40,10 @@ export async function POST(
   if (req.Resignation_status === 'Completed') {
     return NextResponse.json({ error: 'This resignation has already been finalized' }, { status: 409 });
   }
+
+  const ctx = await getTerminationContext(pool, id);
+  if (!ctx) return NextResponse.json({ error: 'Resignation request not found' }, { status: 404 });
+  const { workingDaysSettled, payrollDays } = await computeRemovalDays(pool, ctx);
 
   const empFkey = req.emp_fkey;
   const connection = await pool.getConnection();
@@ -54,16 +61,8 @@ export async function POST(
     await connection.execute("UPDATE leave_encashment_master SET salary_paid = 'Y' WHERE emp_fkey = ?", [empFkey]);
 
     await connection.execute(
-      `UPDATE termination SET working_days_settled = ?, leave_balance = ?, approved_balance = ?,
-              days_attendance = ?, encashed_days = ?, payroll_days = ?,
-              amt_paid_by_empaddition = ?, amt_paid_by_empdeduction = ?
-       WHERE terminate_pkey = ?`,
-      [
-        Number(body.working_days_settled ?? 0), Number(body.leave_balance ?? 0), Number(body.approved_balance ?? 0),
-        Number(body.days_attendance ?? 0), Number(body.encashed_days ?? 0), Number(body.payroll_days ?? 0),
-        Number(body.amt_paid_by_empaddition ?? 0), Number(body.amt_paid_by_empdeduction ?? 0),
-        req.terminate_pkey,
-      ]
+      'UPDATE termination SET working_days_settled = ?, payroll_days = ? WHERE terminate_pkey = ?',
+      [workingDaysSettled, payrollDays, req.terminate_pkey]
     );
     await connection.execute(
       "UPDATE resignation_requests SET Resignation_status = 'Completed' WHERE Resignation_pkey = ?",
@@ -71,7 +70,7 @@ export async function POST(
     );
 
     await connection.commit();
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true, workingDaysSettled, payrollDays });
   } catch (err) {
     await connection.rollback();
     throw err;

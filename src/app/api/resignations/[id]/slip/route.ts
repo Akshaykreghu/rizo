@@ -8,12 +8,14 @@ import { getTerminationContext, computeDayCountStats, computeNoticePay } from '@
 // View Slip — a standalone printable Full & Final Settlement summary, mirroring legacy's
 // full_and_final_slip.ctp/download.ctp (the GRTL/non-KWMT variant: no signature block, no
 // per-month table). Reads the persisted emp_settle_slip rows from the last Process Full & Final
-// run rather than recomputing — this is a read-only view of what was already committed. Legacy's
-// real gate (confirmed via index.ctp's rowStyler/toolbar JS: View Slip and F&F Email Slip only
-// enable when the row's joined emp_details.status == '2') is the employee's actual termination,
-// not any intermediate resignation-workflow stage — so this only unlocks at 'Completed', matching
-// that exactly (an earlier build of this feature allowed 'Approved' too, which was a mistaken
-// assumption not yet verified against the real legacy view at the time).
+// run rather than recomputing — this is a read-only view of what was already committed.
+//
+// Two legacy slip entry points map here: the list toolbar's "View Slip" (which legacy gates on
+// emp_details.status == '2', i.e. the employee actually terminated) and approves.ctp's "Generate
+// Full and Final Slip" button, which legacy produces straight after Process Full & Final via
+// get_complete.ctp — before removeemps() runs — with no termination requirement. So this unlocks
+// at 'Approved' as well as 'Completed'; the list page still only surfaces "View Slip" on
+// Completed rows, so that path is unchanged.
 
 export async function GET(
   _request: NextRequest,
@@ -34,8 +36,8 @@ export async function GET(
     'SELECT Reason, Resignation_status FROM resignation_requests WHERE Resignation_pkey = ? AND status = 1',
     [id]
   );
-  if (!rr || rr.Resignation_status !== 'Completed') {
-    return NextResponse.json({ error: 'Slip is only available once the employee has been finalized (Finalize Termination)' }, { status: 409 });
+  if (!rr || (rr.Resignation_status !== 'Approved' && rr.Resignation_status !== 'Completed')) {
+    return NextResponse.json({ error: 'Slip is only available once Full & Final has been processed' }, { status: 409 });
   }
 
   const [[detail]] = await pool.execute<RowDataPacket[]>(

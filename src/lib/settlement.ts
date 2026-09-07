@@ -102,6 +102,60 @@ export function computeNoticePay(ctx: TerminationContext, offsActual: number): n
   return Math.round(0 - afterAdjustment * perDaySalary);
 }
 
+// Mirrors legacy removeemps() (the non-KWMT/GRTL path), which computes these two figures itself
+// rather than taking them from a form:
+//   diffDays          = date_diff(last_approved_working_date + 1 day, submitted_date)
+//   offs              = |weekoff_days_count_fn(emp, approved+1, submitted-1)| + holidays(submitted..approved)
+//   if offs > 0       → offs += 1
+//   working_days_settled = diffDays - offs
+//   payroll_days         = diffDays - (LOP_days + offs)
+// LOP_days comes from emp_detail_timeattandance; where that table is empty it resolves to 0, so
+// payroll_days degrades to working_days_settled — the same honest fallback used elsewhere until
+// Attendance exists. Holidays are counted without a status filter, matching removeemps() exactly
+// (setup()'s equivalent does filter status = 1; removeemps() does not).
+export async function computeRemovalDays(
+  pool: Pool | PoolConnection,
+  ctx: TerminationContext
+): Promise<{ workingDaysSettled: number; payrollDays: number }> {
+  const submitted = new Date(ctx.submittedDate);
+  const approved = new Date(ctx.lastApprovedWd);
+  const submittedReduced = new Date(submitted); submittedReduced.setDate(submittedReduced.getDate() - 1);
+  const approvedIncreased = new Date(approved); approvedIncreased.setDate(approvedIncreased.getDate() + 1);
+
+  const diffDays = Math.round((approvedIncreased.getTime() - submitted.getTime()) / 86_400_000);
+
+  const [[weekoffRow]] = await pool.query<RowDataPacket[]>(
+    'SELECT weekoff_days_count_fn(?, ?, ?) AS no_of_weekoff',
+    [ctx.empFkey, approvedIncreased.toISOString().slice(0, 10), submittedReduced.toISOString().slice(0, 10)]
+  );
+  const [[holidayRow]] = await pool.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS days_count FROM holidays
+     WHERE HOLIDAY_GROUP_ID = ? AND HOLIDAYDATE BETWEEN ? AND ?`,
+    [ctx.holidayGroupId, ctx.submittedDate, ctx.lastApprovedWd]
+  );
+  let offs = Math.abs(Number(weekoffRow?.no_of_weekoff ?? 0)) + Number(holidayRow?.days_count ?? 0);
+  if (offs > 0) offs += 1;
+
+  // LOP days in the resignation window (full-day LOP counts 1, half-day LOP counts 0.5).
+  const [[lopRow]] = await pool.execute<RowDataPacket[]>(
+    `SELECT ROUND(SUM(a), 1) AS lop FROM (
+       SELECT COUNT(*) AS a FROM emp_detail_timeattandance
+        WHERE others IN ('LOP', 'LOP/LOP') AND emp_pkey = ? AND att_date BETWEEN ? AND ?
+       UNION ALL
+       SELECT COUNT(*) / 2 AS a FROM emp_detail_timeattandance
+        WHERE (INSTR(others, '/LOP') > 0 OR INSTR(others, 'LOP/') > 0) AND others <> 'LOP'
+          AND emp_pkey = ? AND att_date BETWEEN ? AND ?
+     ) ass`,
+    [ctx.empFkey, ctx.submittedDate, ctx.lastApprovedWd, ctx.empFkey, ctx.submittedDate, ctx.lastApprovedWd]
+  );
+  const lopDays = Number(lopRow?.lop ?? 0);
+
+  return {
+    workingDaysSettled: diffDays - offs,
+    payrollDays: diffDays - (lopDays + offs),
+  };
+}
+
 interface EncashableHead {
   salary_head_item_fkey: number;
   leave_encash_limit: number;
@@ -120,6 +174,19 @@ async function eligibleEncashHeads(pool: Pool | PoolConnection, empFkey: number)
     [proff.LEAVEPOLICY_GROUP_ID]
   );
   return heads as unknown as EncashableHead[];
+}
+
+// Mirrors legacy workingattendnacedays()'s leave-year check: if no OPEN current financial year
+// exists for the employee's branch, it surfaces "you need to provide a Leave Year for this
+// Employee" on the Process Full & Final screen. Returns true when a usable leave year exists.
+export async function hasCurrentLeaveYear(pool: Pool | PoolConnection, branchCode: string): Promise<boolean> {
+  const [[row]] = await pool.execute<RowDataPacket[]>(
+    `SELECT 1 FROM fin_year
+     WHERE branch_code = ? AND Year_status = 'OPEN' AND is_current_finyear = 'Y' AND vattr1 = 0 AND status = 1
+     LIMIT 1`,
+    [branchCode]
+  );
+  return Boolean(row);
 }
 
 // Read-only preview of the total encashable leave balance — no writes, no procedure calls. Mirrors
@@ -196,6 +263,26 @@ export async function commitLeaveEncashment(
     ]);
   }
   return total;
+}
+
+// Assets still allocated to the employee (to be retrieved before Full & Final) — mirrors legacy
+// FullandFinalsettlement::Assets(): asset_allocate ⨝ asset_management on status = 'Allocated'.
+// asset_allocate carries its own denormalised name/serial columns; asset_management is the
+// preferred source, falling back to the allocation row's own copies.
+export async function getAllocatedAssets(pool: Pool | PoolConnection, empFkey: number) {
+  const [rows] = await pool.execute<RowDataPacket[]>(
+    `SELECT a.allocate_pkey,
+            COALESCE(NULLIF(m.name, ''), a.asset_name) AS name,
+            m.Type AS type,
+            COALESCE(NULLIF(m.serial_no, ''), a.s_no) AS serial_no,
+            a.allocated_date
+     FROM asset_allocate a
+     LEFT JOIN asset_management m ON m.asset_pkey = a.asset
+     WHERE a.emp_fkey = ? AND a.status = 'Allocated'
+     ORDER BY a.allocate_pkey`,
+    [empFkey]
+  );
+  return rows;
 }
 
 // Read-only Loans/Assets reference panels — no auto-netting, matches legacy precedent (HR manually
