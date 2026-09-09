@@ -40,7 +40,7 @@ export interface AttPeriod {
 }
 
 // Wraps att_start_end_fn (confirmed live: RETURNS date, reads db_config.attendance_format/attendance_date).
-export async function getAttPeriod(pool: Pool, month: string): Promise<AttPeriod> {
+export async function getAttPeriod(pool: Pool | PoolConnection, month: string): Promise<AttPeriod> {
   const yearMonth = `${month}-01`;
   const [[startRow]] = await pool.query<RowDataPacket[]>(
     "SELECT att_start_end_fn(DATE_FORMAT(?, '%Y-%m-01'), 1) AS d",
@@ -189,17 +189,20 @@ export interface RegisterDayContext {
   branchCode: string;
   attDate: string;
   locked: boolean;
+  currentStatus: string;
 }
 
 // Shared register-row lookup + verified-month lock check used by every per-day sub-resource
-// (status, punches, OT) hung off attendance_register/[registerId]/day/[dayIndex].
+// (status, punches, OT) hung off attendance_register/[registerId]/day/[dayIndex]. dayIndex is
+// caller-validated (1-32) before this runs, so it's safe to splice into the dynamic FIELDn column name.
 export async function getRegisterDayContext(
   pool: Pool,
   registerId: string,
   dayIndex: number
 ): Promise<RegisterDayContext | null> {
   const [[reg]] = await pool.execute<RowDataPacket[]>(
-    `SELECT ar.emp_fkey, ar.month_year, ar.branch_code, ar.isdelete, ed.emp_id, ed.company_code
+    `SELECT ar.emp_fkey, ar.month_year, ar.branch_code, ar.isdelete, ar.FIELD${dayIndex} AS current_status,
+            ed.emp_id, ed.company_code
      FROM attendance_register ar
      JOIN emp_details ed ON ed.emp_pkey = ar.emp_fkey
      WHERE ar.registerid = ?`,
@@ -213,7 +216,48 @@ export async function getRegisterDayContext(
     branchCode: reg.branch_code,
     attDate: `${reg.month_year}-${String(dayIndex).padStart(2, '0')}`,
     locked: reg.isdelete === 'N',
+    currentStatus: (reg.current_status ?? '').toString(),
   };
+}
+
+// Mirrors editpunch.ctp's client-side status merge — in legacy the merge happens entirely in JS before
+// it POSTs to chnagestatus(), which just does a plain `UPDATE ... SET FIELDn = <the already-merged
+// value>`; reproduced here since rizo applies it server-side instead. A day cell always stores both
+// halves ("X/Y"), so editing one half must preserve the other's current value rather than overwrite
+// the whole cell with a bare single code.
+export function mergeHalfDayStatus(
+  currentValue: string,
+  statusType: 'first' | 'second' | 'full',
+  newCode: string
+): string {
+  const current = (currentValue ?? '').trim().toUpperCase();
+  const code = newCode.trim().toUpperCase();
+
+  let firstHalf: string;
+  let secondHalf: string;
+  if (current.includes('/')) {
+    [firstHalf, secondHalf] = current.split('/').map((p) => p.trim());
+  } else if (current) {
+    firstHalf = current;
+    secondHalf = current;
+  } else {
+    firstHalf = '';
+    secondHalf = '';
+  }
+
+  if (statusType === 'first') firstHalf = code;
+  else if (statusType === 'second') secondHalf = code;
+  else { firstHalf = code; secondHalf = code; }
+
+  // A newly-touched half with no counterpart defaults the other half to Absent, same as legacy.
+  if (!firstHalf && secondHalf) firstHalf = 'A';
+  if (!secondHalf && firstHalf) secondHalf = 'A';
+
+  // Full-day Holiday/Week-off is stored as a bare single code (matches legacy's own storage
+  // convention, and getCellColor()'s special-cased 'HO'/'WO' checks); every other full-day pick, and
+  // any half-day edit, is stored as the doubled/combined "X/Y" form.
+  if (statusType === 'full' && (code === 'HO' || code === 'WO')) return code;
+  return `${firstHalf}/${secondHalf}`;
 }
 
 export interface MonthlyOt {
@@ -328,4 +372,163 @@ export async function getDailyOt(pool: Pool, empFkey: number, date: string): Pro
     remarks: row.remarks ?? null,
     isManual: row.is_manual === 'Y',
   };
+}
+
+export interface AttendanceTotals {
+  presentTotal: number;
+  leaveTotal: number;
+  lopTotal: number;
+  wdLopTotal: number;
+  lopOnly: number;
+  weekoffTotal: number;
+  holidayTotal: number;
+  naHoCount: number;
+  naWoCount: number;
+  workingDays: number;
+  calendarDays: number;
+}
+
+// Mirrors AttendanceRegisterNewController's totals-recompute block — registerbook() (register load),
+// chnagestatus() (day-cell edit) and verifyAttendance() each independently re-derive and persist these
+// from the FIELD1..32 day codes ("always calculate ... for persistent data stability" per legacy's own
+// comment). The classification below is simplified from legacy's PHP: it explodes each day's status on
+// '/' then matches each half against in_array() lists that include a few combined-string entries
+// (e.g. 'P/A', '/WO') which can never actually match a post-split value, so only the plain single-code
+// members of those lists ever fire in practice — this keeps just the reachable branches.
+export function computeAttendanceTotals(
+  fields: string[],
+  dates: string[],
+  storedCalendarDays: number | null,
+  joiningDate: string | null,
+  lastWorkingDate: string | null
+): AttendanceTotals {
+  let presentCount = 0, weekoffCount = 0, holidayCount = 0, naCount = 0, lopCount = 0, leaveCount = 0;
+  let naHoCount = 0, naWoCount = 0;
+
+  dates.forEach((date, i) => {
+    const raw = (fields[i] ?? '').trim().toUpperCase();
+    if (!raw) return;
+
+    const parts = raw.split('/').map((p) => p.trim()).filter(Boolean);
+    const weight = parts.length > 1 ? 0.5 : 1;
+    for (const part of parts) {
+      if (part === 'P') presentCount += weight;
+      else if (part === 'WO') weekoffCount += weight;
+      else if (part === 'HO') holidayCount += weight;
+      else if (part === 'NA') naCount += weight;
+      else if (part.includes('LOP')) lopCount += weight;
+      else if (part !== 'A') leaveCount += weight;
+    }
+
+    // NA-period detection: before joining, or after a terminated employee's last approved working date.
+    const isNaPeriod = (joiningDate != null && date < joiningDate) || (lastWorkingDate != null && date > lastWorkingDate);
+    if (isNaPeriod) {
+      if (raw === 'HO' || raw === 'HO/HO') naHoCount += 1;
+      else if (raw === 'WO' || raw === 'WO/WO') naWoCount += 1;
+      else if (raw === 'NA/HO' || raw === 'HO/NA') naHoCount += 0.5;
+      else if (raw === 'NA/WO' || raw === 'WO/NA') naWoCount += 0.5;
+      else if (raw === 'HO/WO' || raw === 'WO/HO') { naHoCount += 0.5; naWoCount += 0.5; }
+    }
+  });
+
+  const lopOnly = lopCount;
+  const lopTotal = lopOnly + naCount + naHoCount + naWoCount;
+  const wdLopTotal = lopOnly + naCount;
+  const calendarDays = storedCalendarDays && storedCalendarDays > 0 ? storedCalendarDays : dates.length;
+  const workingDays = calendarDays - (weekoffCount + holidayCount);
+
+  return {
+    presentTotal: presentCount,
+    leaveTotal: leaveCount,
+    lopTotal,
+    wdLopTotal,
+    lopOnly,
+    weekoffTotal: weekoffCount,
+    holidayTotal: holidayCount,
+    naHoCount,
+    naWoCount,
+    workingDays,
+    calendarDays,
+  };
+}
+
+// Batch-fetch the two NA-period inputs computeAttendanceTotals needs beyond the register row itself:
+// joining_date (emp_proff) and, only for a terminated employee, last_approved_working_date (termination).
+export async function getNaPeriodBounds(
+  pool: Pool | PoolConnection,
+  empFkeys: number[]
+): Promise<Record<number, { joiningDate: string | null; lastWorkingDate: string | null }>> {
+  const result: Record<number, { joiningDate: string | null; lastWorkingDate: string | null }> = {};
+  if (empFkeys.length === 0) return result;
+  const placeholders = empFkeys.map(() => '?').join(',');
+
+  const [proffRows] = await pool.execute<RowDataPacket[]>(
+    `SELECT emp_fkey, joining_date FROM emp_proff WHERE emp_fkey IN (${placeholders})`,
+    empFkeys
+  );
+  for (const r of proffRows) {
+    result[r.emp_fkey] = { joiningDate: r.joining_date ? toISODate(r.joining_date) : null, lastWorkingDate: null };
+  }
+
+  const [termRows] = await pool.execute<RowDataPacket[]>(
+    `SELECT emp_fkey, last_approved_working_date FROM termination WHERE status = 1 AND emp_fkey IN (${placeholders})`,
+    empFkeys
+  );
+  for (const r of termRows) {
+    if (!result[r.emp_fkey]) result[r.emp_fkey] = { joiningDate: null, lastWorkingDate: null };
+    result[r.emp_fkey].lastWorkingDate = r.last_approved_working_date ? toISODate(r.last_approved_working_date) : null;
+  }
+
+  return result;
+}
+
+export async function saveAttendanceTotals(
+  pool: Pool | PoolConnection,
+  registerId: number,
+  totals: AttendanceTotals
+): Promise<void> {
+  await pool.execute(
+    `UPDATE attendance_register SET
+       presant_total = ?, leave_total = ?, lop_total = ?, wd_lop_total = ?, lop_only = ?,
+       weekoff_total = ?, holiday_total = ?, na_ho_count = ?, na_wo_count = ?, working_days = ?, calander_days = ?
+     WHERE registerid = ?`,
+    [
+      totals.presentTotal, totals.leaveTotal, totals.lopTotal, totals.wdLopTotal, totals.lopOnly,
+      totals.weekoffTotal, totals.holidayTotal, totals.naHoCount, totals.naWoCount, totals.workingDays, totals.calendarDays,
+      registerId,
+    ]
+  );
+}
+
+// Self-contained recompute for a single register row — fetches everything itself, for call sites
+// (the day-edit route) that don't already have the row's FIELD values loaded. GET/verify already load
+// FIELD1..32 + calander_days for every row in view, so they call computeAttendanceTotals directly and
+// save via saveAttendanceTotals instead of re-fetching here.
+export async function recalcAttendanceRegisterTotals(
+  pool: Pool | PoolConnection,
+  registerId: number
+): Promise<AttendanceTotals | null> {
+  const [[row]] = await pool.execute<RowDataPacket[]>(
+    `SELECT emp_fkey, month_year, calander_days, ${FIELD_COLUMNS.join(', ')} FROM attendance_register WHERE registerid = ?`,
+    [registerId]
+  );
+  if (!row) return null;
+
+  const period = await getAttPeriod(pool, row.month_year);
+  const calendarDayCount = Math.round(
+    (new Date(period.end).getTime() - new Date(period.start).getTime()) / 86400000
+  ) + 1;
+  const dates = Array.from({ length: calendarDayCount }, (_, i) => {
+    const d = new Date(period.start);
+    d.setDate(d.getDate() + i);
+    return d.toISOString().slice(0, 10);
+  });
+  const fields = fieldsToArray(row);
+
+  const bounds = await getNaPeriodBounds(pool, [row.emp_fkey]);
+  const { joiningDate, lastWorkingDate } = bounds[row.emp_fkey] ?? { joiningDate: null, lastWorkingDate: null };
+
+  const totals = computeAttendanceTotals(fields, dates, Number(row.calander_days) || null, joiningDate, lastWorkingDate);
+  await saveAttendanceTotals(pool, registerId, totals);
+  return totals;
 }

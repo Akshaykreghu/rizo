@@ -231,12 +231,18 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
 
   function validateStep0(): boolean {
     const errors = {
-      date_of_birth: dobError(form.date_of_birth ?? '') ?? '',
+      first_name: form.first_name?.trim() ? '' : 'First name is required',
+      date_of_birth: form.date_of_birth
+        ? (dobError(form.date_of_birth) ?? '')
+        : 'Date of birth is required',
       mobile_no: mobileError(form.mobile_no ?? '') ?? '',
-      id_card: aadhaarError(form.id_card ?? '') ?? '',
+      id_card: form.id_card
+        ? (aadhaarError(form.id_card) ?? '')
+        : 'Aadhaar / ID Card is required',
       classification: form.classification ? '' : 'Gender is required',
+      nationality_id: form.nationality_id ? '' : 'Nationality is required',
     };
-    if (errors.date_of_birth || errors.mobile_no || errors.id_card || errors.classification) {
+    if (Object.values(errors).some(Boolean)) {
       setFieldErrors(errors);
       return false;
     }
@@ -315,15 +321,16 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
         <div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-5">
             <div>
-              <label className={LABEL_CLASS}>First Name</label>
-              <input className={INPUT_CLASS} {...f('first_name')} />
+              <label className={LABEL_CLASS}>First Name <span className="text-[color:var(--color-danger)]">*</span></label>
+              <input className={cn(INPUT_CLASS, fieldErrors.first_name && ERROR_INPUT_CLASS)} {...f('first_name')} />
+              <FieldError>{fieldErrors.first_name}</FieldError>
             </div>
             <div>
               <label className={LABEL_CLASS}>Last Name</label>
               <input className={INPUT_CLASS} {...f('last_name')} />
             </div>
             <div>
-              <label className={LABEL_CLASS}>Date of Birth</label>
+              <label className={LABEL_CLASS}>Date of Birth <span className="text-[color:var(--color-danger)]">*</span></label>
               <input
                 type="date"
                 max={new Date().toISOString().slice(0, 10)}
@@ -357,7 +364,7 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
               <input type="email" className={INPUT_CLASS} {...f('email')} />
             </div>
             <div>
-              <label className={LABEL_CLASS}>Aadhaar / ID Card</label>
+              <label className={LABEL_CLASS}>Aadhaar / ID Card <span className="text-[color:var(--color-danger)]">*</span></label>
               <input
                 maxLength={12}
                 className={cn(INPUT_CLASS, fieldErrors.id_card && ERROR_INPUT_CLASS)}
@@ -385,11 +392,12 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
               </select>
             </div>
             <div>
-              <label className={LABEL_CLASS}>Nationality</label>
-              <select className={INPUT_CLASS} {...f('nationality_id')}>
+              <label className={LABEL_CLASS}>Nationality <span className="text-[color:var(--color-danger)]">*</span></label>
+              <select className={cn(INPUT_CLASS, fieldErrors.nationality_id && ERROR_INPUT_CLASS)} {...f('nationality_id')}>
                 <option value="">Select nationality</option>
                 {nationalities.map((n) => <option key={n.id} value={n.id}>{n.country_name}</option>)}
               </select>
+              <FieldError>{fieldErrors.nationality_id}</FieldError>
             </div>
             <div>
               <label className={LABEL_CLASS}>Country of Origin</label>

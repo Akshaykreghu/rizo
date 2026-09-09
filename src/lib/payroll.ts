@@ -13,6 +13,18 @@ export function monthYearToEvuFormat(monthYear: string): string {
   return `${m}-${y}`;
 }
 
+// Mirrors the `emp_salary_slip` guard legacy uses across modules (EmployeeadvanceController::
+// salarycheck(), EmployeeLoanController::amount_pay()/update_transfer()) to tell whether a live
+// salary slip already exists for an employee in a given 'YYYY-MM' month. Advances treat a true
+// result as advisory; loans treat it as a hard block — the caller decides.
+export async function isPayrollAlreadyProcessed(pool: Pool, empFkey: number, monthYear: string): Promise<boolean> {
+  const [[row]] = await pool.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS cnt FROM emp_salary_slip WHERE month_year = ? AND emp_fkey = ? AND end_date_effective IS NULL`,
+    [monthYear, empFkey]
+  );
+  return Number(row?.cnt ?? 0) > 0;
+}
+
 // Mirrors PayrollController::listpayroll()'s draft-seed path — calls payroll_master_insert, which
 // itself deletes any pre-existing action IS NULL rows for the month/branch before reseeding from
 // attendance_register (this is the real "reseed" mechanism, confirmed live).

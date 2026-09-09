@@ -1,7 +1,7 @@
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
-import { payLoanAmount } from '@/lib/loans';
+import { payLoanAmount, LoanValidationError } from '@/lib/loans';
 import { NextRequest, NextResponse } from 'next/server';
 
 // Mirrors EmployeeLoanController::amount_pay().
@@ -15,12 +15,19 @@ export async function POST(
   }
 
   const { id } = await params;
-  const body = await request.json() as { amount: number };
+  const body = await request.json() as { amount: number; remarks?: string };
   if (!body.amount || body.amount <= 0) {
     return NextResponse.json({ error: 'A positive amount is required' }, { status: 400 });
   }
 
   const pool = await getCompanyPool(session.user.companyCode);
-  await payLoanAmount(pool, Number(id), body.amount, session.user.loginUserId);
+  try {
+    await payLoanAmount(pool, Number(id), body.amount, session.user.loginUserId, body.remarks ?? '');
+  } catch (err) {
+    if (err instanceof LoanValidationError) {
+      return NextResponse.json({ error: err.message }, { status: 400 });
+    }
+    throw err;
+  }
   return NextResponse.json({ success: true });
 }

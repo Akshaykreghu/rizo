@@ -1,16 +1,21 @@
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
-import { FIELD_COLUMNS, getAttPeriod, upsertMonthlyOt } from '@/lib/attendance';
+import {
+  FIELD_COLUMNS, getAttPeriod, upsertMonthlyOt, computeAttendanceTotals, getNaPeriodBounds,
+  saveAttendanceTotals, fieldsToArray,
+} from '@/lib/attendance';
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket } from 'mysql2';
 
 // Ports checkifregistercanverify() + verifyAttendance(): a register row can only be verified/locked
 // (isdelete='Y' -> 'N') once every calendar day in its month has a non-blank FIELD value (legacy's
-// "miss-punched date" gate). Also triggers ot_duration_register_date per employee, matching legacy's
-// verifyAttendance() OT-duration recompute. Then generates/refreshes Monthly OT (emp_ot_master) for
-// that employee — legacy's OtAttendanceNewController::getDurationRegister() only does this once
-// attendance_register is verified for the month, which is exactly this moment.
+// "miss-punched date" gate). Also recomputes + persists the totals (presant_total/lop_total/etc.,
+// see computeAttendanceTotals) as verifyAttendance() itself does, then triggers
+// ot_duration_register_date per employee, matching legacy's OT-duration recompute. Finally
+// generates/refreshes Monthly OT (emp_ot_master) for that employee — legacy's
+// OtAttendanceNewController::getDurationRegister() only does this once attendance_register is
+// verified for the month, which is exactly this moment.
 
 export async function POST(request: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -34,6 +39,7 @@ export async function POST(request: NextRequest) {
 
   const verified: number[] = [];
   const skipped: { registerId: number; reason: string }[] = [];
+  const naBounds = await getNaPeriodBounds(pool, rows.map((r) => r.emp_fkey));
 
   for (const row of rows) {
     const calendarDays = Number(row.calander_days);
@@ -44,6 +50,27 @@ export async function POST(request: NextRequest) {
     }
 
     await pool.execute("UPDATE attendance_register SET isdelete = 'N' WHERE registerid = ?", [row.registerid]);
+
+    // Mirrors legacy's verifyAttendance(): recompute + persist the totals as part of verifying.
+    try {
+      const period = await getAttPeriod(pool, row.month_year);
+      const calendarDayCount = Math.round(
+        (new Date(period.end).getTime() - new Date(period.start).getTime()) / 86400000
+      ) + 1;
+      const dates = Array.from({ length: calendarDayCount }, (_, i) => {
+        const d = new Date(period.start);
+        d.setDate(d.getDate() + i);
+        return d.toISOString().slice(0, 10);
+      });
+      const bounds = naBounds[row.emp_fkey] ?? { joiningDate: null, lastWorkingDate: null };
+      const totals = computeAttendanceTotals(
+        fieldsToArray(row), dates, Number(row.calander_days) || null, bounds.joiningDate, bounds.lastWorkingDate
+      );
+      await saveAttendanceTotals(pool, row.registerid, totals);
+    } catch {
+      // Totals recompute is best-effort here too — matches the surrounding OT/monthly-OT steps'
+      // failure handling and shouldn't block verification.
+    }
 
     for (let d = 1; d <= calendarDays; d++) {
       const attDate = `${row.month_year}-${String(d).padStart(2, '0')}`;

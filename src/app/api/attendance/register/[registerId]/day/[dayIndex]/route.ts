@@ -1,7 +1,7 @@
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
-import { getRegisterDayContext, isLeaveAlreadyApplied, isLeaveCode, toISODate } from '@/lib/attendance';
+import { getRegisterDayContext, isLeaveAlreadyApplied, isLeaveCode, mergeHalfDayStatus, recalcAttendanceRegisterTotals, toISODate } from '@/lib/attendance';
 import { NextRequest, NextResponse } from 'next/server';
 import type { ResultSetHeader } from 'mysql2';
 
@@ -11,6 +11,9 @@ import type { ResultSetHeader } from 'mysql2';
 // leave_transaction_prc (matches legacy's AddLeave() side effect — ported per project decision,
 // even though there's no Leave Management UI yet, same precedent as calling leave_encash_prc for
 // Remove Employee without a Leave module existing).
+// The half-day merge (see mergeHalfDayStatus) is legacy's own client-side JS logic, done here
+// server-side instead: `status` is just the raw code the caller picked for this one half (e.g. 'P'),
+// not a pre-combined "X/Y" string — the FIELDn column always stores both halves together.
 
 const SESSION_BY_TYPE: Record<string, 1 | 2 | 3> = { first: 1, second: 2, full: 3 };
 
@@ -86,10 +89,18 @@ export async function PUT(
       ]);
     }
 
+    // A day cell always stores both halves ("X/Y") — merge this edit's half into whatever the other
+    // half currently holds instead of overwriting the whole cell (see mergeHalfDayStatus).
+    const mergedStatus = mergeHalfDayStatus(day.currentStatus, statusType, status);
+
     await connection.execute(
       `UPDATE attendance_register SET ${fieldCol} = ? WHERE registerid = ?`,
-      [status, registerId]
+      [mergedStatus, registerId]
     );
+
+    // Mirrors legacy's chnagestatus(): every day-cell edit recomputes and persists the register's
+    // totals from the (now-updated) FIELD1..32 codes — see recalcAttendanceRegisterTotals.
+    await recalcAttendanceRegisterTotals(connection, Number(registerId));
 
     await connection.commit();
   } catch (err) {

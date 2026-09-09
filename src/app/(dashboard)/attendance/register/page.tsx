@@ -6,9 +6,10 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { useSetupOptions } from '@/lib/setupOptions';
 import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
 import { AttendanceGrid, type AttendanceDay, type AttendanceRow } from '@/components/attendance/AttendanceGrid';
+import { TimePicker, nowAsHHMMSS } from '@/components/ui/TimePicker';
 import { ATTENDANCE_LEGEND, getCellColor } from '@/lib/attendance';
 import { cn } from '@/lib/utils';
-import { ShieldCheck, ShieldOff, X, Clock, Timer, LogIn, LogOut, Lock, Plus, Layers, Eye, EyeOff, BadgeCheck } from 'lucide-react';
+import { ShieldCheck, ShieldOff, X, Clock, Timer, LogIn, LogOut, Lock, Plus, Layers, Eye, EyeOff, BadgeCheck, Trash2 } from 'lucide-react';
 
 const useLookup = useSetupOptions;
 
@@ -36,6 +37,15 @@ interface DayExtras {
   punches: DayPunch[];
   otEligible: boolean;
   ot: { otDurationMin: number | null; setDurationMin: number | null; remarks: string | null; isManual: boolean } | null;
+  computedAttendance: { inTime: string | null; outTime: string | null; durationMin: number | null; present: string | null } | null;
+}
+
+function formatDurationMin(min: number): string {
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  if (h === 0) return `${m}m`;
+  if (m === 0) return `${h}h`;
+  return `${h}h ${m}m`;
 }
 
 export default function AttendanceRegisterPage() {
@@ -436,7 +446,7 @@ function DayEditor({
     queryFn: () => fetch(`/api/attendance/register/${registerId}/day/${dayIndex}/extras`).then((r) => r.json()),
   });
 
-  const [punchTime, setPunchTime] = useState('');
+  const [punchTime, setPunchTime] = useState(nowAsHHMMSS);
   const [punchDirection, setPunchDirection] = useState<'in' | 'out'>('in');
   // null = no user edit yet, fall back to the server's current value once `extras` loads.
   const [otValueOverride, setOtValueOverride] = useState<string | null>(null);
@@ -455,7 +465,22 @@ function DayEditor({
         if (!r.ok) throw new Error(body.error ?? 'Failed to add punch');
         return body;
       }),
-    onSuccess: () => { setPunchTime(''); refetchExtras(); },
+    onSuccess: () => { setPunchTime(nowAsHHMMSS()); refetchExtras(); onSaved(); },
+    onError: (err: Error) => onMessage(err.message),
+  });
+
+  const deletePunchMutation = useMutation({
+    mutationFn: (deviceAttandanceSeq: number) =>
+      fetch(`/api/attendance/register/${registerId}/day/${dayIndex}/punches`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ deviceAttandanceSeq }),
+      }).then(async (r) => {
+        const body = await r.json();
+        if (!r.ok) throw new Error(body.error ?? 'Failed to delete punch');
+        return body;
+      }),
+    onSuccess: () => { refetchExtras(); onSaved(); },
     onError: (err: Error) => onMessage(err.message),
   });
 
@@ -602,9 +627,16 @@ function DayEditor({
 
           {/* Punches */}
           <section className="px-7 py-6 border-t border-black/[0.06]">
-            <div className="flex items-center gap-2 mb-3.5">
-              <Clock className="w-[15px] h-[15px] text-[#86868B]" strokeWidth={2} />
-              <h3 className="text-[11px] font-semibold text-[#86868B] uppercase tracking-wider">Punches</h3>
+            <div className="flex items-center justify-between mb-3.5">
+              <div className="flex items-center gap-2">
+                <Clock className="w-[15px] h-[15px] text-[#86868B]" strokeWidth={2} />
+                <h3 className="text-[11px] font-semibold text-[#86868B] uppercase tracking-wider">Punches</h3>
+              </div>
+              {extras?.computedAttendance?.durationMin != null && (
+                <span className="text-[11px] font-semibold text-[color:var(--color-success-dark)] bg-[color:var(--color-success-soft)] px-2 py-[3px] rounded-[6px]">
+                  {formatDurationMin(extras.computedAttendance.durationMin)} worked
+                </span>
+              )}
             </div>
             {(extras?.punches?.length ?? 0) > 0 ? (
               <div className="space-y-1.5 mb-4">
@@ -623,11 +655,28 @@ function DayEditor({
                         </span>
                         <span className="text-[13px] font-medium text-[#1D1D1F] capitalize">{p.direction}</span>
                       </span>
-                      {/* DB connections read datetimes tagged as UTC (lib/db.ts timezone: '+00:00') though
-                          the schema only ever stores naive local wall-clock time — timeZone: 'UTC' here
-                          reads back the stored value verbatim instead of re-shifting by the browser's offset. */}
-                      <span className="text-[13px] text-[#6E6E73] tabular-nums">
-                        {new Date(p.LOGDATE).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' })}
+                      <span className="flex items-center gap-2.5">
+                        {/* DB connections read datetimes tagged as UTC (lib/db.ts timezone: '+00:00')
+                            though the schema only ever stores naive local wall-clock time — timeZone:
+                            'UTC' here reads back the stored value verbatim instead of re-shifting by
+                            the browser's offset. */}
+                        <span className="text-[13px] text-[#6E6E73] tabular-nums">
+                          {new Date(p.LOGDATE).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' })}
+                        </span>
+                        {!locked && (
+                          <button
+                            onClick={() => {
+                              if (confirm('Are you sure you want to delete this punch?')) {
+                                deletePunchMutation.mutate(p.device_attandance_seq);
+                              }
+                            }}
+                            disabled={deletePunchMutation.isPending}
+                            aria-label="Delete punch"
+                            className="w-6 h-6 rounded-full flex items-center justify-center text-[#86868B] hover:text-[color:var(--color-danger)] hover:bg-[color:var(--color-danger)]/10 disabled:opacity-40 transition-colors duration-150"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                       </span>
                     </div>
                   );
@@ -638,13 +687,7 @@ function DayEditor({
             )}
             {!locked && (
               <div className="flex items-center gap-2">
-                <input
-                  type="time"
-                  step="1"
-                  value={punchTime}
-                  onChange={(e) => setPunchTime(e.target.value)}
-                  className="flex-1 h-11 px-3.5 rounded-[11px] border border-black/[0.08] bg-white text-[13px] text-[#1D1D1F] focus:outline-none focus:ring-[3px] focus:ring-[color:var(--color-primary)]/15 focus:border-[color:var(--color-primary)] transition-all duration-150"
-                />
+                <TimePicker value={punchTime} onChange={setPunchTime} className="flex-1" />
                 <select
                   value={punchDirection}
                   onChange={(e) => setPunchDirection(e.target.value as 'in' | 'out')}
@@ -655,7 +698,7 @@ function DayEditor({
                 </select>
                 <button
                   onClick={() => addPunchMutation.mutate()}
-                  disabled={!punchTime || addPunchMutation.isPending}
+                  disabled={addPunchMutation.isPending}
                   className="h-11 px-4 rounded-[11px] border border-black/[0.08] bg-white text-[13px] font-medium text-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-light)] active:scale-[0.98] disabled:opacity-40 transition-all duration-150 whitespace-nowrap flex items-center gap-1"
                 >
                   <Plus className="w-3.5 h-3.5" /> {addPunchMutation.isPending ? 'Adding…' : 'Add'}

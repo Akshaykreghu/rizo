@@ -20,15 +20,10 @@ export async function getAdvanceLimit(pool: Pool, empFkey: number): Promise<numb
   return Math.round(0.8 * monthlyGross);
 }
 
-// Mirrors EmployeeadvanceController::salarycheck() — advisory warning only, not a hard block
-// (legacy's save doesn't actually call this before inserting).
-export async function isPayrollAlreadyProcessed(pool: Pool, empFkey: number, monthYear: string): Promise<boolean> {
-  const [[row]] = await pool.execute<RowDataPacket[]>(
-    `SELECT COUNT(*) AS cnt FROM emp_salary_slip WHERE month_year = ? AND emp_fkey = ? AND end_date_effective IS NULL`,
-    [monthYear, empFkey]
-  );
-  return Number(row?.cnt ?? 0) > 0;
-}
+// Mirrors EmployeeadvanceController::salarycheck() — advisory warning only for advances, not a hard
+// block (legacy's advance save doesn't actually call this before inserting). Now defined in
+// lib/payroll.ts and shared with the Loans module; re-exported here so existing callers are unchanged.
+export { isPayrollAlreadyProcessed } from './payroll';
 
 export interface AdvanceInput {
   empFkey: number;

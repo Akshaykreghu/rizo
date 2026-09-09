@@ -2,13 +2,15 @@
 
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useRouter } from 'next/navigation';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, IndianRupee, CheckCircle2, Trash2 } from 'lucide-react';
+import { Plus, Trash2 } from 'lucide-react';
 import type { ColumnDef } from '@tanstack/react-table';
 import { EmployeeSearch } from '@/components/employees/EmployeeSearch';
 import { cn, formatCurrency } from '@/lib/utils';
 import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
 import { DataTable } from '@/components/data-table/DataTable';
+import { useSetupOptions } from '@/lib/setupOptions';
 
 interface LoanRow {
   emp_loan_pkey: number;
@@ -32,6 +34,7 @@ const BTN_BASE =
 
 export default function LoansPage() {
   const { slotEl } = useHeaderSlot();
+  const router = useRouter();
   const queryClient = useQueryClient();
   const [showForm, setShowForm] = useState(false);
   const [empId, setEmpId] = useState('');
@@ -41,11 +44,23 @@ export default function LoansPage() {
   const [emiStartMonth, setEmiStartMonth] = useState('');
   const [remarks, setRemarks] = useState('');
   const [message, setMessage] = useState<string | null>(null);
-  const [payAmounts, setPayAmounts] = useState<Record<number, string>>({});
+
+  // Filters — mirror EmployeeLoanController::employeeloanlist()'s employee / branch / month toolbar.
+  const [filterEmpId, setFilterEmpId] = useState('');
+  const [filterBranch, setFilterBranch] = useState('');
+  const [filterMonth, setFilterMonth] = useState('');
+  const { data: branches = [] } = useSetupOptions('setup/branches', 'branch_code', 'branch_name');
 
   const { data, isLoading } = useQuery<{ rows: LoanRow[] }>({
-    queryKey: ['loans'],
-    queryFn: () => fetch('/api/loans').then((r) => r.json()),
+    queryKey: ['loans', filterEmpId, filterBranch, filterMonth],
+    queryFn: () => {
+      const qs = new URLSearchParams();
+      if (filterEmpId) qs.set('empFkey', filterEmpId);
+      if (filterBranch) qs.set('branch', filterBranch);
+      if (filterMonth) qs.set('month', filterMonth);
+      const suffix = qs.toString() ? `?${qs}` : '';
+      return fetch(`/api/loans${suffix}`).then((r) => r.json());
+    },
   });
   const rows = data?.rows ?? [];
 
@@ -71,31 +86,6 @@ export default function LoansPage() {
     onError: (err: Error) => setMessage(err.message),
   });
 
-  const pay = useMutation({
-    mutationFn: async (id: number) => {
-      const amount = Number(payAmounts[id] ?? 0);
-      const res = await fetch(`/api/loans/${id}/pay`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ amount }),
-      });
-      const b = await res.json();
-      if (!res.ok) throw new Error(b.error ?? 'Payment failed');
-      return b;
-    },
-    onSuccess: () => {
-      setMessage('Additional payment recorded.');
-      queryClient.invalidateQueries({ queryKey: ['loans'] });
-    },
-    onError: (err: Error) => setMessage(err.message),
-  });
-
-  const complete = useMutation({
-    mutationFn: (id: number) => fetch(`/api/loans/${id}/complete`, { method: 'POST' }),
-    onSuccess: () => {
-      setMessage('Loan marked completed.');
-      queryClient.invalidateQueries({ queryKey: ['loans'] });
-    },
-  });
-
   const remove = useMutation({
     mutationFn: (id: number) => fetch(`/api/loans/${id}`, { method: 'DELETE' }),
     onSuccess: () => {
@@ -115,28 +105,19 @@ export default function LoansPage() {
     {
       id: 'actions',
       header: '',
-      meta: { className: 'w-44' },
+      meta: { className: 'w-12' },
       cell: ({ row }) => (
-        row.original.is_completed !== 'Y' ? (
-          <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
-            <input
-              type="number"
-              placeholder="Amount"
-              value={payAmounts[row.original.emp_loan_pkey] ?? ''}
-              onChange={(e) => setPayAmounts((prev) => ({ ...prev, [row.original.emp_loan_pkey]: e.target.value }))}
-              className={cn(INPUT_CLASS, 'w-20')}
-            />
-            <button onClick={() => pay.mutate(row.original.emp_loan_pkey)} title="Record additional payment" className="p-1.5 rounded-lg text-slate-400 hover:text-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-light)] transition-colors duration-150">
-              <IndianRupee className="w-3.5 h-3.5" />
-            </button>
-            <button onClick={() => complete.mutate(row.original.emp_loan_pkey)} title="Mark completed" className="p-1.5 rounded-lg text-slate-400 hover:text-[color:var(--color-success-dark)] hover:bg-[color:var(--color-success-soft)] transition-colors duration-150">
-              <CheckCircle2 className="w-3.5 h-3.5" />
-            </button>
-            <button onClick={() => remove.mutate(row.original.emp_loan_pkey)} title="Remove" className="p-1.5 rounded-lg text-slate-400 hover:text-[color:var(--color-danger)] hover:bg-[color:var(--color-danger)]/10 transition-colors duration-150">
-              <Trash2 className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        ) : null
+        <div className="flex items-center justify-end" onClick={(e) => e.stopPropagation()}>
+          <button
+            onClick={() => {
+              if (confirm('Remove this loan?')) remove.mutate(row.original.emp_loan_pkey);
+            }}
+            title="Remove"
+            className="p-1.5 rounded-lg text-slate-400 hover:text-[color:var(--color-danger)] hover:bg-[color:var(--color-danger)]/10 transition-colors duration-150"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+        </div>
       ),
     },
   ];
@@ -156,10 +137,33 @@ export default function LoansPage() {
           slotEl
         )}
 
-      <div className="flex items-center justify-end mb-4">
+      <div className="flex flex-wrap items-end gap-3 mb-4">
+        <div className="min-w-[220px]">
+          <label className="block text-[11.5px] font-medium text-slate-500 mb-1">Employee</label>
+          <EmployeeSearch value={filterEmpId} onChange={setFilterEmpId} placeholder="All employees" />
+        </div>
+        <div>
+          <label className="block text-[11.5px] font-medium text-slate-500 mb-1">Branch</label>
+          <select value={filterBranch} onChange={(e) => setFilterBranch(e.target.value)} className={cn(INPUT_CLASS, 'min-w-[160px]')}>
+            <option value="">All branches</option>
+            {branches.map((b) => <option key={b.value} value={b.value}>{b.label}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="block text-[11.5px] font-medium text-slate-500 mb-1">EMI Start Month</label>
+          <input type="month" value={filterMonth} onChange={(e) => setFilterMonth(e.target.value)} className={INPUT_CLASS} />
+        </div>
+        {(filterEmpId || filterBranch || filterMonth) && (
+          <button
+            onClick={() => { setFilterEmpId(''); setFilterBranch(''); setFilterMonth(''); }}
+            className={cn(BTN_BASE, 'bg-white border border-slate-200 hover:bg-slate-50 text-slate-600')}
+          >
+            Clear
+          </button>
+        )}
         <button
           onClick={() => setShowForm((v) => !v)}
-          className={cn(BTN_BASE, 'bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)] text-white')}
+          className={cn(BTN_BASE, 'bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)] text-white ml-auto')}
         >
           <Plus className="w-3.5 h-3.5" />
           New Loan
@@ -206,7 +210,14 @@ export default function LoansPage() {
         </div>
       )}
 
-      <DataTable data={rows} columns={columns} pageSize={10} pageSizeOptions={[10, 20, 30, 50]} isLoading={isLoading} />
+      <DataTable
+        data={rows}
+        columns={columns}
+        pageSize={10}
+        pageSizeOptions={[10, 20, 30, 50]}
+        isLoading={isLoading}
+        onRowClick={(row) => router.push(`/loans/${row.emp_loan_pkey}`)}
+      />
     </div>
   );
 }

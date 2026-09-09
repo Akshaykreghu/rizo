@@ -1,7 +1,10 @@
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
-import { getAttPeriod, getPolicyLopMap, fieldsToArray, isPolicyLeaveForDate, toISODate, getMonthlyOtMap } from '@/lib/attendance';
+import {
+  getAttPeriod, getPolicyLopMap, fieldsToArray, isPolicyLeaveForDate, toISODate, getMonthlyOtMap,
+  computeAttendanceTotals, getNaPeriodBounds, saveAttendanceTotals,
+} from '@/lib/attendance';
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket } from 'mysql2';
 
@@ -10,6 +13,9 @@ import type { RowDataPacket } from 'mysql2';
 // plus the per-day cell color hints (policy-leave vs indirect LOP) and expandable IN/OUT/Duration/OT
 // detail sourced from emp_detail_timeattandance and emp_ot_timeattandance. Also attaches Monthly OT
 // (emp_ot_master) per employee — only populated once the register verify step has generated it.
+// Also mirrors registerbook()'s totals recompute: the presant_total/lop_total/etc. columns are
+// re-derived from FIELD1..32 and re-saved on every load rather than trusted as persisted (see
+// computeAttendanceTotals).
 
 export async function GET(request: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -30,9 +36,7 @@ export async function GET(request: NextRequest) {
   const isdelete = statusParam === 'verified' ? 'N' : 'Y';
 
   const [rows] = await pool.execute<RowDataPacket[]>(
-    `SELECT ar.registerid, ar.emp_fkey, ar.emp_company_id, ar.emp_name,
-            ar.presant_total, ar.leave_total, ar.lop_total, ar.weekoff_total, ar.na_wo_count,
-            ar.holiday_total, ar.na_ho_count, ar.working_days, ar.calander_days,
+    `SELECT ar.registerid, ar.emp_fkey, ar.emp_company_id, ar.emp_name, ar.calander_days,
             ${['FIELD1', ...Array.from({ length: 31 }, (_, i) => `ar.FIELD${i + 2}`)].join(', ')},
             COALESCE(ss.prorate_code, 1) AS prorate_code
      FROM attendance_register ar
@@ -92,8 +96,22 @@ export async function GET(request: NextRequest) {
     return d.toISOString().slice(0, 10);
   });
 
+  // Mirrors legacy's registerbook(): totals are recomputed from FIELD1..32 (not trusted as
+  // persisted) and re-saved every time the register is viewed — see computeAttendanceTotals.
+  const naBounds = await getNaPeriodBounds(pool, empFkeys);
+  const totalsByRegisterId: Record<number, ReturnType<typeof computeAttendanceTotals>> = {};
+  for (const row of rows) {
+    const bounds = naBounds[row.emp_fkey] ?? { joiningDate: null, lastWorkingDate: null };
+    const totals = computeAttendanceTotals(
+      fieldsToArray(row), dates, Number(row.calander_days) || null, bounds.joiningDate, bounds.lastWorkingDate
+    );
+    totalsByRegisterId[row.registerid] = totals;
+    await saveAttendanceTotals(pool, row.registerid, totals);
+  }
+
   const data = rows.map((row) => {
     const fields = fieldsToArray(row);
+    const totals = totalsByRegisterId[row.registerid];
     const days = dates.map((date, i) => {
       const value = fields[i] ?? '';
       const punch = punchesByEmp[row.emp_fkey]?.[date];
@@ -115,15 +133,15 @@ export async function GET(request: NextRequest) {
       empFkey: row.emp_fkey,
       empId: row.emp_company_id,
       empName: row.emp_name,
-      presentTotal: Number(row.presant_total),
-      leaveTotal: Number(row.leave_total),
-      lopTotal: Number(row.lop_total),
-      weekoffTotal: Number(row.weekoff_total),
-      naWoCount: Number(row.na_wo_count),
-      holidayTotal: Number(row.holiday_total),
-      naHoCount: Number(row.na_ho_count),
-      workingDays: Number(row.working_days),
-      calendarDays: Number(row.calander_days),
+      presentTotal: totals.presentTotal,
+      leaveTotal: totals.leaveTotal,
+      lopTotal: totals.lopTotal,
+      weekoffTotal: totals.weekoffTotal,
+      naWoCount: totals.naWoCount,
+      holidayTotal: totals.holidayTotal,
+      naHoCount: totals.naHoCount,
+      workingDays: totals.workingDays,
+      calendarDays: totals.calendarDays,
       prorateCode: Number(row.prorate_code),
       monthlyOt: monthlyOtMap[row.emp_fkey] ?? null,
       days,

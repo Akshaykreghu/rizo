@@ -91,6 +91,7 @@ export const navItems: NavItem[] = [
     children: [
       { label: 'Process Payroll', href: '/payroll/process', description: 'Run payroll processing for the current cycle.' },
       { label: 'Approve Payroll', href: '/payroll/approve', description: 'Review and approve processed payroll before payout.' },
+      { label: 'Variable Upload', href: '/payroll/variable-upload', description: 'Record one-off variable pay (bonus, incentive, ad-hoc additions) per employee per month.' },
       { label: 'Increments', href: '/payroll/increments', description: 'Apply salary increments and revisions.' },
       { label: 'Form-16 Documents', href: '/taxation/form16', description: 'Generate and distribute employee Form-16s.' },
       { label: 'TDS Report', href: '/reports/tds', description: 'View tax deducted at source across employees.' },
