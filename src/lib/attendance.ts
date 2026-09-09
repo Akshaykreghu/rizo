@@ -27,6 +27,16 @@ export function getCellColor(rawValue: string, isPolicyLeave: boolean): { bg: st
   return { bg: '#ebebeb', fg: '#000' };
 }
 
+// Display-only collapse: "P/P", "LOP/LOP", "HO/HO", "WO/WO", "NA/NA" etc. read as a single code when
+// both halves agree — purely cosmetic, the stored value and every other consumer (getCellColor,
+// totals/eligibility computations, the merge logic) keep reading the full "X/X" form untouched.
+export function formatStatusDisplay(rawValue: string): string {
+  const value = (rawValue ?? '').trim();
+  if (!value.includes('/')) return value;
+  const [first, second] = value.split('/');
+  return first.toUpperCase() === second.toUpperCase() ? first : value;
+}
+
 export const ATTENDANCE_LEGEND = [
   { code: 'P', label: 'Present', bg: '#06a226', fg: '#fff' },
   { code: 'HO', label: 'Holiday', bg: '#2d2df4', fg: '#fff' },

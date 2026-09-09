@@ -2,7 +2,7 @@
 
 import { Fragment, useState } from 'react';
 import { ChevronLeft, ChevronRight, Lock } from 'lucide-react';
-import { getCellColor } from '@/lib/attendance';
+import { getCellColor, formatStatusDisplay } from '@/lib/attendance';
 import { cn } from '@/lib/utils';
 
 export interface AttendanceDay {
@@ -296,7 +296,7 @@ export function AttendanceGrid({ rows, selected, onToggleSelect, onCellClick, ex
                             className="inline-flex min-w-[26px] items-center justify-center rounded-md px-1 py-0.5 text-[10.5px] font-semibold leading-none"
                             style={{ backgroundColor: bg, color: fg }}
                           >
-                            {d.value || '—'}
+                            {formatStatusDisplay(d.value) || '—'}
                           </span>
                         </td>
                       );

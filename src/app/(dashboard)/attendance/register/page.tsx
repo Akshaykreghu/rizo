@@ -7,7 +7,7 @@ import { useSetupOptions } from '@/lib/setupOptions';
 import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
 import { AttendanceGrid, type AttendanceDay, type AttendanceRow } from '@/components/attendance/AttendanceGrid';
 import { TimePicker, nowAsHHMMSS } from '@/components/ui/TimePicker';
-import { ATTENDANCE_LEGEND, getCellColor } from '@/lib/attendance';
+import { ATTENDANCE_LEGEND, getCellColor, formatStatusDisplay } from '@/lib/attendance';
 import { cn } from '@/lib/utils';
 import { ShieldCheck, ShieldOff, X, Clock, Timer, LogIn, LogOut, Lock, Plus, Layers, Eye, EyeOff, BadgeCheck, Trash2 } from 'lucide-react';
 
@@ -46,6 +46,15 @@ function formatDurationMin(min: number): string {
   if (h === 0) return `${m}m`;
   if (m === 0) return `${h}h`;
   return `${h}h ${m}m`;
+}
+
+// Renders a 24h "HH:MM:SS" (the TimePicker's own value format) as a 12h "hh:mm AM/PM" display string,
+// matching how already-saved punches are displayed elsewhere in this modal.
+function formatHHMMSS12(hhmmss: string): string {
+  const [h, m] = hhmmss.split(':').map(Number);
+  const d = new Date();
+  d.setHours(h, m, 0, 0);
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
 export default function AttendanceRegisterPage() {
@@ -171,9 +180,9 @@ export default function AttendanceRegisterPage() {
         if (!r.ok) throw new Error(body.error ?? 'Failed to update');
         return body;
       }),
-    // No refetch() here — DayEditor's handleSave calls onSaved() (wired to refetch below) exactly
-    // once after every successful save, whether it touched status, OT, or both, so this mutation's
-    // own onSuccess doesn't need to duplicate it.
+    // No refetch() here — DayEditor's unified handleSave calls onSaved() (wired to refetch below)
+    // itself once, after committing whichever of Status/Punches/Overtime were actually dirty, so this
+    // mutation's own onSuccess doesn't need to duplicate it.
   });
 
   const toggleSelect = (registerId: number) => {
@@ -388,7 +397,10 @@ export default function AttendanceRegisterPage() {
 const HALVES = [
   { key: 'first', label: 'First Half', codes: ['P', 'LOP'] },
   { key: 'second', label: 'Second Half', codes: ['P', 'LOP', 'WO'] },
-  { key: 'full', label: 'Full Day', codes: ['P/P', 'HO', 'WO', 'LOP/LOP'] },
+  // Bare codes, not pre-combined "X/X" — mergeHalfDayStatus (lib/attendance.ts) does the full-day
+  // doubling itself (and the HO/WO bare-code exception), matching legacy's own chnagestatus() merge.
+  // Passing an already-doubled string here would get doubled again ('P/P' -> 'P/P/P/P').
+  { key: 'full', label: 'Full Day', codes: ['P', 'HO', 'WO', 'LOP'] },
 ] as const;
 
 type HalfKey = (typeof HALVES)[number]['key'];
@@ -424,10 +436,8 @@ function DayEditor({
   saveStatus: (statusType: HalfKey, status: string, salaryHeadItemFkey?: number) => Promise<unknown>;
   statusSaving: boolean;
   onMessage: (msg: string) => void;
-  /** Called once after a successful save so the parent grid (which this modal never talks to
-   * directly) can refetch — status edits already trigger the grid's own refetch via saveStatus's
-   * mutation, but an OT-only edit (no status change) previously left the grid showing stale data
-   * until something else happened to refetch it. */
+  /** Called once after handleSave commits anything (Status/Punches/Overtime) so the parent grid
+   * (which this modal never talks to directly) can refetch. */
   onSaved: () => void;
 }) {
   const { registerId } = editCell.row;
@@ -448,26 +458,40 @@ function DayEditor({
 
   const [punchTime, setPunchTime] = useState(nowAsHHMMSS);
   const [punchDirection, setPunchDirection] = useState<'in' | 'out'>('in');
+  // Punches the user has entered but not yet saved — collected here (rather than posted one at a
+  // time) so a day needing both an "in" and an "out" punch can be filled in and committed together by
+  // the one common Save button below, instead of needing a separate visit per punch.
+  const [stagedPunches, setStagedPunches] = useState<{ time: string; direction: 'in' | 'out' }[]>([]);
   // null = no user edit yet, fall back to the server's current value once `extras` loads.
   const [otValueOverride, setOtValueOverride] = useState<string | null>(null);
   const [otRemarkOverride, setOtRemarkOverride] = useState<string | null>(null);
   const otValue = otValueOverride ?? (extras?.ot?.setDurationMin != null ? String(extras.ot.setDurationMin) : '');
   const otRemark = otRemarkOverride ?? (extras?.ot?.remarks ?? '');
+  const [isSaving, setIsSaving] = useState(false);
 
-  const addPunchMutation = useMutation({
-    mutationFn: () =>
-      fetch(`/api/attendance/register/${registerId}/day/${dayIndex}/punches`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ logTime: punchTime, direction: punchDirection }),
-      }).then(async (r) => {
-        const body = await r.json();
-        if (!r.ok) throw new Error(body.error ?? 'Failed to add punch');
-        return body;
-      }),
-    onSuccess: () => { setPunchTime(nowAsHHMMSS()); refetchExtras(); onSaved(); },
-    onError: (err: Error) => onMessage(err.message),
-  });
+  const stagePunch = () => {
+    // Light safeguard, not a hard block: warn if this exact time is already staged or already saved
+    // for the day — a near-duplicate punch is exactly what previously confused the duration-computing
+    // trigger into pairing the wrong in/out and reporting 0 minutes worked.
+    const alreadyUsed =
+      stagedPunches.some((p) => p.time === punchTime) ||
+      (extras?.punches ?? []).some((p) => new Date(p.LOGDATE).toLocaleTimeString('en-GB', { hour12: false, timeZone: 'UTC' }) === punchTime);
+    if (alreadyUsed && !confirm('A punch already exists at this exact time — add anyway?')) return;
+
+    setStagedPunches((prev) => [...prev, { time: punchTime, direction: punchDirection }]);
+    setPunchTime(nowAsHHMMSS());
+  };
+
+  const postPunch = async (time: string, direction: 'in' | 'out') => {
+    const res = await fetch(`/api/attendance/register/${registerId}/day/${dayIndex}/punches`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ logTime: time, direction }),
+    });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error ?? 'Failed to add punch');
+    return body;
+  };
 
   const deletePunchMutation = useMutation({
     mutationFn: (deviceAttandanceSeq: number) =>
@@ -484,6 +508,9 @@ function DayEditor({
     onError: (err: Error) => onMessage(err.message),
   });
 
+  // mutateAsync's own rejection is what handleSave below reacts to, so this only needs to handle the
+  // success side-effect (clearing the local override so `otValue`/`otRemark` fall back to reading the
+  // freshly-saved server value once `extras` is refetched).
   const saveOtMutation = useMutation({
     mutationFn: () =>
       fetch(`/api/attendance/register/${registerId}/day/${dayIndex}/ot`, {
@@ -495,29 +522,79 @@ function DayEditor({
         if (!r.ok) throw new Error(body.error ?? 'Failed to save overtime');
         return body;
       }),
-    onSuccess: () => { refetchExtras(); },
+    onSuccess: () => { setOtValueOverride(null); setOtRemarkOverride(null); },
   });
 
   const locked = !!extras?.locked;
   const currentColor = getCellColor(editCell.day.value ?? '', false);
   const activeHalf = HALVES.find((h) => h.key === half)!;
   const otDirty = otValueOverride !== null || otRemarkOverride !== null;
-  const hasChanges = !!pendingStatus || (!!extras?.otEligible && otDirty);
-  const saving = statusSaving || saveOtMutation.isPending;
+  const hasChanges = !!pendingStatus || stagedPunches.length > 0 || otDirty;
+  const saving = statusSaving || isSaving;
 
+  // The one common Save action: commits only whatever's actually dirty (status / staged punches /
+  // overtime), independently of each other, so one failing doesn't block the rest. On full success it
+  // closes the modal; on a partial failure it stays open with only the failed part still pending, so
+  // Save can just be clicked again to retry.
   const handleSave = async () => {
-    try {
-      if (pendingStatus) {
+    setIsSaving(true);
+    const successParts: string[] = [];
+    const errorParts: string[] = [];
+    let anySuccess = false;
+
+    if (pendingStatus) {
+      try {
         await saveStatus(pendingStatus.half, pendingStatus.status, pendingStatus.salaryHeadItemFkey);
+        successParts.push('status saved');
+        anySuccess = true;
+        setPendingStatus(null);
+      } catch (err) {
+        errorParts.push(`status: ${err instanceof Error ? err.message : 'failed'}`);
       }
-      if (extras?.otEligible && otDirty) {
+    }
+
+    if (stagedPunches.length > 0) {
+      const stillPending: typeof stagedPunches = [];
+      let addedCount = 0;
+      // Sequential, not parallel — punches land one at a time, matching how they'd be entered for
+      // real, and avoiding two same-second inserts racing the duration-computing trigger.
+      for (const p of stagedPunches) {
+        try {
+          await postPunch(p.time, p.direction);
+          addedCount++;
+          anySuccess = true;
+        } catch (err) {
+          stillPending.push(p);
+          errorParts.push(`${p.direction} punch at ${formatHHMMSS12(p.time)}: ${err instanceof Error ? err.message : 'failed'}`);
+        }
+      }
+      if (addedCount > 0) successParts.push(`${addedCount} punch${addedCount === 1 ? '' : 'es'} added`);
+      setStagedPunches(stillPending);
+    }
+
+    if (otDirty) {
+      try {
         await saveOtMutation.mutateAsync();
+        successParts.push('overtime saved');
+        anySuccess = true;
+      } catch (err) {
+        errorParts.push(`overtime: ${err instanceof Error ? err.message : 'failed'}`);
       }
-      onMessage('Saved');
+    }
+
+    setIsSaving(false);
+    if (anySuccess) {
+      refetchExtras();
       onSaved();
+    }
+
+    if (errorParts.length === 0) {
+      onMessage(successParts.length ? `Saved — ${successParts.join(', ')}.` : 'Saved');
       onClose();
-    } catch (err) {
-      onMessage(err instanceof Error ? err.message : 'Failed to save');
+    } else {
+      onMessage(
+        `${successParts.length ? `Saved — ${successParts.join(', ')}. ` : ''}Failed — ${errorParts.join('; ')}.`
+      );
     }
   };
 
@@ -542,7 +619,7 @@ function DayEditor({
                 className="text-[11px] font-semibold px-2 py-[3px] rounded-[6px]"
                 style={{ backgroundColor: hexToRgba(currentColor.bg, 0.14), color: currentColor.bg }}
               >
-                {editCell.day.value || 'Not set'}
+                {formatStatusDisplay(editCell.day.value) || 'Not set'}
               </span>
               {locked && (
                 <span className="flex items-center gap-1 text-[11px] font-medium text-amber-700 bg-amber-50 px-2 py-[3px] rounded-[6px]">
@@ -586,7 +663,7 @@ function DayEditor({
                   <button
                     key={c}
                     onClick={() => setPendingStatus({ half, status: c })}
-                    disabled={statusSaving}
+                    disabled={saving}
                     className="text-[13px] font-medium px-3.5 py-[7px] rounded-[9px] border disabled:opacity-40 transition-all duration-150"
                     style={{
                       backgroundColor: hexToRgba(color.bg, isSelected ? 0.16 : 0.08),
@@ -604,7 +681,7 @@ function DayEditor({
                   <button
                     key={lo.salary_head_item_fkey}
                     onClick={() => setPendingStatus({ half, status: lo.code, salaryHeadItemFkey: lo.salary_head_item_fkey })}
-                    disabled={statusSaving || (!lo.isIndirect && lo.balance <= 0)}
+                    disabled={saving || (!lo.isIndirect && lo.balance <= 0)}
                     className="text-[13px] font-medium px-3.5 py-[7px] rounded-[9px] border disabled:opacity-40 transition-all duration-150"
                     style={{
                       backgroundColor: hexToRgba('#8b5cf6', isSelected ? 0.16 : 0.08),
@@ -617,12 +694,6 @@ function DayEditor({
                 );
               })}
             </div>
-            {pendingStatus && (
-              <p className="text-[12.5px] text-[#6E6E73] mt-3">
-                Will set {pendingStatus.half === 'first' ? 'first half' : pendingStatus.half === 'second' ? 'second half' : 'full day'} to{' '}
-                <span className="font-semibold text-[#1D1D1F]">{pendingStatus.status}</span> on Save.
-              </p>
-            )}
           </section>
 
           {/* Punches */}
@@ -685,23 +756,60 @@ function DayEditor({
             ) : (
               <p className="text-[13px] text-[#86868B] mb-4">No punches recorded for this date.</p>
             )}
+            {/* Staged — entered here but not yet committed; goes out with the next Save, alongside
+                Status/Overtime if those are also dirty. */}
+            {stagedPunches.length > 0 && (
+              <div className="space-y-1.5 mb-4">
+                {stagedPunches.map((p, i) => {
+                  const isIn = p.direction === 'in';
+                  return (
+                    <div key={i} className="flex items-center justify-between px-3.5 py-2.5 rounded-[10px] bg-[color:var(--color-primary)]/[0.06] border border-[color:var(--color-primary)]/15">
+                      <span className="flex items-center gap-2.5">
+                        <span
+                          className={cn(
+                            'w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0',
+                            isIn ? 'bg-[color:var(--color-success-soft)] text-[color:var(--color-success-dark)]' : 'bg-black/[0.06] text-[#6E6E73]'
+                          )}
+                        >
+                          {isIn ? <LogIn className="w-3 h-3" /> : <LogOut className="w-3 h-3" />}
+                        </span>
+                        <span className="text-[13px] font-medium text-[#1D1D1F] capitalize">{p.direction}</span>
+                        <span className="text-[10.5px] font-semibold text-[color:var(--color-primary)] bg-white px-1.5 py-[1px] rounded-[4px]">Pending</span>
+                      </span>
+                      <span className="flex items-center gap-2.5">
+                        <span className="text-[13px] text-[#6E6E73] tabular-nums">{formatHHMMSS12(p.time)}</span>
+                        <button
+                          onClick={() => setStagedPunches((prev) => prev.filter((_, idx) => idx !== i))}
+                          disabled={isSaving}
+                          aria-label="Remove staged punch"
+                          className="w-6 h-6 rounded-full flex items-center justify-center text-[#86868B] hover:text-[color:var(--color-danger)] hover:bg-[color:var(--color-danger)]/10 disabled:opacity-40 transition-colors duration-150"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
             {!locked && (
               <div className="flex items-center gap-2">
-                <TimePicker value={punchTime} onChange={setPunchTime} className="flex-1" />
+                <TimePicker value={punchTime} onChange={setPunchTime} disabled={isSaving} className="flex-1" />
                 <select
                   value={punchDirection}
                   onChange={(e) => setPunchDirection(e.target.value as 'in' | 'out')}
-                  className="h-11 px-3 rounded-[11px] border border-black/[0.08] bg-white text-[13px] text-[#1D1D1F] focus:outline-none focus:ring-[3px] focus:ring-[color:var(--color-primary)]/15 focus:border-[color:var(--color-primary)] transition-all duration-150"
+                  disabled={isSaving}
+                  className="h-11 px-3 rounded-[11px] border border-black/[0.08] bg-white text-[13px] text-[#1D1D1F] focus:outline-none focus:ring-[3px] focus:ring-[color:var(--color-primary)]/15 focus:border-[color:var(--color-primary)] disabled:opacity-50 transition-all duration-150"
                 >
                   <option value="in">In</option>
                   <option value="out">Out</option>
                 </select>
                 <button
-                  onClick={() => addPunchMutation.mutate()}
-                  disabled={addPunchMutation.isPending}
+                  onClick={stagePunch}
+                  disabled={isSaving}
                   className="h-11 px-4 rounded-[11px] border border-black/[0.08] bg-white text-[13px] font-medium text-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-light)] active:scale-[0.98] disabled:opacity-40 transition-all duration-150 whitespace-nowrap flex items-center gap-1"
                 >
-                  <Plus className="w-3.5 h-3.5" /> {addPunchMutation.isPending ? 'Adding…' : 'Add'}
+                  <Plus className="w-3.5 h-3.5" /> Add to list
                 </button>
               </div>
             )}
@@ -730,7 +838,7 @@ function DayEditor({
                     placeholder="0"
                     value={otValue}
                     onChange={(e) => setOtValueOverride(e.target.value)}
-                    disabled={locked}
+                    disabled={locked || isSaving}
                     className="w-full h-11 px-3.5 rounded-[11px] border border-black/[0.08] bg-white text-[13px] text-[#1D1D1F] placeholder:text-[#86868B] focus:outline-none focus:ring-[3px] focus:ring-[color:var(--color-primary)]/15 focus:border-[color:var(--color-primary)] disabled:opacity-50 disabled:bg-[#F5F5F7] transition-all duration-150"
                   />
                 </div>
@@ -741,7 +849,7 @@ function DayEditor({
                     placeholder="Add a remark…"
                     value={otRemark}
                     onChange={(e) => setOtRemarkOverride(e.target.value)}
-                    disabled={locked}
+                    disabled={locked || isSaving}
                     className="w-full h-11 px-3.5 rounded-[11px] border border-black/[0.08] bg-white text-[13px] text-[#1D1D1F] placeholder:text-[#86868B] focus:outline-none focus:ring-[3px] focus:ring-[color:var(--color-primary)]/15 focus:border-[color:var(--color-primary)] disabled:opacity-50 disabled:bg-[#F5F5F7] transition-all duration-150"
                   />
                 </div>
@@ -750,23 +858,35 @@ function DayEditor({
           )}
         </div>
 
-        {/* Footer */}
-        <div className="flex items-center justify-between gap-3 px-7 py-5 border-t border-black/[0.06] flex-shrink-0">
-          <button
-            onClick={onClose}
-            className="text-[14px] font-medium text-[#6E6E73] hover:text-[#1D1D1F] transition-colors duration-150"
-          >
-            Cancel
-          </button>
-          <div className="flex items-center gap-3">
-            {saving && <span className="text-[12px] text-[#86868B]">Saving…</span>}
+        {/* Footer — one common Save commits only whatever's dirty across Status/Punches/Overtime */}
+        <div className="border-t border-black/[0.06] flex-shrink-0">
+          {hasChanges && (
+            <p className="text-[12.5px] text-[#6E6E73] px-7 pt-4">
+              Will save {[
+                pendingStatus &&
+                  `${pendingStatus.half === 'first' ? 'first half' : pendingStatus.half === 'second' ? 'second half' : 'full day'} as ${pendingStatus.status}`,
+                stagedPunches.length > 0 && `${stagedPunches.length} punch${stagedPunches.length === 1 ? '' : 'es'}`,
+                otDirty && `Overtime (${otValue === '' ? 'cleared' : `${otValue} min`})`,
+              ].filter(Boolean).join(', ')}.
+            </p>
+          )}
+          <div className="flex items-center justify-between gap-3 px-7 py-5">
             <button
-              onClick={handleSave}
-              disabled={!hasChanges || saving}
-              className="h-11 px-5 rounded-[11px] bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)] active:scale-[0.98] disabled:opacity-40 text-white text-[14px] font-medium shadow-[0_1px_2px_rgba(0,0,0,0.1)] transition-all duration-150"
+              onClick={onClose}
+              className="text-[14px] font-medium text-[#6E6E73] hover:text-[#1D1D1F] transition-colors duration-150"
             >
-              Save Changes
+              Cancel
             </button>
+            <div className="flex items-center gap-3">
+              {saving && <span className="text-[12px] text-[#86868B]">Saving…</span>}
+              <button
+                onClick={handleSave}
+                disabled={!hasChanges || saving}
+                className="h-11 px-5 rounded-[11px] bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)] active:scale-[0.98] disabled:opacity-40 text-white text-[14px] font-medium shadow-[0_1px_2px_rgba(0,0,0,0.1)] transition-all duration-150"
+              >
+                Save
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -774,7 +894,9 @@ function DayEditor({
   );
 }
 
-const BULK_STATUS_CODES = ['P/P', 'HO', 'WO', 'LOP/LOP'];
+// Bare codes — see the matching comment on HALVES' 'full' entry above; the day route's
+// mergeHalfDayStatus does the "X/X" doubling itself for statusType: 'full'.
+const BULK_STATUS_CODES = ['P', 'HO', 'WO', 'LOP'];
 
 // Ports EditAttendanceController::bulkipdatestatus()'s intent (bulk-apply one status across many
 // selected date rows for an employee) onto our multi-employee grid instead: select employee ROWS,
