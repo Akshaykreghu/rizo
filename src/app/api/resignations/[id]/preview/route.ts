@@ -27,7 +27,7 @@ export async function GET(
   if (!ctx) return NextResponse.json({ error: 'Resignation request not found' }, { status: 404 });
 
   const dayStats = await computeDayCountStats(pool, ctx, 0);
-  const encashableLeaveBalance = await previewEncashableLeaveBalance(pool, ctx.empFkey, ctx.lastApprovedWd);
+  const encashableLeaveBalance = await previewEncashableLeaveBalance(pool, ctx.empFkey);
   const { loans } = await getLoansAndAssets(pool, ctx.empFkey);
   const allocatedAssets = await getAllocatedAssets(pool, ctx.empFkey);
   const leaveYearWarning = (await hasCurrentLeaveYear(pool, ctx.branchCode))

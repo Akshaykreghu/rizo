@@ -33,7 +33,7 @@ export async function PUT(
   }
 
   const [[proff]] = await pool.execute<RowDataPacket[]>(
-    'SELECT notice_days FROM emp_proff WHERE emp_fkey = ?',
+    'SELECT notice_days, joining_date FROM emp_proff WHERE emp_fkey = ?',
     [req.emp_fkey]
   );
   const noticeDays = Number(proff?.notice_days ?? 0);
@@ -52,6 +52,15 @@ export async function PUT(
   }
   if (lastApprovedWd < dateSubmitted) {
     return NextResponse.json({ error: 'Last Approved Working Date cannot be before the Resignation Submitted date' }, { status: 400 });
+  }
+
+  // Legacy getperiod() floors the submitted-date picker at emp_proff.joining_date (setStartDate).
+  // Skip when joining_date is missing / '0000-00-00' (some migrated rows).
+  const joiningDate = proff?.joining_date
+    ? new Date(proff.joining_date).toISOString().slice(0, 10)
+    : null;
+  if (joiningDate && joiningDate !== '0000-00-00' && dateSubmitted < joiningDate) {
+    return NextResponse.json({ error: 'Resignation Submitted date cannot be before the employee joining date' }, { status: 400 });
   }
 
   const connection = await pool.getConnection();

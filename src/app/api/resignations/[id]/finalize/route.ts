@@ -28,17 +28,28 @@ export async function POST(
   const pool = await getCompanyPool(session.user.companyCode);
 
   const [[req]] = await pool.execute<RowDataPacket[]>(
-    `SELECT rr.emp_fkey, rr.Resignation_status, t.terminate_pkey, t.is_approved
+    `SELECT rr.emp_fkey, rr.Resignation_status, t.terminate_pkey
      FROM resignation_requests rr JOIN termination t ON t.Resignation_pkey = rr.Resignation_pkey AND t.status = 1
      WHERE rr.Resignation_pkey = ? AND rr.status = 1`,
     [id]
   );
   if (!req) return NextResponse.json({ error: 'Resignation request not found' }, { status: 404 });
-  if (req.is_approved !== 'Y') {
-    return NextResponse.json({ error: 'This resignation has not been approved yet' }, { status: 409 });
-  }
   if (req.Resignation_status === 'Completed') {
     return NextResponse.json({ error: 'This resignation has already been finalized' }, { status: 409 });
+  }
+
+  // Legacy has no "approved" flag between approves() and removeemps() — removeemps() simply relies on
+  // approves() having populated emp_settle_slip. Mirror that: the Full & Final step must have run
+  // (settlement rows exist) before this terminal step is allowed.
+  const [[settle]] = await pool.execute<RowDataPacket[]>(
+    "SELECT COUNT(*) AS n FROM emp_settle_slip WHERE emp_fkey = ? AND status = 'Y'",
+    [req.emp_fkey]
+  );
+  if (!settle || Number(settle.n) === 0) {
+    return NextResponse.json(
+      { error: 'Full & Final has not been processed for this employee yet' },
+      { status: 409 }
+    );
   }
 
   const ctx = await getTerminationContext(pool, id);

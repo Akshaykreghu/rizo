@@ -15,6 +15,7 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const search = searchParams.get('search') ?? '';
   const empFkey = searchParams.get('emp_fkey');
+  const branch = searchParams.get('branch') ?? '';
   const page = Math.max(1, parseInt(searchParams.get('page') ?? '1') || 1);
   const pageSize = Math.max(1, parseInt(searchParams.get('pageSize') ?? '25') || 25);
   const offset = (page - 1) * pageSize;
@@ -30,11 +31,18 @@ export async function GET(request: NextRequest) {
     const like = `%${search}%`;
     params.push(like, like, like);
   }
+  if (branch) {
+    conditions.push('p.emp_branch = ?');
+    params.push(branch);
+  }
   const where = `WHERE ${conditions.join(' AND ')}`;
+  // emp_proff carries the employee's branch (same join as /api/employees); only needed for the branch filter.
+  const empProffJoin = 'LEFT JOIN emp_proff p ON p.emp_fkey = a.emp_fkey';
 
   const [[countRow], [rows]] = await Promise.all([
     pool.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) as total FROM asset_allocate a LEFT JOIN emp_details e ON e.emp_pkey = a.emp_fkey ${where}`,
+      `SELECT COUNT(*) as total FROM asset_allocate a
+       LEFT JOIN emp_details e ON e.emp_pkey = a.emp_fkey ${empProffJoin} ${where}`,
       params
     ),
     pool.execute<RowDataPacket[]>(
@@ -42,10 +50,12 @@ export async function GET(request: NextRequest) {
               a.asset, COALESCE(NULLIF(a.asset_name, ''), m.name) AS asset_name,
               COALESCE(NULLIF(a.model, ''), m.model) AS model, COALESCE(NULLIF(a.brand, ''), m.brand) AS brand,
               a.s_no, a.warranty, a.allocated_date, a.retreived_date, a.status,
-              a.asset_state, a.damaged_amout
+              a.asset_state, a.damaged_amout, a.description,
+              a.official_mail, a.official_contact, a.crm_id, a.allocated_ofc_space
        FROM asset_allocate a
        LEFT JOIN emp_details e ON e.emp_pkey = a.emp_fkey
        LEFT JOIN asset_management m ON m.asset_pkey = a.asset
+       ${empProffJoin}
        ${where}
        ORDER BY a.allocated_date DESC
        LIMIT ${pageSize} OFFSET ${offset}`,
@@ -87,11 +97,14 @@ export async function POST(request: NextRequest) {
          (emp_fkey, asset, qty, model, asset_name, brand, s_no, warranty, allocated_date,
           pemp_fkey, status, damaged_amout, description, official_mail, official_contact,
           crm_id, allocated_ofc_space, asset_state, active)
-       VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, 0, 'Allocated', '', ?, '', '', '', '', ?, '1')`,
+       VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, 0, 'Allocated', '', ?, ?, ?, ?, ?, ?, '1')`,
       [
         body.emp_fkey, body.asset, asset.model ?? '', asset.name, asset.brand ?? '',
         asset.serial_no ?? '', asset.warranty ?? '', body.allocated_date,
-        body.description ?? '', body.asset_state ? Number(body.asset_state) : 1,
+        body.description ?? '',
+        body.official_mail ?? '', body.official_contact ?? '',
+        body.crm_id ?? '', body.allocated_ofc_space ?? '',
+        body.asset_state ? Number(body.asset_state) : 1,
       ]
     );
 

@@ -3,7 +3,8 @@
 import { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, X, Trash2, Search, Pencil, FileText, Info, CircleOff, Lock } from 'lucide-react';
+import { Plus, X, Trash2, Search, FileText, Info, CircleOff, Lock, Download } from 'lucide-react';
+import { generateResignationSlipPdf, type ResignationSlipData } from '@/lib/resignationSlipPdf';
 import { EmployeeSearch } from '@/components/employees/EmployeeSearch';
 import { DataTable } from '@/components/data-table/DataTable';
 import { cn, formatDate } from '@/lib/utils';
@@ -105,35 +106,52 @@ interface PreviewResult {
   leaveYearWarning: string | null;
 }
 
-// Matches legacy's full 19-option Reason For Leaving list (legacy/View/EmployeeResignation/form.ctp) —
-// covers non-voluntary exits (Termination, Dismissed, Absconding, Death, Retirement, etc.), not just
-// resignation-style reasons.
-const REASON_OPTIONS = [
-  'Resignation',
-  'Absconding',
-  'Dismissed',
-  'Retirement',
-  'Retrenchment',
-  'Permanent Disabilities',
-  'End of Contract',
-  'Death Away From Service',
-  'Death In Service',
-  'Personal',
-  'Relocation',
-  'Cessation (Short Service) - Any Other',
-  'Cessation (Short Service) - Other Cause',
-  'Cessation (Short Service) - The Contraction',
-  'Cessation (Short Service) - The Employee Ill',
-  'Superannuation',
-  'Left Service',
-  'Termination',
-  'Other',
+// Slip payload shape lives with the PDF generator (single source of truth for both the modal
+// and the "Download PDF" button).
+type SlipData = ResignationSlipData;
+
+// Legacy's full 19-option "Reason For Leaving" list (legacy/View/EmployeeResignation/form.ctp).
+// `value` is the exact string legacy's <option value="..."> stores into termination.Reason /
+// resignation_requests.Reason — kept verbatim so downstream consumers that string-match on it
+// (e.g. StatutoryUploadsController's ESI reason-code switch: 'Retrenchment'→10, 'Retirement'→3,
+// 'Resigned'→2) behave identically. `label` is the display text. Two legacy typos are preserved
+// on purpose in `value`: 'Dissmissed' and 'Supernnuation'. 'Death ' also carries legacy's
+// trailing space verbatim — flagged in Employee_Separation_Legacy_vs_NextJS_Comparison.md as a
+// legacy defect to trim only by explicit decision.
+const REASON_OPTIONS: { value: string; label: string }[] = [
+  { value: 'Resignation', label: 'Resignation' },
+  { value: 'Absconding', label: 'Absconding' },
+  { value: 'Dissmissed', label: 'Dismissed' },
+  { value: 'Retirement', label: 'Retirement' },
+  { value: 'Retrenchment', label: 'Retrenchment' },
+  { value: 'Permanent Disabilities', label: 'Permanent Disabilities' },
+  { value: 'End of Contract', label: 'End of Contract' },
+  { value: 'Death ', label: 'Death Away From Service' },
+  { value: 'Death In Service', label: 'Death In Service' },
+  { value: 'Personal', label: 'Personal' },
+  { value: 'Relocation', label: 'Relocation' },
+  { value: 'Cessation (Short Service) - Any Other', label: 'Cessation (Short Service) - Any Other' },
+  { value: 'Cessation (Short Service) - Other Cause', label: 'Cessation (Short Service) - Other Cause' },
+  { value: 'Cessation (Short Service) - The Contraction', label: 'Cessation (Short Service) - The Contraction' },
+  { value: 'Cessation (Short Service) - The Employee Ill', label: 'Cessation (Short Service) - The Employee Ill' },
+  { value: 'Supernnuation', label: 'Superannuation' },
+  { value: 'Left Service', label: 'Left Service' },
+  { value: 'Termination', label: 'Termination' },
+  { value: 'Other', label: 'Other' },
 ];
+
+// Display helper: friendly label for a stored Reason value (falls back to the raw value, trimmed,
+// for legacy-era strings not in the list — e.g. 'Resigned', 'Better Opportunity').
+const REASON_LABEL: Record<string, string> = Object.fromEntries(
+  REASON_OPTIONS.map((r) => [r.value, r.label])
+);
+const reasonLabel = (v: string | null | undefined) => (v ? REASON_LABEL[v] ?? v.trim() : '—');
 
 const STATUS_COLORS: Record<string, string> = {
   Applied: 'bg-[color:var(--color-highlight-light)] text-[color:var(--color-highlight-dark)]',
   'HR Reviewed': 'bg-[color:var(--color-primary-light)] text-[color:var(--color-primary-dark)]',
-  Approved: 'bg-[color:var(--color-success-soft)] text-[color:var(--color-success-dark)]',
+  // No 'Approved' state — legacy has no status between "Full & Final processed" and "Terminated".
+  // A request stays Applied / HR Reviewed until finalize (removeemps) sets it Completed.
   Completed: 'bg-slate-100 text-slate-600',
   Cancelled: 'bg-[color:var(--color-danger-soft)] text-[color:var(--color-danger-dark)]',
 };
@@ -203,6 +221,8 @@ export default function ResignationsPage({ embeddedEmpPkey, embeddedEmpName }: R
   // Edited "Change Amount" values in the step-2 OTHERS block, keyed by emp_settle_slip_pkey.
   const [otherEdits, setOtherEdits] = useState<Record<number, string>>({});
   const [blockers, setBlockers] = useState<string[] | null>(null);
+  // Resignation_pkey whose Full & Final slip is open in the in-page modal (was a separate /slip page).
+  const [slipFor, setSlipFor] = useState<number | null>(null);
 
   const { data = [], isLoading } = useQuery<ResignationRow[]>({
     queryKey: ['resignations', search, embeddedEmpPkey ?? null],
@@ -220,12 +240,29 @@ export default function ResignationsPage({ embeddedEmpPkey, embeddedEmpName }: R
     enabled: !!newForm.emp_fkey,
   });
   const noticeDays: number | null = selectedEmp?.professional?.notice_days ?? null;
+  // Legacy getperiod() also returns emp_proff.joining_date and the form floors the
+  // "Resignation Submitted On" datepicker at it (setStartDate). Some migrated rows carry
+  // '0000-00-00' / null — treat those as "no floor".
+  const joiningDate: string | null =
+    (selectedEmp?.professional?.joining_date?.slice(0, 10) || '').replace('0000-00-00', '') || null;
 
   const editEmpName = (
     selectedEmp?.employee
       ? `${selectedEmp.employee.first_name} ${selectedEmp.employee.last_name ?? ''}`
       : embeddedEmpName ?? ''
   ).trim();
+
+  // Full & Final slip — shown in-page as a modal (see the slip Modal near the end of this file),
+  // no longer a navigation to /employees/resignations/[id]/slip.
+  const slipQuery = useQuery<SlipData>({
+    queryKey: ['resignation-slip', slipFor],
+    enabled: slipFor != null,
+    queryFn: () =>
+      fetch(`/api/resignations/${slipFor}/slip`).then(async (r) => {
+        if (!r.ok) throw new Error((await r.json()).error ?? 'Failed to load slip');
+        return r.json();
+      }),
+  });
 
   // Matches legacy's asper_notice() (form.ctp): last working date = submitted date + (notice_days - 1)
   // calendar days, auto-suggested but always editable — same auto-fill-then-override pattern.
@@ -288,29 +325,12 @@ export default function ResignationsPage({ embeddedEmpPkey, embeddedEmpName }: R
       setFormError('Last Approved Working Date cannot be before the Resignation Submitted date.');
       return;
     }
+    if (joiningDate && submitted && submitted < joiningDate) {
+      setFormError('Resignation Submitted date cannot be before the employee’s joining date.');
+      return;
+    }
     if (!confirm(editingId ? 'Save changes to this resignation?' : 'Save this resignation?')) return;
     create.mutate();
-  }
-
-  function openEdit(row: ResignationRow) {
-    setEditingId(row.Resignation_pkey);
-    setNewForm({
-      emp_fkey: String(row.emp_fkey),
-      reason: row.Reason,
-      reason_desc: row.Reason_Desc ?? '',
-      date_submitted: (row.submitted_date ?? row.applied_date)?.slice(0, 10) ?? TODAY(),
-      applied_date: (row.last_applied_date ?? row.submitted_date ?? row.applied_date)?.slice(0, 10) ?? '',
-      last_workingday: (row.last_working_date ?? row.Last_workingday)?.slice(0, 10) ?? '',
-      // Legacy resignation_requests rows with no companion termination row (pre-app data) have a
-      // null approved date — fall back to the last working day so the field is never blank on Edit.
-      last_approved_workingday: (row.last_approved_working_date ?? row.last_working_date ?? row.Last_workingday)?.slice(0, 10) ?? '',
-      remarks: row.remarks ?? '',
-    });
-    setLastWorkingDayTouched(true);
-    setAppliedDateTouched(true);
-    setLastApprovedTouched(true);
-    setFormError(null);
-    setShowNew(true);
   }
 
   const checklist = useMutation({
@@ -373,10 +393,10 @@ export default function ResignationsPage({ embeddedEmpPkey, embeddedEmpName }: R
     }).then(async (res) => {
       if (!res.ok) throw new Error((await res.json()).error ?? 'Failed to finalize');
     }),
-    onSuccess: () => {
+    onSuccess: (_data, pkey) => {
       invalidate();
-      window.open(`/employees/resignations/${approveFor}/slip`, '_blank', 'noopener,noreferrer');
       closeFnF();
+      setSlipFor(pkey);
     },
   });
 
@@ -438,7 +458,7 @@ export default function ResignationsPage({ embeddedEmpPkey, embeddedEmpName }: R
       ),
     },
     { accessorKey: 'branch_name', header: 'Branch', cell: ({ getValue }) => getValue() ?? '—' },
-    { accessorKey: 'Reason', header: 'Reason' },
+    { accessorKey: 'Reason', header: 'Reason', cell: ({ getValue }) => reasonLabel(getValue() as string | null) },
     {
       id: 'submitted',
       header: 'Resignation Submitted',
@@ -492,25 +512,14 @@ export default function ResignationsPage({ embeddedEmpPkey, embeddedEmpName }: R
                 Process Full &amp; Final
               </button>
             )}
-            {status !== 'Completed' && (
-              <button
-                onClick={() => openEdit(row.original)}
-                className="p-1.5 rounded-lg text-slate-400 hover:text-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-light)] transition-colors duration-150"
-                title="Edit"
-              >
-                <Pencil className="w-3.5 h-3.5" />
-              </button>
-            )}
             {status === 'Completed' && (
-              <a
-                href={`/employees/resignations/${row.original.Resignation_pkey}/slip`}
-                target="_blank"
-                rel="noopener noreferrer"
+              <button
+                onClick={() => setSlipFor(row.original.Resignation_pkey)}
                 className="p-1.5 rounded-lg text-slate-400 hover:text-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-light)] transition-colors duration-150 inline-flex"
                 title="View Slip"
               >
                 <FileText className="w-3.5 h-3.5" />
-              </a>
+              </button>
             )}
             {status !== 'Completed' && status !== 'Cancelled' && (
               <button
@@ -614,7 +623,7 @@ export default function ResignationsPage({ embeddedEmpPkey, embeddedEmpName }: R
                 <select required className={FORM_INPUT} value={newForm.reason ?? ''} onChange={(e) => setNewForm((f) => ({ ...f, reason: e.target.value }))}>
                   <option value="">Select</option>
                   {REASON_OPTIONS.map((r) => (
-                    <option key={r} value={r}>{r}</option>
+                    <option key={r.value} value={r.value}>{r.label}</option>
                   ))}
                 </select>
               </div>
@@ -641,9 +650,13 @@ export default function ResignationsPage({ embeddedEmpPkey, embeddedEmpName }: R
                     required
                     type="date"
                     className={FORM_INPUT}
+                    min={joiningDate ?? undefined}
                     value={newForm.date_submitted ?? ''}
                     onChange={(e) => setNewForm((f) => ({ ...f, date_submitted: e.target.value }))}
                   />
+                  {joiningDate && (
+                    <p className="mt-1 text-[11px] text-slate-400">Employee joined on {joiningDate}</p>
+                  )}
                 </div>
 
                 <div>
@@ -1130,6 +1143,138 @@ export default function ResignationsPage({ embeddedEmpPkey, embeddedEmpName }: R
           </div>
           </>
           )}
+        </Modal>
+      )}
+
+      {slipFor !== null && (
+        <Modal title="Full & Final Settlement Slip" size="lg" onClose={() => setSlipFor(null)}>
+          {slipQuery.isPending && <p className="py-10 text-center text-[13px] text-slate-400">Loading…</p>}
+          {slipQuery.isError && (
+            <p className="py-10 text-center text-[13px] text-[color:var(--color-danger)]">{String(slipQuery.error)}</p>
+          )}
+          {slipQuery.data && (() => {
+            const d = slipQuery.data;
+            const s = d.settlement;
+            const name = `${d.employee.first_name} ${d.employee.last_name ?? ''}`.trim();
+            const money = (n: number) => n.toFixed(2);
+            // Legacy slip.ctp / download.ctp particulars order (left col, right col, row by row).
+            const particulars: [string, React.ReactNode][] = [
+              ['Employee Name', name],
+              ['Employee ID', d.employee.emp_id ?? '—'],
+              ['Joining Date', d.employee.joining_date ? formatDate(d.employee.joining_date) : '—'],
+              ['Branch', d.employee.branch ?? '—'],
+              ['Designation', d.employee.designation ?? '—'],
+              ['Department', d.employee.department ?? '—'],
+              ['Relieving Date', formatDate(d.resignationDetails.relievingDate)],
+              ['Encashed Leaves', d.encashedDays],
+              ['Notice Period', d.resignationDetails.noticePeriod],
+              ['Resignation Period Working Days', d.workingDaysSettled],
+              ['Resignation Period Present Days', d.payrollDays],
+              ['Balance Working Days', d.balanceWorkingDays],
+            ];
+            const maxSalary = Math.max(s.paydAdditions.length, s.paydDeductions.length);
+            const maxOther = Math.max(s.extraAdditions.length, s.extraDeductions.length);
+            return (
+              <>
+                <div className="mb-4 flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => generateResignationSlipPdf(d)}
+                    className={cn(BTN_BASE, 'px-3.5 py-2 rounded-[10px] text-[12.5px] bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)] text-white')}
+                  >
+                    <Download className="w-3.5 h-3.5" /> Download PDF
+                  </button>
+                </div>
+
+                <div className="text-[#0F172A]">
+                  <h1 className="text-center text-[15px] font-semibold tracking-tight">{d.company.businessName ?? 'Company'}</h1>
+                  <p className="text-center text-[12.5px] font-medium">Full and Final Settlement Slip</p>
+                  <p className="mb-5 text-center text-[11.5px] text-slate-400">Full And Final Settlement Of {name}</p>
+
+                  <div className="mb-5 grid grid-cols-1 gap-x-8 gap-y-1.5 text-[12.5px] sm:grid-cols-2">
+                    {particulars.map(([label, value]) => (
+                      <div key={label} className="flex justify-between gap-4">
+                        <span className="text-slate-500">{label}</span>
+                        <span className="text-right font-medium">{value}</span>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="mb-4 grid grid-cols-1 gap-x-8 gap-y-1.5 border-t border-slate-200 pt-3 text-[12.5px] sm:grid-cols-2">
+                    <div className="flex justify-between gap-4">
+                      <span className="text-slate-500">Reason for Relieving</span>
+                      <span className="text-right font-medium">{reasonLabel(d.reason)}</span>
+                    </div>
+                    <div className="flex justify-between gap-4">
+                      <span className="text-slate-500">Date of Resignation</span>
+                      <span className="text-right font-medium">{formatDate(d.resignationDetails.submittedDate)}</span>
+                    </div>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full border border-slate-300 text-[11.5px]">
+                      <thead>
+                        <tr className="bg-slate-50 text-slate-600">
+                          <th colSpan={2} className="border border-slate-200 px-2 py-1.5 text-center font-semibold">ADDITIONS</th>
+                          <th colSpan={2} className="border border-slate-200 px-2 py-1.5 text-center font-semibold">DEDUCTIONS</th>
+                        </tr>
+                        <tr className="bg-slate-50 text-slate-500">
+                          <th className="border border-slate-200 px-2 py-1.5 text-left font-medium">Item</th>
+                          <th className="border border-slate-200 px-2 py-1.5 text-right font-medium">Amount</th>
+                          <th className="border border-slate-200 px-2 py-1.5 text-left font-medium">Item</th>
+                          <th className="border border-slate-200 px-2 py-1.5 text-right font-medium">Amount</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {Array.from({ length: maxSalary }).map((_, i) => (
+                          <tr key={i}>
+                            <td className="border border-slate-200 px-2 py-1.5">{s.paydAdditions[i]?.salary_head_item_desc ?? ''}</td>
+                            <td className="border border-slate-200 px-2 py-1.5 text-right tabular-nums">{s.paydAdditions[i] ? money(s.paydAdditions[i].salary_amount) : ''}</td>
+                            <td className="border border-slate-200 px-2 py-1.5">{s.paydDeductions[i]?.salary_head_item_desc ?? ''}</td>
+                            <td className="border border-slate-200 px-2 py-1.5 text-right tabular-nums">{s.paydDeductions[i] ? money(s.paydDeductions[i].salary_amount) : ''}</td>
+                          </tr>
+                        ))}
+                        <tr className="font-semibold text-[#0F172A]">
+                          <td className="border border-slate-200 px-2 py-1.5">Total</td>
+                          <td className="border border-slate-200 px-2 py-1.5 text-right tabular-nums">{money(s.paydAdditionsTotal)}</td>
+                          <td className="border border-slate-200 px-2 py-1.5">Total</td>
+                          <td className="border border-slate-200 px-2 py-1.5 text-right tabular-nums">{money(s.paydDeductionsTotal)}</td>
+                        </tr>
+
+                        <tr className="bg-slate-50 text-[#0F172A]">
+                          <th colSpan={4} className="border border-slate-200 px-2 py-1.5 text-center font-semibold">Others</th>
+                        </tr>
+                        <tr className="bg-slate-50 text-slate-500">
+                          <th colSpan={2} className="border border-slate-200 px-2 py-1.5 text-center font-medium">ADDITIONS</th>
+                          <th colSpan={2} className="border border-slate-200 px-2 py-1.5 text-center font-medium">DEDUCTIONS</th>
+                        </tr>
+                        {Array.from({ length: maxOther }).map((_, i) => (
+                          <tr key={i}>
+                            <td className="border border-slate-200 px-2 py-1.5">{s.extraAdditions[i]?.salary_head_item_desc ?? ''}</td>
+                            <td className="border border-slate-200 px-2 py-1.5 text-right tabular-nums">{s.extraAdditions[i] ? money(s.extraAdditions[i].salary_amount) : ''}</td>
+                            <td className="border border-slate-200 px-2 py-1.5">{s.extraDeductions[i]?.salary_head_item_desc ?? ''}</td>
+                            <td className="border border-slate-200 px-2 py-1.5 text-right tabular-nums">{s.extraDeductions[i] ? money(s.extraDeductions[i].salary_amount) : ''}</td>
+                          </tr>
+                        ))}
+                        <tr className="font-semibold text-[#0F172A]">
+                          <td className="border border-slate-200 px-2 py-1.5">Total</td>
+                          <td className="border border-slate-200 px-2 py-1.5 text-right tabular-nums">{money(s.extraAdditionsTotal)}</td>
+                          <td className="border border-slate-200 px-2 py-1.5">Total</td>
+                          <td className="border border-slate-200 px-2 py-1.5 text-right tabular-nums">{money(s.extraDeductionsTotal)}</td>
+                        </tr>
+                        <tr className="bg-slate-50 text-[13px] font-bold text-[#0F172A]">
+                          <td colSpan={3} className="border border-slate-200 px-2 py-2">Net Salary</td>
+                          <td className="border border-slate-200 px-2 py-2 text-right tabular-nums">{money(s.netSalary)}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <p className="mt-6 text-center text-[11px] text-slate-400">This is a system generated statement which does not require signature.</p>
+                </div>
+              </>
+            );
+          })()}
         </Modal>
       )}
     </div>

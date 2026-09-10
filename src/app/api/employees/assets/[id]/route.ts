@@ -95,8 +95,15 @@ export async function PATCH(
   }
 
   await pool.execute(
-    `UPDATE asset_allocate SET allocated_date = ?, asset_state = ?, description = ? WHERE allocate_pkey = ?`,
-    [body.allocated_date, body.asset_state ? Number(body.asset_state) : 1, body.description ?? '', id]
+    `UPDATE asset_allocate
+        SET allocated_date = ?, asset_state = ?, description = ?,
+            official_mail = ?, official_contact = ?, crm_id = ?, allocated_ofc_space = ?
+      WHERE allocate_pkey = ?`,
+    [
+      body.allocated_date, body.asset_state ? Number(body.asset_state) : 1, body.description ?? '',
+      body.official_mail ?? '', body.official_contact ?? '',
+      body.crm_id ?? '', body.allocated_ofc_space ?? '', id,
+    ]
   );
 
   return NextResponse.json({ success: true });

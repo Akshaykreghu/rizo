@@ -1,7 +1,7 @@
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
-import { toISODate } from '@/lib/attendance';
+import { toISODate, getAttPeriod } from '@/lib/attendance';
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket, ResultSetHeader } from 'mysql2';
 
@@ -25,22 +25,28 @@ export async function GET(request: NextRequest) {
 
   const pool = await getCompanyPool(session.user.companyCode);
 
-  const [[primary]] = await pool.execute<RowDataPacket[]>(
+  // Legacy listemployees(): primary shift(s) = emp_config type='SHIFT' status=1, secondary/multi
+  // = type='MSHIFT' status=2, both joined to an *active* working_day_time_procedures row
+  // (wdtp.active = 1). Legacy applies no LIMIT — every matching primary row lands in the dropdown
+  // and primary_shift[0] is the default — so keep all rows, ordered by emp_config id (natural key
+  // order, matching legacy's unordered result).
+  const [primaryRows] = await pool.execute<RowDataPacket[]>(
     `SELECT wdt.day_time_seq, wdt.day_time_desc, wdt.on_dutty1, wdt.off_dutty1, wdt.minuts_calc_perday
      FROM emp_config ec JOIN working_day_time_procedures wdt ON wdt.day_time_seq = ec.policy_id
-     WHERE ec.emp_fkey = ? AND ec.type = 'SHIFT' AND ec.status = 1
-     ORDER BY ec.id DESC LIMIT 1`,
+     WHERE ec.emp_fkey = ? AND ec.type = 'SHIFT' AND ec.status = 1 AND wdt.active = 1
+     ORDER BY ec.id`,
     [empFkey]
   );
 
   const [secondary] = await pool.execute<RowDataPacket[]>(
     `SELECT wdt.day_time_seq, wdt.day_time_desc, wdt.on_dutty1, wdt.off_dutty1, wdt.minuts_calc_perday
      FROM emp_config ec JOIN working_day_time_procedures wdt ON wdt.day_time_seq = ec.policy_id
-     WHERE ec.emp_fkey = ? AND ec.type = 'MSHIFT' AND ec.status = 2`,
+     WHERE ec.emp_fkey = ? AND ec.type = 'MSHIFT' AND ec.status = 2 AND wdt.active = 1`,
     [empFkey]
   );
 
-  const shiftOptions = [primary, ...secondary].filter(Boolean).map((s) => ({
+  const primary = primaryRows[0];
+  const shiftOptions = [...primaryRows, ...secondary].filter(Boolean).map((s) => ({
     dayTimeSeq: s.day_time_seq,
     label: s.day_time_desc,
     onDuty: s.on_dutty1,
@@ -61,12 +67,15 @@ export async function GET(request: NextRequest) {
   );
   const locked = verified?.isdelete === 'N';
 
-  const [y, m] = month.split('-').map(Number);
-  const daysInMonth = new Date(y, m, 0).getDate();
-  const days = Array.from({ length: daysInMonth }, (_, i) => {
-    const date = `${month}-${String(i + 1).padStart(2, '0')}`;
-    return { date, shiftId: rosterByDate.get(date) ?? primary?.day_time_seq ?? null };
-  });
+  // Legacy spans the company attendance cycle (att_start_end_fn), not the calendar month, so a
+  // tenant whose cycle is e.g. 26th–25th gets the matching set of rows.
+  const { start, end } = await getAttPeriod(pool, month);
+  const days: { date: string; shiftId: number | null }[] = [];
+  const endMs = Date.parse(`${end}T00:00:00Z`);
+  for (let ms = Date.parse(`${start}T00:00:00Z`); ms <= endMs; ms += 86_400_000) {
+    const date = new Date(ms).toISOString().slice(0, 10);
+    days.push({ date, shiftId: rosterByDate.get(date) ?? primary?.day_time_seq ?? null });
+  }
 
   return NextResponse.json({ shiftOptions, days, locked });
 }

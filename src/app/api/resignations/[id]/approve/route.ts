@@ -5,7 +5,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket } from 'mysql2';
 import {
   getTerminationContext, computeDayCountStats, computeNoticePay,
-  commitLeaveEncashment, getLoansAndAssets,
+  commitLeaveEncashment, previewEncashableLeaveBalance, getLoansAndAssets,
+  reevalSettleSlipFormulas, reevalSalarySlipFormulas,
 } from '@/lib/settlement';
 
 // Mirrors legacy EmployeeResignationController::approves(): the second of legacy's two "Process
@@ -51,8 +52,12 @@ export async function PUT(
   try {
     await connection.beginTransaction();
 
+    // Legacy: approves($emp, $leaves) forwards the screen's ENCASHABLE LEAVE BALANCE tile ($leaves,
+    // from workingattendnacedays()) straight into leaveencash() as $applied. We recompute the same
+    // tile figure here rather than trusting a client-sent value.
+    const appliedLeaveDays = await previewEncashableLeaveBalance(connection, ctx.empFkey);
     const encashableLeaveBalance = await commitLeaveEncashment(
-      connection, ctx.empFkey, ctx.branchCode, ctx.lastApprovedWd, session.user.loginUserId
+      connection, ctx.empFkey, ctx.branchCode, session.user.loginUserId, appliedLeaveDays
     );
 
     await connection.query(
@@ -61,6 +66,14 @@ export async function PUT(
     );
     const [[outRow]] = await connection.query<RowDataPacket[]>('SELECT @perror AS message');
     const settlementMessage: string | null = outRow?.message ?? null;
+
+    // Legacy approves() (non-KWMT) then re-evaluates any arithmetic still stored in `remarks`:
+    // first on emp_settle_slip (action = 'P'), then — using the payroll_master_fkey that pass
+    // leaks — on that payroll slip's emp_salary_slip rows.
+    const lastPayrollMasterFkey = await reevalSettleSlipFormulas(connection, ctx.empFkey);
+    if (lastPayrollMasterFkey != null && lastPayrollMasterFkey > 0) {
+      await reevalSalarySlipFormulas(connection, lastPayrollMasterFkey);
+    }
 
     const dayStats = await computeDayCountStats(connection, ctx, presantDays);
     const noticePay = computeNoticePay(ctx, dayStats.offsActual);
@@ -87,18 +100,11 @@ export async function PUT(
 
     const { loans, assets } = await getLoansAndAssets(connection, ctx.empFkey);
 
-    await connection.execute(
-      "UPDATE termination SET is_approved = 'Y', approved_by = ? WHERE Resignation_pkey = ? AND status = 1",
-      [Number(session.user.empFkey) || 0, id]
-    );
-    await connection.execute(
-      "UPDATE resignation_accept SET isApproved = 1, approved_date = NOW() WHERE Resignation_pkey = ? AND status = 1",
-      [id]
-    );
-    await connection.execute(
-      "UPDATE resignation_requests SET Resignation_status = 'Approved' WHERE Resignation_pkey = ?",
-      [id]
-    );
+    // Legacy approves() writes NOTHING to resignation/termination status — it only recomputes the
+    // settlement rows (above). No resignation_requests.Resignation_status change, no
+    // termination.is_approved, no resignation_accept.isApproved. The status only moves later, in
+    // removeemps() (our POST .../finalize), which flips emp_details.status to 2. The finalize step
+    // gates on the existence of the emp_settle_slip rows this method produces, not on a status flag.
 
     await connection.commit();
     return NextResponse.json({

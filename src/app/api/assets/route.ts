@@ -10,7 +10,11 @@ export async function GET() {
 
   const pool = await getCompanyPool(session.user.companyCode);
   const [rows] = await pool.execute<RowDataPacket[]>(
-    `SELECT asset_pkey, name, Type, specifications, serial_no, model, brand, warranty, value, year, status
+    `SELECT asset_pkey, name, Type, specifications, serial_no, model, brand, warranty, value, year, status,
+            EXISTS(
+              SELECT 1 FROM asset_allocate aa
+              WHERE aa.asset = asset_management.asset_pkey AND aa.asset_state = '3'
+            ) AS not_working
      FROM asset_management WHERE active = '1' ORDER BY name`
   );
   return NextResponse.json(rows);

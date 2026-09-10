@@ -82,6 +82,19 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Last Approved Working Date cannot be before the Resignation Submitted date' }, { status: 400 });
   }
 
+  // Legacy getperiod() floors the submitted-date picker at emp_proff.joining_date (setStartDate).
+  // Enforce it server-side too; skip when joining_date is missing / '0000-00-00' (some migrated rows).
+  const [[joinRow]] = await pool.execute<RowDataPacket[]>(
+    'SELECT joining_date FROM emp_proff WHERE emp_fkey = ?',
+    [body.emp_fkey]
+  );
+  const joiningDate = joinRow?.joining_date
+    ? new Date(joinRow.joining_date).toISOString().slice(0, 10)
+    : null;
+  if (joiningDate && joiningDate !== '0000-00-00' && dateSubmitted < joiningDate) {
+    return NextResponse.json({ error: 'Resignation Submitted date cannot be before the employee joining date' }, { status: 400 });
+  }
+
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
