@@ -87,12 +87,16 @@ export async function GET(
       [empFkey, months[0] ?? `${fy}-04`, months[months.length - 1] ?? `${fy}-03`]
     );
     const byMonth = new Map(rows.map((r) => [String(r.month_year), r]));
+    // `actual` mirrors legacy's isset($value1['tax'][0][0]['tdsdeducted']) check (setup.ctp ~767):
+    // a month with no processed/approved payroll row at all is "not yet actual," regardless of
+    // whether the (absent) row would have summed to a real 0.
     return months.map((m) => ({
       month: m,
       tds: Number(byMonth.get(m)?.tds ?? 0),
       gross: Number(byMonth.get(m)?.gross ?? 0),
+      actual: byMonth.has(m),
     }));
-  }, months.map((m) => ({ month: m, tds: 0, gross: 0 })));
+  }, months.map((m) => ({ month: m, tds: 0, gross: 0, actual: false })));
 
   // Projected / actual / taxable salary totals for the FY.
   const totals = await firstRow(
@@ -105,12 +109,32 @@ export async function GET(
     [empFkey, fy]
   );
 
-  // Exempt-allowance breakdown (legacy $taxcomponents).
+  // Exempt-allowance breakdown, old regime (legacy $taxcomponents / TaxController::setupshow()).
   const components = await safe(async () => {
     const [rows] = await pool.execute<RowDataPacket[]>(
       `SELECT TSC.tax_salary_components_name AS name, SHI.item AS item,
               t.availed_salary, t.upper_limit, t.taxable_salary
        FROM emp_tax_sal_trans t
+       LEFT JOIN tax_salary_components TSC ON t.tax_salary_components_fkey = TSC.tax_salary_components_pkey
+       LEFT JOIN salary_head_items SHI ON t.salary_head_item_Fkey = SHI.salary_head_item_pkey
+       WHERE t.emp_fkey = ? AND t.end_date_effective IS NULL AND t.fin_year = ?`,
+      [empFkey, fy]
+    );
+    return rows.map((r) => ({
+      name: r.name ?? r.item ?? '—',
+      availed: Number(r.availed_salary ?? 0),
+      upperLimit: Number(r.upper_limit ?? 0),
+      taxable: Number(r.taxable_salary ?? 0),
+    }));
+  }, [] as { name: string; availed: number; upperLimit: number; taxable: number }[]);
+
+  // Same breakdown, new regime (legacy TaxController::setupshow_new() — the "Details" drill-down
+  // under the New Tax Regime card; identical shape to the old-regime query, reads emp_tax_sal_trans_new).
+  const componentsNew = await safe(async () => {
+    const [rows] = await pool.execute<RowDataPacket[]>(
+      `SELECT TSC.tax_salary_components_name AS name, SHI.item AS item,
+              t.availed_salary, t.upper_limit, t.taxable_salary
+       FROM emp_tax_sal_trans_new t
        LEFT JOIN tax_salary_components TSC ON t.tax_salary_components_fkey = TSC.tax_salary_components_pkey
        LEFT JOIN salary_head_items SHI ON t.salary_head_item_Fkey = SHI.salary_head_item_pkey
        WHERE t.emp_fkey = ? AND t.end_date_effective IS NULL AND t.fin_year = ?`,
@@ -155,6 +179,7 @@ export async function GET(
       taxable: Number(totals?.taxable ?? 0),
     },
     components,
+    componentsNew,
     slabs,
   });
 }

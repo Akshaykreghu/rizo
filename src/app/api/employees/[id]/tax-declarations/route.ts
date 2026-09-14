@@ -1,15 +1,15 @@
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
+import { getOpenFinYear } from '@/lib/taxation';
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket } from 'mysql2';
 
 // Mirrors legacy TaxController::setup()/TaxationController::saveemployeetaxheads(): an
-// employee's declarations only exist against the branch's currently-open financial year
-// (fin_year table, Year_status='OPEN' AND is_current_finyear='Y'). Real dev data can have more
-// than one row flagged is_current_finyear='Y' per branch (an April-March fiscal year and a
-// calendar year both open at once) — pick the most recently started one, same as an admin
-// eyeballing the list would.
+// employee's declarations only exist against the branch's currently-open financial year.
+// Fin-year resolution is shared with tax-compute/worksheet via getOpenFinYear() — previously
+// duplicated here with a looser filter (missing vattr1=1) that could resolve a different fin_year
+// than the other tax routes for the same employee; now a single source of truth.
 
 export async function GET(
   _request: NextRequest,
@@ -27,13 +27,7 @@ export async function GET(
   );
   if (!emp) return NextResponse.json({ error: 'Employee not found' }, { status: 404 });
 
-  const [[finYear]] = await pool.execute<RowDataPacket[]>(
-    `SELECT Fin_year_seq, fin_year, start_month, end_month
-     FROM fin_year
-     WHERE branch_code = ? AND Year_status = 'OPEN' AND is_current_finyear = 'Y' AND status = 1
-     ORDER BY start_month DESC LIMIT 1`,
-    [emp.emp_branch]
-  );
+  const finYear = await getOpenFinYear(pool, emp.emp_branch);
   if (!finYear) {
     return NextResponse.json({ noFinYear: true, employee: emp });
   }
@@ -51,7 +45,7 @@ export async function GET(
   const [transactions] = await pool.execute<RowDataPacket[]>(
     `SELECT tax_heads_fkey, tax_heads_details_fkey, tax_value, locked, file_name
      FROM emp_tax_transactions WHERE emp_fkey = ? AND fin_year = ?`,
-    [id, finYear.fin_year]
+    [id, finYear.finYear]
   );
 
   const txByKey = new Map(transactions.map((t) => [`${t.tax_heads_fkey}:${t.tax_heads_details_fkey}`, t]));
@@ -122,7 +116,7 @@ export async function GET(
 
   return NextResponse.json({
     employee: emp,
-    finYear: { fin_year: finYear.fin_year, start_month: finYear.start_month, end_month: finYear.end_month },
+    finYear: { fin_year: finYear.finYear, start_month: finYear.startMonth, end_month: finYear.endMonth },
     heads: result,
     otherIncomeTotal,
     cappedDeductionTotal,

@@ -2,9 +2,10 @@
 
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
+import Link from 'next/link';
 import { useSession } from 'next-auth/react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Lock, Unlock, Paperclip, Calculator } from 'lucide-react';
+import { Lock, Unlock, Paperclip, Calculator, FileText } from 'lucide-react';
 import { EmployeeSearch } from '@/components/employees/EmployeeSearch';
 import { cn, formatCurrency } from '@/lib/utils';
 import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
@@ -15,7 +16,16 @@ const BTN_BASE =
 interface TaxSummaryRow {
   taxable_income: number; tax_yearly: number; tax_monthly_proj: number;
   surcharge: number; cess: number; rebate: number; hra1: number; hra2: number; hra3: number;
-  declared_deduction: number; standerd_deduction: number;
+  declared_deduction: number; standerd_deduction: number; marginal_relief?: number;
+  // Per-slab income/tax split, already computed by tax_salary_distribution_fn/_new_fn.
+  // Old regime (3 bands) uses first_portion_tax/second_portion_tx/third_portion_tx (legacy's own
+  // typo on the last two — matches the live DB columns). New regime (7 bands) uses forth_portion
+  // (income) but fourth_portion_tax (tax) — same inconsistent spelling as legacy's schema/view.
+  first_portion?: number; second_portion?: number; third_portion?: number;
+  forth_portion?: number; fifth_portion?: number; sixth_portion?: number; seventh_portion?: number;
+  first_portion_tax?: number; second_portion_tax?: number; second_portion_tx?: number;
+  third_portion_tax?: number; third_portion_tx?: number; fourth_portion_tax?: number;
+  fifth_portion_tax?: number; sixth_portion_tax?: number; seventh_portion_tax?: number;
 }
 interface TaxComputeResult {
   finYear: number;
@@ -49,9 +59,10 @@ interface WorksheetData {
   noFinYear?: true;
   finYear?: number;
   hasPayroll?: boolean;
-  monthly?: { month: string; tds: number; gross: number }[];
+  monthly?: { month: string; tds: number; gross: number; actual: boolean }[];
   totals?: { projected: number; actual: number; taxable: number };
   components?: { name: string; availed: number; upperLimit: number; taxable: number }[];
+  componentsNew?: { name: string; availed: number; upperLimit: number; taxable: number }[];
   slabs?: { from: number; to: number; percent: number; stdDeduction: number; rebate: number; cessPercent: number }[];
 }
 
@@ -67,7 +78,11 @@ export default function TaxDeclarationsPage({ embeddedEmpPkey }: TaxDeclarations
   const isAdmin = session?.user.userGroup === 1;
   const queryClient = useQueryClient();
   const [pickedEmpId, setPickedEmpId] = useState('');
-  const empId = embedded ? String(embeddedEmpPkey) : pickedEmpId;
+  // Matches legacy TaxController::Tabs(): admins get the picker; a regular
+  // employee is taken straight to their own record (session emp_fkey), no picker shown.
+  const selfEmpId = session?.user.empFkey != null ? String(session.user.empFkey) : '';
+  const showPicker = !embedded && isAdmin;
+  const empId = embedded ? String(embeddedEmpPkey) : isAdmin ? pickedEmpId : selfEmpId;
   const setEmpId = setPickedEmpId;
   const [drafts, setDrafts] = useState<Record<string, string>>({});
 
@@ -120,6 +135,10 @@ export default function TaxDeclarationsPage({ embeddedEmpPkey }: TaxDeclarations
       if (!res.ok) throw new Error(b.error ?? 'Computation failed');
       return b as TaxComputeResult;
     },
+    // Matches legacy's Process button, which reloads the whole Tax/setup screen after computing:
+    // the DB functions rewrite the worksheet totals/components too, so refetch those alongside
+    // the regime summary this mutation already returns directly.
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['employees', empId, 'tax-declarations'] }),
   });
 
   const chooseRegime = useMutation({
@@ -145,6 +164,22 @@ export default function TaxDeclarationsPage({ embeddedEmpPkey }: TaxDeclarations
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['employees', empId, 'tax-declarations'] }),
   });
+
+  // Mirrors legacy's client-side Tax Deducted / Balance Tax logic (setup.ctp ~1562-1580): TDS
+  // already withheld this FY (worksheet.monthly, same source both regimes use) vs. the regime's
+  // yearly liability, gated by legacy's own hardcoded rebate thresholds — NOT the DB function's
+  // `rebate` field, which legacy deliberately re-checks independently here.
+  const REBATE_THRESHOLD = { old: 500000, new: 700000 } as const;
+  function taxSettlement(s: TaxSummaryRow, key: 'old' | 'new') {
+    const tdsSum = (worksheet?.monthly ?? []).reduce((sum, m) => sum + m.tds, 0);
+    const withinRebate = s.taxable_income <= REBATE_THRESHOLD[key];
+    // "total" mirrors legacy's separate $nettotal_new/$nettotal row (setup.ctp ~624-631) — distinct
+    // from "Total Tax" (tax_yearly alone): tax_yearly + surcharge + cess, zeroed under the same
+    // rebate-threshold check, same as Tax Deducted / Balance Tax below it.
+    if (withinRebate) return { total: 0, taxDeducted: 0, balanceTax: 0 };
+    const total = s.tax_yearly + s.surcharge + s.cess;
+    return { total, taxDeducted: tdsSum, balanceTax: total - tdsSum };
+  }
 
   function draftKey(headFkey: number, detailFkey: number) {
     return `${headFkey}:${detailFkey}`;
@@ -237,13 +272,16 @@ export default function TaxDeclarationsPage({ embeddedEmpPkey }: TaxDeclarations
         <h2 className="font-heading text-[20px] font-bold text-[#0F172A] tracking-tight mb-4">Income Tax Declarations</h2>
       )}
 
-      {!embedded && (
+      {showPicker && (
         <div className="surface-card rounded-xl px-4 py-2.5 mb-4 max-w-sm">
           <EmployeeSearch value={empId} onChange={setEmpId} placeholder="Search employee by name or ID" />
         </div>
       )}
 
-      {!embedded && !empId && <p className="text-[12.5px] text-slate-400">Select an employee to view their tax declarations.</p>}
+      {showPicker && !empId && <p className="text-[12.5px] text-slate-400">Select an employee to view their tax declarations.</p>}
+      {!embedded && !isAdmin && !selfEmpId && (
+        <p className="text-[12.5px] text-slate-400">No employee record is linked to your account.</p>
+      )}
       {empId && isLoading && <p className="text-[12.5px] text-slate-400">Loading…</p>}
 
       {data?.noFinYear && (
@@ -263,24 +301,33 @@ export default function TaxDeclarationsPage({ embeddedEmpPkey }: TaxDeclarations
                 Open financial year (auto-selected: most recently started OPEN year for this branch)
               </p>
             </div>
-            {isAdmin && (
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => lock.mutate({ lockAll: true, locked: true })}
-                  className={cn(BTN_BASE, 'bg-[color:var(--color-highlight-light)] text-[color:var(--color-highlight-dark)] hover:opacity-80 shadow-none')}
-                >
-                  Lock all
-                </button>
-                <button
-                  type="button"
-                  onClick={() => lock.mutate({ lockAll: true, locked: false })}
-                  className={cn(BTN_BASE, 'bg-slate-100 text-slate-600 hover:bg-slate-200 shadow-none')}
-                >
-                  Unlock all
-                </button>
-              </div>
-            )}
+            <div className="flex gap-2">
+              <Link
+                href="/taxation/form16"
+                className={cn(BTN_BASE, 'bg-slate-100 text-slate-600 hover:bg-slate-200 shadow-none')}
+              >
+                <FileText className="w-3.5 h-3.5" />
+                Form 16
+              </Link>
+              {isAdmin && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => lock.mutate({ lockAll: true, locked: true })}
+                    className={cn(BTN_BASE, 'bg-[color:var(--color-highlight-light)] text-[color:var(--color-highlight-dark)] hover:opacity-80 shadow-none')}
+                  >
+                    Lock all
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => lock.mutate({ lockAll: true, locked: false })}
+                    className={cn(BTN_BASE, 'bg-slate-100 text-slate-600 hover:bg-slate-200 shadow-none')}
+                  >
+                    Unlock all
+                  </button>
+                </>
+              )}
+            </div>
           </div>
 
           <div className="surface-card rounded-2xl p-5">
@@ -325,15 +372,75 @@ export default function TaxDeclarationsPage({ embeddedEmpPkey }: TaxDeclarations
                         </button>
                       </div>
                       {s ? (
-                        <div className="space-y-1 text-[11.5px] text-slate-500">
-                          <div className="flex justify-between"><span>Taxable income</span><span>{formatCurrency(s.taxable_income)}</span></div>
-                          {key === 'old' && <div className="flex justify-between"><span>HRA exemption</span><span>{formatCurrency(Math.min(s.hra1 || 0, s.hra2 || 0, s.hra3 || 0))}</span></div>}
-                          <div className="flex justify-between"><span>Standard deduction</span><span>{formatCurrency(s.standerd_deduction)}</span></div>
-                          <div className="flex justify-between"><span>Surcharge</span><span>{formatCurrency(s.surcharge)}</span></div>
-                          <div className="flex justify-between"><span>Cess</span><span>{formatCurrency(s.cess)}</span></div>
-                          <div className="flex justify-between"><span>Rebate</span><span>{formatCurrency(s.rebate)}</span></div>
-                          <div className="flex justify-between font-medium text-[#0F172A] pt-1 border-t border-slate-100"><span>Yearly tax</span><span>{formatCurrency(s.tax_yearly)}</span></div>
-                          <div className="flex justify-between font-medium text-[#0F172A]"><span>Monthly TDS</span><span>{formatCurrency(s.tax_monthly_proj)}</span></div>
+                        <div className="space-y-3 text-[11.5px] text-slate-500">
+                          {/* Summary Calculation — mirrors legacy's first box (setup.ctp Summary Calculation) */}
+                          <div className="space-y-1">
+                            <div className="flex justify-between"><span>Taxable income</span><span>{formatCurrency(s.taxable_income)}</span></div>
+                            {key === 'old' && <div className="flex justify-between"><span>HRA exemption</span><span>{formatCurrency(Math.min(s.hra1 || 0, s.hra2 || 0, s.hra3 || 0))}</span></div>}
+                            <div className="flex justify-between"><span>Standard deduction</span><span>{formatCurrency(s.standerd_deduction)}</span></div>
+                            {key === 'new' && (
+                              <div className="flex justify-between">
+                                <span>Marginal relief {s.taxable_income >= 1200001 && s.taxable_income <= 1275000 ? '' : '(NA)'}</span>
+                                <span>{formatCurrency(s.marginal_relief ?? 0)}</span>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Tax Details — same rows, same order, same labels as legacy's Tax Details box
+                              (setup.ctp ~600-648 new, ~1085-1099 old) so the two can be checked side by side. */}
+                          {(() => {
+                            const { total, taxDeducted, balanceTax } = taxSettlement(s, key);
+                            return (
+                              <div className="space-y-1 pt-2 border-t border-slate-100">
+                                <p className="text-[11px] font-medium text-slate-400">Tax Details</p>
+                                <div className="flex justify-between"><span>Total Tax</span><span>{formatCurrency(s.tax_yearly)}</span></div>
+                                <div className="flex justify-between"><span>Cess</span><span>{formatCurrency(s.cess)}</span></div>
+                                <div className="flex justify-between"><span>Surcharge</span><span>{formatCurrency(s.surcharge)}</span></div>
+                                <div className="flex justify-between"><span>Rebate</span><span>{formatCurrency(s.rebate)}</span></div>
+                                <div className="flex justify-between font-medium text-[#0F172A]"><span>Total</span><span>{formatCurrency(total)}</span></div>
+                                <div className="flex justify-between"><span>Tax Deducted</span><span>{formatCurrency(taxDeducted)}</span></div>
+                                <div className="flex justify-between"><span>Balance Tax</span><span>{formatCurrency(balanceTax)}</span></div>
+                                <div className="flex justify-between font-medium text-[#0F172A]"><span>Monthly Tax</span><span>{formatCurrency(s.tax_monthly_proj)}</span></div>
+                              </div>
+                            );
+                          })()}
+
+                          {/* Salary for the Year — legacy repeats this per regime (setup.ctp ~698-812 new,
+                              ~1160-1268 old); same source data both regimes (actual payroll), but months
+                              without processed payroll fall back to this regime's own projected monthly
+                              tax, shown in red, instead of a bare 0. */}
+                          {worksheet?.monthly && worksheet.monthly.length > 0 && (
+                            <div className="pt-2 border-t border-slate-100">
+                              <div className="flex items-center justify-between mb-1">
+                                <p className="text-[11px] font-medium text-slate-400">Salary for the Year</p>
+                                <p className="text-[10px] text-slate-400">
+                                  <span className="text-[#0F172A] font-medium">Actual</span> · <span className="text-[color:var(--color-danger)] font-medium">Projected</span>
+                                </p>
+                              </div>
+                              <div className="overflow-x-auto">
+                                <table className="w-full text-[11px]">
+                                  <thead>
+                                    <tr className="text-slate-400 text-left border-b border-slate-100">
+                                      <th className="py-1 font-medium">Month</th>
+                                      <th className="py-1 font-medium text-right">Salary</th>
+                                      <th className="py-1 font-medium text-right">Tax</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {worksheet.monthly.map((m) => (
+                                      <tr key={m.month} className="border-b border-slate-50">
+                                        <td className="py-1 text-[#0F172A]">{m.month}</td>
+                                        <td className={cn('py-1 text-right', m.actual ? 'text-[#0F172A]' : 'text-[color:var(--color-danger)]')}>{formatCurrency(m.gross)}</td>
+                                        <td className={cn('py-1 text-right', m.actual ? 'text-[#0F172A]' : 'text-[color:var(--color-danger)]')}>
+                                          {formatCurrency(m.actual ? m.tds : (s.tax_monthly_proj ?? 0))}
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       ) : (
                         <p className="text-[11.5px] text-slate-400">No projection yet.</p>
@@ -417,7 +524,7 @@ export default function TaxDeclarationsPage({ embeddedEmpPkey }: TaxDeclarations
 
                 {worksheet.components && worksheet.components.length > 0 && (
                   <div className="overflow-x-auto">
-                    <p className="text-[11px] font-medium text-slate-400 mb-1">Exempt allowances</p>
+                    <p className="text-[11px] font-medium text-slate-400 mb-1">Exempt allowances — Old regime</p>
                     <table className="w-full text-[12px]">
                       <thead>
                         <tr className="text-slate-400 text-left border-b border-slate-100">
@@ -440,32 +547,119 @@ export default function TaxDeclarationsPage({ embeddedEmpPkey }: TaxDeclarations
                     </table>
                   </div>
                 )}
+
+                {worksheet.componentsNew && worksheet.componentsNew.length > 0 && (
+                  <div className="overflow-x-auto mt-4">
+                    <p className="text-[11px] font-medium text-slate-400 mb-1">Exempt allowances — New regime</p>
+                    <table className="w-full text-[12px]">
+                      <thead>
+                        <tr className="text-slate-400 text-left border-b border-slate-100">
+                          <th className="py-1.5 font-medium">Component</th>
+                          <th className="py-1.5 font-medium text-right">Availed</th>
+                          <th className="py-1.5 font-medium text-right">Upper limit</th>
+                          <th className="py-1.5 font-medium text-right">Taxable</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {worksheet.componentsNew.map((c, i) => (
+                          <tr key={`${c.name}-${i}`} className="border-b border-slate-50">
+                            <td className="py-1.5 text-[#0F172A]">{c.name}</td>
+                            <td className="py-1.5 text-right text-slate-600">{formatCurrency(c.availed)}</td>
+                            <td className="py-1.5 text-right text-slate-600">{formatCurrency(c.upperLimit)}</td>
+                            <td className="py-1.5 text-right text-slate-600">{formatCurrency(c.taxable)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
             )}
 
-            {worksheet && !worksheet.noFinYear && worksheet.slabs && worksheet.slabs.length > 0 && (
-              <div className="overflow-x-auto mt-5">
-                <p className="text-[11px] font-medium text-slate-400 mb-1">New-regime slabs — FY {worksheet.finYear}</p>
-                <table className="w-full text-[12px]">
-                  <thead>
-                    <tr className="text-slate-400 text-left border-b border-slate-100">
-                      <th className="py-1.5 font-medium">From</th>
-                      <th className="py-1.5 font-medium">To</th>
-                      <th className="py-1.5 font-medium text-right">Rate</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {worksheet.slabs.map((s, i) => (
-                      <tr key={i} className="border-b border-slate-50">
-                        <td className="py-1.5 text-[#0F172A]">{formatCurrency(s.from)}</td>
-                        <td className="py-1.5 text-[#0F172A]">{formatCurrency(s.to)}</td>
-                        <td className="py-1.5 text-right text-slate-600">{s.percent}%</td>
+            {worksheet && !worksheet.noFinYear && worksheet.slabs && worksheet.slabs.length > 0 && (() => {
+              // Zips the slab schedule against the already-computed per-band income/tax split
+              // (legacy setup.ctp ~400-452: $income_portions / $tax_portions arrays, positional).
+              const newSummary = compute.data?.summary.new;
+              const incomeKeys = ['first_portion', 'second_portion', 'third_portion', 'forth_portion', 'fifth_portion', 'sixth_portion', 'seventh_portion'] as const;
+              const taxKeys = ['first_portion_tax', 'second_portion_tax', 'third_portion_tax', 'fourth_portion_tax', 'fifth_portion_tax', 'sixth_portion_tax', 'seventh_portion_tax'] as const;
+              const totalIncome = incomeKeys.reduce((sum, k) => sum + (newSummary?.[k] ?? 0), 0);
+              const totalTax = taxKeys.reduce((sum, k) => sum + (newSummary?.[k] ?? 0), 0);
+              return (
+                <div className="overflow-x-auto mt-5">
+                  <p className="text-[11px] font-medium text-slate-400 mb-1">New-regime slabs — FY {worksheet.finYear}</p>
+                  <table className="w-full text-[12px]">
+                    <thead>
+                      <tr className="text-slate-400 text-left border-b border-slate-100">
+                        <th className="py-1.5 font-medium">From</th>
+                        <th className="py-1.5 font-medium">To</th>
+                        <th className="py-1.5 font-medium text-right">Rate</th>
+                        <th className="py-1.5 font-medium text-right">Income</th>
+                        <th className="py-1.5 font-medium text-right">Tax</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
+                    </thead>
+                    <tbody>
+                      {worksheet.slabs!.map((s, i) => (
+                        <tr key={i} className="border-b border-slate-50">
+                          <td className="py-1.5 text-[#0F172A]">{formatCurrency(s.from)}</td>
+                          <td className="py-1.5 text-[#0F172A]">{i === worksheet.slabs!.length - 1 ? 'and beyond' : formatCurrency(s.to)}</td>
+                          <td className="py-1.5 text-right text-slate-600">{s.percent}%</td>
+                          <td className="py-1.5 text-right text-slate-600">{formatCurrency(newSummary?.[incomeKeys[i]] ?? 0)}</td>
+                          <td className="py-1.5 text-right text-slate-600">{formatCurrency(newSummary?.[taxKeys[i]] ?? 0)}</td>
+                        </tr>
+                      ))}
+                      <tr className="font-medium text-[#0F172A]">
+                        <td className="py-1.5" colSpan={3}>Total</td>
+                        <td className="py-1.5 text-right">{formatCurrency(totalIncome)}</td>
+                        <td className="py-1.5 text-right">{formatCurrency(totalTax)}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })()}
+
+            {worksheet && !worksheet.noFinYear && compute.data?.summary.old && (() => {
+              // Old regime's slab bands are hardcoded in legacy too (setup.ctp ~898-958) — not
+              // sourced from income_tax_slab, which is only ever queried for regime='NEW'.
+              const s = compute.data.summary.old!;
+              const rows = [
+                { label: 'Rs.0 - Rs.2,50,000', rate: '0%', income: 0, tax: 0 },
+                { label: 'Rs.2,50,000 - Rs.5,00,000', rate: '5%', income: s.first_portion ?? 0, tax: s.first_portion_tax ?? 0 },
+                { label: 'Rs.5,00,000 - Rs.10,00,000 +', rate: '20%', income: s.second_portion ?? 0, tax: s.second_portion_tx ?? 0 },
+                { label: 'Rs.10,00,000 and beyond +', rate: '30%', income: s.third_portion ?? 0, tax: s.third_portion_tx ?? 0 },
+              ];
+              const totalIncome = rows.reduce((sum, r) => sum + r.income, 0);
+              return (
+                <div className="overflow-x-auto mt-5">
+                  <p className="text-[11px] font-medium text-slate-400 mb-1">Old-regime slabs — FY {worksheet.finYear}</p>
+                  <table className="w-full text-[12px]">
+                    <thead>
+                      <tr className="text-slate-400 text-left border-b border-slate-100">
+                        <th className="py-1.5 font-medium">Band</th>
+                        <th className="py-1.5 font-medium text-right">Rate</th>
+                        <th className="py-1.5 font-medium text-right">Income</th>
+                        <th className="py-1.5 font-medium text-right">Tax</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map((r, i) => (
+                        <tr key={i} className="border-b border-slate-50">
+                          <td className="py-1.5 text-[#0F172A]">{r.label}</td>
+                          <td className="py-1.5 text-right text-slate-600">{r.rate}</td>
+                          <td className="py-1.5 text-right text-slate-600">{formatCurrency(r.income)}</td>
+                          <td className="py-1.5 text-right text-slate-600">{formatCurrency(r.tax)}</td>
+                        </tr>
+                      ))}
+                      <tr className="font-medium text-[#0F172A]">
+                        <td className="py-1.5" colSpan={2}>Total</td>
+                        <td className="py-1.5 text-right">{formatCurrency(totalIncome)}</td>
+                        <td className="py-1.5 text-right">{formatCurrency(s.tax_yearly)}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })()}
           </div>
 
           {(save.isError || lock.isError || upload.isError) && (

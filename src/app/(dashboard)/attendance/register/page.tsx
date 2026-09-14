@@ -9,7 +9,7 @@ import { AttendanceGrid, type AttendanceDay, type AttendanceRow } from '@/compon
 import { TimePicker, nowAsHHMMSS } from '@/components/ui/TimePicker';
 import { ATTENDANCE_LEGEND, getCellColor, formatStatusDisplay } from '@/lib/attendance';
 import { cn } from '@/lib/utils';
-import { ShieldCheck, ShieldOff, X, Clock, Timer, LogIn, LogOut, Lock, Plus, Layers, Eye, EyeOff, BadgeCheck, Trash2 } from 'lucide-react';
+import { ShieldCheck, ShieldOff, X, Clock, Timer, LogIn, LogOut, Lock, Plus, Layers, Eye, EyeOff, BadgeCheck, Power } from 'lucide-react';
 
 const useLookup = useSetupOptions;
 
@@ -29,6 +29,7 @@ interface DayPunch {
   device_attandance_seq: number;
   LOGDATE: string;
   direction: string;
+  status: 'Y' | 'N';
 }
 
 interface DayExtras {
@@ -493,15 +494,18 @@ function DayEditor({
     return body;
   };
 
-  const deletePunchMutation = useMutation({
-    mutationFn: (deviceAttandanceSeq: number) =>
+  // Ports EditPunchesController::savepunch()'s inline status-checkbox editor (Y/N, "Active"/"Inactive")
+  // instead of remove()'s hard status='D' delete — a punch is deactivated here, not deleted, so it
+  // stays visible (badged) and can be reactivated, rather than disappearing permanently.
+  const togglePunchActiveMutation = useMutation({
+    mutationFn: (vars: { deviceAttandanceSeq: number; active: boolean }) =>
       fetch(`/api/attendance/register/${registerId}/day/${dayIndex}/punches`, {
-        method: 'DELETE',
+        method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ deviceAttandanceSeq }),
+        body: JSON.stringify(vars),
       }).then(async (r) => {
         const body = await r.json();
-        if (!r.ok) throw new Error(body.error ?? 'Failed to delete punch');
+        if (!r.ok) throw new Error(body.error ?? 'Failed to update punch');
         return body;
       }),
     onSuccess: () => { refetchExtras(); onSaved(); },
@@ -713,39 +717,60 @@ function DayEditor({
               <div className="space-y-1.5 mb-4">
                 {extras!.punches.map((p) => {
                   const isIn = p.direction.toLowerCase() === 'in';
+                  const isInactive = p.status === 'N';
                   return (
-                    <div key={p.device_attandance_seq} className="flex items-center justify-between px-3.5 py-2.5 rounded-[10px] bg-[#F5F5F7]">
+                    <div
+                      key={p.device_attandance_seq}
+                      className={cn(
+                        'flex items-center justify-between px-3.5 py-2.5 rounded-[10px]',
+                        isInactive ? 'bg-amber-50 border border-amber-200' : 'bg-[#F5F5F7]'
+                      )}
+                    >
                       <span className="flex items-center gap-2.5">
                         <span
                           className={cn(
                             'w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0',
-                            isIn ? 'bg-[color:var(--color-success-soft)] text-[color:var(--color-success-dark)]' : 'bg-black/[0.06] text-[#6E6E73]'
+                            isInactive
+                              ? 'bg-amber-100 text-amber-700'
+                              : isIn
+                                ? 'bg-[color:var(--color-success-soft)] text-[color:var(--color-success-dark)]'
+                                : 'bg-black/[0.06] text-[#6E6E73]'
                           )}
                         >
                           {isIn ? <LogIn className="w-3 h-3" /> : <LogOut className="w-3 h-3" />}
                         </span>
-                        <span className="text-[13px] font-medium text-[#1D1D1F] capitalize">{p.direction}</span>
+                        <span className={cn('text-[13px] font-medium capitalize', isInactive ? 'text-amber-800' : 'text-[#1D1D1F]')}>
+                          {p.direction}
+                        </span>
+                        {isInactive && (
+                          <span className="text-[10.5px] font-semibold text-amber-700 bg-amber-100 px-1.5 py-[1px] rounded-[4px]">Inactive</span>
+                        )}
                       </span>
                       <span className="flex items-center gap-2.5">
                         {/* DB connections read datetimes tagged as UTC (lib/db.ts timezone: '+00:00')
                             though the schema only ever stores naive local wall-clock time — timeZone:
                             'UTC' here reads back the stored value verbatim instead of re-shifting by
                             the browser's offset. */}
-                        <span className="text-[13px] text-[#6E6E73] tabular-nums">
+                        <span className={cn('text-[13px] tabular-nums', isInactive ? 'text-amber-700' : 'text-[#6E6E73]')}>
                           {new Date(p.LOGDATE).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' })}
                         </span>
                         {!locked && (
                           <button
                             onClick={() => {
-                              if (confirm('Are you sure you want to delete this punch?')) {
-                                deletePunchMutation.mutate(p.device_attandance_seq);
-                              }
+                              if (!isInactive && !confirm('Deactivate this punch? It will stop counting toward duration/OT but can be reactivated later.')) return;
+                              togglePunchActiveMutation.mutate({ deviceAttandanceSeq: p.device_attandance_seq, active: isInactive });
                             }}
-                            disabled={deletePunchMutation.isPending}
-                            aria-label="Delete punch"
-                            className="w-6 h-6 rounded-full flex items-center justify-center text-[#86868B] hover:text-[color:var(--color-danger)] hover:bg-[color:var(--color-danger)]/10 disabled:opacity-40 transition-colors duration-150"
+                            disabled={togglePunchActiveMutation.isPending}
+                            aria-label={isInactive ? 'Reactivate punch' : 'Deactivate punch'}
+                            title={isInactive ? 'Reactivate punch' : 'Deactivate punch'}
+                            className={cn(
+                              'w-6 h-6 rounded-full flex items-center justify-center disabled:opacity-40 transition-colors duration-150',
+                              isInactive
+                                ? 'text-amber-600 hover:text-[color:var(--color-success-dark)] hover:bg-[color:var(--color-success-soft)]'
+                                : 'text-[#86868B] hover:text-amber-700 hover:bg-amber-100'
+                            )}
                           >
-                            <Trash2 className="w-3.5 h-3.5" />
+                            <Power className="w-3.5 h-3.5" />
                           </button>
                         )}
                       </span>

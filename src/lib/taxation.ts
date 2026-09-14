@@ -17,13 +17,16 @@ export interface OpenFinYear {
   endMonth: string;
 }
 
-// Mirrors the fin_year resolution already used by tax-declarations: branch-scoped, the real
-// Apr-Mar tax year (vattr1=1), currently open. Reused here rather than duplicated per-route.
+// Mirrors legacy's exact fin_year filter (TaxController::setup()/Tabs()/Proccess() all use this
+// same WHERE): branch-scoped, OPEN, is_current_finyear='Y', vattr1=1 (the real Apr-Mar tax year —
+// a branch can have other is_current_finyear='Y' rows for non-tax purposes, e.g. a calendar-year
+// row with vattr1=0; without this filter the wrong fin_year gets picked and every declaration/
+// worksheet/compute query silently operates on empty data for that year instead of the real one).
 export async function getOpenFinYear(pool: Pool, branchCode: string): Promise<OpenFinYear | null> {
   const [[row]] = await pool.execute<RowDataPacket[]>(
     `SELECT Fin_year_seq, fin_year, start_month, end_month
      FROM fin_year
-     WHERE branch_code = ? AND Year_status = 'OPEN' AND is_current_finyear = 'Y' AND status = 1
+     WHERE branch_code = ? AND Year_status = 'OPEN' AND is_current_finyear = 'Y' AND vattr1 = 1 AND status = 1
      ORDER BY start_month DESC LIMIT 1`,
     [branchCode]
   );

@@ -319,7 +319,7 @@ function ProcessPayrollContent() {
                 onChange={(e) => setTaxInclude(e.target.checked)}
                 className="rounded border-slate-300 text-[color:var(--color-primary)] focus:ring-[color:var(--color-primary)]/40"
               />
-              Include TDS in this run
+              Include Tax
             </label>
           )}
           {tab === 'pending' && (

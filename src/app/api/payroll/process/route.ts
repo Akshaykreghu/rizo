@@ -1,7 +1,7 @@
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
-import { processPayrollEmployee } from '@/lib/payroll';
+import { processPayrollEmployee, backfillFormulaRemarks } from '@/lib/payroll';
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket } from 'mysql2';
 
@@ -32,12 +32,30 @@ export async function POST(request: NextRequest) {
     body.ids
   );
 
+  // Legacy wraps the per-employee procedure call in try/catch and continues to the next employee
+  // on failure (debug($e), loop keeps going) rather than aborting the whole batch — replicated
+  // here via per-row try/catch so one bad row doesn't 500 the rest of the run.
   const errors: { payroll_master_pkey: number; error: string }[] = [];
   for (const row of rows) {
-    const err = await processPayrollEmployee(
-      pool, row.month_year, row.branch_code, row.emp_fkey, row.payroll_master_pkey, session.user.loginUserId
-    );
-    if (err) errors.push({ payroll_master_pkey: row.payroll_master_pkey, error: err });
+    try {
+      const err = await processPayrollEmployee(
+        pool, row.month_year, row.branch_code, row.emp_fkey, row.payroll_master_pkey, session.user.loginUserId
+      );
+      if (err) errors.push({ payroll_master_pkey: row.payroll_master_pkey, error: err });
+    } catch (e) {
+      errors.push({ payroll_master_pkey: row.payroll_master_pkey, error: e instanceof Error ? e.message : String(e) });
+    }
+
+    // Legacy runs this backfill unconditionally per iteration, even when the main procedure call
+    // above failed (its try/catch only logs and falls through) — matched here by not gating on err.
+    try {
+      await backfillFormulaRemarks(pool, row.payroll_master_pkey);
+    } catch (e) {
+      errors.push({
+        payroll_master_pkey: row.payroll_master_pkey,
+        error: `formula backfill: ${e instanceof Error ? e.message : String(e)}`,
+      });
+    }
   }
 
   return NextResponse.json({ success: true, processed: rows.length - errors.length, errors });
