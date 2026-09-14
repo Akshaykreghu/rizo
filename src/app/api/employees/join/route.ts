@@ -3,7 +3,7 @@ import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket, ResultSetHeader } from 'mysql2';
-import { dobError, mobileError, aadhaarError } from '@/lib/validation';
+import { dobError, mobileError, statutoryFieldErrors } from '@/lib/validation';
 
 const JOIN_FIELDS = [
   'first_name', 'last_name', 'date_of_birth', 'email', 'mobile_no', 'address',
@@ -76,16 +76,42 @@ export async function POST(request: NextRequest) {
 
   const body = await request.json();
 
-  const validationError = dobError(body.date_of_birth ?? '') || mobileError(body.mobile_no ?? '') || aadhaarError(body.id_card ?? '');
+  const validationError =
+    dobError(body.date_of_birth ?? '') ||
+    mobileError(body.mobile_no ?? '') ||
+    statutoryFieldErrors(body, { aadhaarRequired: true }) ||
+    (!body.first_name?.trim() ? 'First name is required' : null) ||
+    (!body.classification ? 'Gender is required' : null) ||
+    (!body.nationality_id ? 'Nationality is required' : null);
   if (validationError) {
     return NextResponse.json({ error: validationError }, { status: 400 });
   }
-  // Legacy's Add Employee (Personal Info tab) requires Gender — mirror that here.
-  if (!body.classification) {
-    return NextResponse.json({ error: 'Gender is required' }, { status: 400 });
-  }
 
   const pool = await getCompanyPool(session.user.companyCode);
+
+  // Uniqueness — mirrors legacy EmployeeJoinController::checkIdCard/checkPan/checkESI/
+  // checkUAN/checkLWF, each re-checked against active emp_details on submit.
+  const dupChecks: { column: string; value: string }[] = [
+    { column: 'pan_no', value: body.pan_no },
+    { column: 'id_card', value: body.id_card },
+    { column: 'esi', value: body.esi },
+    { column: 'company_pf', value: body.company_pf },
+    { column: 'lwf_code', value: body.lwf_code },
+    { column: 'account_no', value: body.account_no },
+  ].filter((c): c is { column: string; value: string } => Boolean(c.value));
+  if (dupChecks.length) {
+    const conditions = dupChecks.map((c) => `${c.column} = ?`).join(' OR ');
+    const [dup] = await pool.execute<RowDataPacket[]>(
+      `SELECT 1 FROM emp_details WHERE status = 1 AND (${conditions})`,
+      dupChecks.map((c) => c.value)
+    );
+    if (dup.length) {
+      return NextResponse.json(
+        { error: 'An active employee already exists with a matching PAN / Aadhaar / ESI / UAN / LWF / account number' },
+        { status: 409 }
+      );
+    }
+  }
 
   const columns = JOIN_FIELDS.filter((k) => body[k] !== undefined && body[k] !== '');
   const placeholders = columns.map(() => '?').join(', ');

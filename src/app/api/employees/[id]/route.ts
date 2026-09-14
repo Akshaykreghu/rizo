@@ -3,6 +3,7 @@ import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket } from 'mysql2';
+import { dobError, ageAtDateError, statutoryFieldErrors } from '@/lib/validation';
 
 // The edit form submits blank optional fields as '', not undefined — `x ?? null` leaves those
 // as '', which MySQL rejects for DATE / INT columns (e.g. date_of_birth, attr1) under strict
@@ -102,6 +103,30 @@ export async function PUT(
   const body = await request.json();
   const pool = await getCompanyPool(session.user.companyCode);
 
+  // Aadhaar is mandatory on every save, even one that doesn't touch id_card — a row with no
+  // Aadhaar can't be saved until one is entered (decision 2026-09-07).
+  let finalIdCard: string | null = body.id_card ?? null;
+  if (body.id_card === undefined) {
+    const [current] = await pool.execute<RowDataPacket[]>(
+      'SELECT id_card FROM emp_details WHERE emp_pkey = ?',
+      [empPkey]
+    );
+    finalIdCard = current[0]?.id_card ?? null;
+  }
+
+  const validationError =
+    (body.first_name !== undefined && !body.first_name?.trim() ? 'First name is required' : null) ||
+    (body.classification !== undefined && !body.classification ? 'Gender is required' : null) ||
+    (body.date_of_birth !== undefined
+      ? (body.date_of_birth ? dobError(body.date_of_birth) : 'Date of birth is required')
+      : null) ||
+    (!finalIdCard ? 'Aadhaar/ID Card is required' : null) ||
+    statutoryFieldErrors(body) ||
+    (body.date_of_birth && body.joining_date ? ageAtDateError(body.date_of_birth, body.joining_date) : null);
+  if (validationError) {
+    return NextResponse.json({ error: validationError }, { status: 400 });
+  }
+
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
@@ -111,18 +136,26 @@ export async function PUT(
          first_name = ?, last_name = ?, date_of_birth = ?, mobile_no = ?, email = ?,
          classification = ?, blood = ?, maritual_status = ?, profile_pic = ?,
          id_card = ?, lwf_code = ?,
-         pan_no = ?, name_as_on_pan = ?, pf = ?, company_pf = ?, eps = ?, esi = ?, esi_dispensary = ?,
-         bank_name = ?, branch_name = ?, branch_address = ?, name_as_per_bank = ?, ifsc_code = ?, account_no = ?
+         pan_no = ?, pf = ?, company_pf = ?, eps = ?, esi = ?, esi_dispensary = ?,
+         bank_name = ?, branch_name = ?, branch_address = ?, ifsc_code = ?, account_no = ?,
+         address = ?, city = ?, state = ?, pincode = ?, guradian = ?, relation_guardian = ?,
+         international_worker = ?, country = ?, physical_handicap = ?, locomotive = ?, hearing = ?, visual = ?,
+         wps_code = ?, previous_member_id = ?
        WHERE emp_pkey = ?`,
       [
         body.first_name, body.last_name, nn(body.date_of_birth),
         nn(body.mobile_no), nn(body.email),
         nn(body.classification), nn(body.blood), nn(body.maritual_status), nn(body.profile_pic),
         nn(body.id_card), nn(body.lwf_code),
-        nn(body.pan_no), nn(body.name_as_on_pan), nn(body.pf), nn(body.company_pf),
+        nn(body.pan_no), nn(body.pf), nn(body.company_pf),
         nn(body.eps), nn(body.esi), nn(body.esi_dispensary),
         nn(body.bank_name), nn(body.bank_branch_name), nn(body.branch_address),
-        nn(body.name_as_per_bank), nn(body.ifsc_code), nn(body.account_no),
+        nn(body.ifsc_code), nn(body.account_no),
+        nn(body.address), nn(body.district), nn(body.state), nn(body.pincode),
+        nn(body.guradian), nn(body.relation_guardian),
+        nn(body.international_worker), nn(body.country), nn(body.physical_handicap),
+        nn(body.locomotive), nn(body.hearing), nn(body.visual),
+        nn(body.wps_code), nn(body.previous_member_id),
         empPkey,
       ]
     );

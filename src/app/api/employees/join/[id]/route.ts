@@ -3,7 +3,7 @@ import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket } from 'mysql2';
-import { dobError, mobileError, aadhaarError } from '@/lib/validation';
+import { dobError, mobileError, statutoryFieldErrors } from '@/lib/validation';
 
 const JOIN_FIELDS = [
   'first_name', 'last_name', 'date_of_birth', 'email', 'mobile_no', 'address',
@@ -56,18 +56,53 @@ export async function PUT(
 
   const { id } = await params;
   const body = await request.json();
+  const pool = await getCompanyPool(session.user.companyCode);
+
+  // Aadhaar is mandatory on every save of this record, even a partial one that doesn't touch
+  // id_card (decision 2026-09-07: a row with no Aadhaar can't be saved until one is entered).
+  let finalIdCard: string | null = body.id_card ?? null;
+  if (body.id_card === undefined) {
+    const [current] = await pool.execute<RowDataPacket[]>(
+      'SELECT id_card FROM emp_join WHERE emp_join_pkey = ?',
+      [id]
+    );
+    finalIdCard = current[0]?.id_card ?? null;
+  }
 
   const validationError =
     (body.date_of_birth !== undefined ? dobError(body.date_of_birth ?? '') : null) ||
     (body.mobile_no !== undefined ? mobileError(body.mobile_no ?? '') : null) ||
-    (body.id_card !== undefined ? aadhaarError(body.id_card ?? '') : null) ||
     // Legacy requires Gender on the Personal Info tab — enforce it whenever the field is submitted.
-    (body.classification !== undefined && !body.classification ? 'Gender is required' : null);
+    (body.classification !== undefined && !body.classification ? 'Gender is required' : null) ||
+    (!finalIdCard ? 'Aadhaar/ID Card is required' : null) ||
+    statutoryFieldErrors(body);
   if (validationError) {
     return NextResponse.json({ error: validationError }, { status: 400 });
   }
 
-  const pool = await getCompanyPool(session.user.companyCode);
+  // Uniqueness — same check as create (route.ts POST), re-run here since any statutory field
+  // can be edited independently on this step.
+  const dupChecks: { column: string; value: string }[] = [
+    { column: 'pan_no', value: body.pan_no },
+    { column: 'id_card', value: body.id_card },
+    { column: 'esi', value: body.esi },
+    { column: 'company_pf', value: body.company_pf },
+    { column: 'lwf_code', value: body.lwf_code },
+    { column: 'account_no', value: body.account_no },
+  ].filter((c): c is { column: string; value: string } => Boolean(c.value));
+  if (dupChecks.length) {
+    const conditions = dupChecks.map((c) => `${c.column} = ?`).join(' OR ');
+    const [dup] = await pool.execute<RowDataPacket[]>(
+      `SELECT 1 FROM emp_details WHERE status = 1 AND (${conditions})`,
+      dupChecks.map((c) => c.value)
+    );
+    if (dup.length) {
+      return NextResponse.json(
+        { error: 'An active employee already exists with a matching PAN / Aadhaar / ESI / UAN / LWF / account number' },
+        { status: 409 }
+      );
+    }
+  }
 
   const columns = JOIN_FIELDS.filter((k) => body[k] !== undefined);
   if (!columns.length) return NextResponse.json({ success: true });

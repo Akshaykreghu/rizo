@@ -2,12 +2,14 @@
 
 import { useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
+import { RequiredMark } from '@/components/ui/RequiredMark';
 
 export interface RepeatableFieldDef {
   key: string;
   label: string;
   type?: 'text' | 'date' | 'number' | 'select' | 'checkbox';
   options?: { value: string; label: string }[];
+  required?: boolean;
 }
 
 interface RepeatableRowsProps {
@@ -23,8 +25,14 @@ export function RepeatableRows({ fields, rows, pkeyField, onAdd, onRemove, addLa
   const empty = Object.fromEntries(fields.map((f) => [f.key, '']));
   const [draft, setDraft] = useState<Record<string, string>>(empty);
   const [adding, setAdding] = useState(false);
+  const [blocked, setBlocked] = useState(false);
 
   async function handleAdd() {
+    if (fields.some((f) => f.required && !draft[f.key]?.trim())) {
+      setBlocked(true);
+      return;
+    }
+    setBlocked(false);
     setAdding(true);
     try {
       await onAdd(draft);
@@ -73,7 +81,9 @@ export function RepeatableRows({ fields, rows, pkeyField, onAdd, onRemove, addLa
       <div className="grid gap-3" style={{ gridTemplateColumns: `repeat(${fields.length}, minmax(0, 1fr))` }}>
         {fields.map((f) => (
           <div key={f.key}>
-            <label className="block text-xs font-medium text-gray-500 mb-1">{f.label}</label>
+            <label className="block text-xs font-medium text-gray-500 mb-1">
+              {f.label}{f.required && <RequiredMark />}
+            </label>
             {f.type === 'select' ? (
               <select
                 className="w-full px-2.5 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
@@ -96,6 +106,9 @@ export function RepeatableRows({ fields, rows, pkeyField, onAdd, onRemove, addLa
           </div>
         ))}
       </div>
+      {blocked && (
+        <p className="text-xs text-[color:var(--color-danger)]">Fill in all required fields before adding this row.</p>
+      )}
       <button
         type="button"
         disabled={adding}

@@ -78,3 +78,70 @@ export function landlinePhoneError(value: string): string | null {
     ? null
     : 'Enter a valid phone number';
 }
+
+// Employee Join statutory formats — legacy View/EmployeeJoin/setup.ctp, each optional (blank
+// is always valid) except where the caller marks it required via statutoryFieldErrors' opts.
+
+export function esiError(value: string): string | null {
+  if (!value) return null;
+  return /^\d{10}$/.test(value) ? null : 'ESI number must be exactly 10 digits';
+}
+
+export function uanError(value: string): string | null {
+  if (!value) return null;
+  return /^\d{12}$/.test(value) ? null : 'UAN must be exactly 12 digits';
+}
+
+export function lwfError(value: string): string | null {
+  if (!value) return null;
+  return /^[A-Za-z0-9]{5,15}$/.test(value.toUpperCase())
+    ? null
+    : 'LWF code must be 5-15 alphanumeric characters';
+}
+
+export function accountNoError(value: string): string | null {
+  if (!value) return null;
+  return /^\d+$/.test(value) ? null : 'Account number must contain digits only';
+}
+
+export function pfNumberError(value: string): string | null {
+  if (!value) return null;
+  return /^[A-Za-z0-9]+$/.test(value) ? null : 'PF number must be alphanumeric';
+}
+
+// Runs every statutory-format check legacy's Employee Join form enforces. Returns the first
+// error message, or null. `aadhaarRequired` toggles required behaviour (join form requires
+// Aadhaar; edit form only format-checks when present unless the caller passes it too).
+export function statutoryFieldErrors(
+  v: {
+    id_card?: string; pan_no?: string; esi?: string; company_pf?: string;
+    lwf_code?: string; account_no?: string; pf?: string; pincode?: string;
+  },
+  opts?: { aadhaarRequired?: boolean }
+): string | null {
+  if (opts?.aadhaarRequired && !v.id_card) return 'Aadhaar/ID Card is required';
+  return (
+    aadhaarError(v.id_card ?? '') ||
+    panError(v.pan_no ?? '') ||
+    esiError(v.esi ?? '') ||
+    uanError(v.company_pf ?? '') ||
+    lwfError(v.lwf_code ?? '') ||
+    accountNoError(v.account_no ?? '') ||
+    pfNumberError(v.pf ?? '') ||
+    pincodeError(v.pincode ?? '') ||
+    null
+  );
+}
+
+// DOB must be at least MIN_WORKING_AGE_YEARS before `onDate` (the joining date). Legacy
+// View/Employee/setup.ctp:1001-1037 blocks submit unless the person is 18+ at joining.
+export function ageAtDateError(dob: string, onDate: string): string | null {
+  if (!dob || !onDate) return null;
+  const dobDate = new Date(dob);
+  const on = new Date(onDate);
+  if (Number.isNaN(dobDate.getTime()) || Number.isNaN(on.getTime())) return null;
+  const cutoff = new Date(on.getFullYear() - MIN_WORKING_AGE_YEARS, on.getMonth(), on.getDate());
+  return dobDate > cutoff
+    ? `Employee must be at least ${MIN_WORKING_AGE_YEARS} years old on the joining date`
+    : null;
+}

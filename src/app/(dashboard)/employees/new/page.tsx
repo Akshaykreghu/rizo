@@ -6,6 +6,12 @@ import { ArrowLeft } from 'lucide-react';
 import { FileUploadField } from '@/components/employees/FileUploadField';
 import { EmployeeSearch } from '@/components/employees/EmployeeSearch';
 import { useSetupOptions } from '@/lib/setupOptions';
+import { EMP_TYPES } from '@/lib/employeeOptions';
+import {
+  dobError, panError, esiError, uanError, lwfError, accountNoError, pfNumberError,
+} from '@/lib/validation';
+import { RequiredMark } from '@/components/ui/RequiredMark';
+import { cn } from '@/lib/utils';
 
 const EMPTY_FORM = {
   emp_id: '', first_name: '', last_name: '', date_of_birth: '',
@@ -14,8 +20,8 @@ const EMPTY_FORM = {
   id_card: '', lwf_code: '',
   joining_date: '', emp_branch: '', emp_dept: '', designation: '', emp_grade: '',
   emp_type: '', attr1: '', probation: '',
-  pan_no: '', name_as_on_pan: '', pf: '', company_pf: '', eps: '', esi: '', esi_dispensary: '',
-  bank_name: '', bank_branch_name: '', branch_address: '', name_as_per_bank: '', ifsc_code: '', account_no: '',
+  pan_no: '', pf: '', company_pf: '', eps: '', esi: '', esi_dispensary: '',
+  bank_name: '', bank_branch_name: '', branch_address: '', ifsc_code: '', account_no: '',
 };
 
 export default function NewEmployeePage() {
@@ -23,14 +29,37 @@ export default function NewEmployeePage() {
   const [form, setForm] = useState(EMPTY_FORM);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
   const { data: branches = [] } = useSetupOptions('setup/branches', 'branch_code', 'branch_name');
   const { data: departments = [] } = useSetupOptions('setup/departments', 'dept_code', 'dept_name');
   const { data: designations = [] } = useSetupOptions('setup/designations', 'desig_code', 'desig_name');
   const { data: grades = [] } = useSetupOptions('setup/grades', 'grade_code', 'grade_name');
 
+  function validate(): boolean {
+    const errors = {
+      first_name: form.first_name.trim() ? '' : 'First name is required',
+      classification: form.classification ? '' : 'Gender is required',
+      date_of_birth: form.date_of_birth ? (dobError(form.date_of_birth) ?? '') : 'Date of birth is required',
+      id_card: form.id_card ? '' : 'Aadhaar/ID Card is required',
+      pan_no: panError(form.pan_no) ?? '',
+      pf: pfNumberError(form.pf) ?? '',
+      company_pf: uanError(form.company_pf) ?? '',
+      esi: esiError(form.esi) ?? '',
+      lwf_code: lwfError(form.lwf_code) ?? '',
+      account_no: accountNoError(form.account_no) ?? '',
+    };
+    if (Object.values(errors).some(Boolean)) {
+      setFieldErrors(errors);
+      return false;
+    }
+    setFieldErrors({});
+    return true;
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (!validate()) return;
     setSaving(true);
     setError('');
     try {
@@ -77,12 +106,14 @@ export default function NewEmployeePage() {
               <input className="input" {...f('emp_id')} placeholder="Leave blank to auto-generate" />
             </div>
             <div>
-              <label className="label">Date of Birth</label>
-              <input type="date" className="input" {...f('date_of_birth')} />
+              <label className="label">Date of Birth <RequiredMark /></label>
+              <input type="date" className={cn('input', fieldErrors.date_of_birth && 'input-error')} {...f('date_of_birth')} />
+              {fieldErrors.date_of_birth && <p className="field-error">{fieldErrors.date_of_birth}</p>}
             </div>
             <div>
-              <label className="label">First Name <span className="text-red-500">*</span></label>
-              <input required className="input" {...f('first_name')} />
+              <label className="label">First Name <RequiredMark /></label>
+              <input className={cn('input', fieldErrors.first_name && 'input-error')} {...f('first_name')} />
+              {fieldErrors.first_name && <p className="field-error">{fieldErrors.first_name}</p>}
             </div>
             <div>
               <label className="label">Last Name</label>
@@ -90,19 +121,20 @@ export default function NewEmployeePage() {
             </div>
             <div>
               <label className="label">Mobile</label>
-              <input type="tel" className="input" {...f('mobile_no')} />
+              <input type="tel" maxLength={10} className="input" {...f('mobile_no')} />
             </div>
             <div>
               <label className="label">Email</label>
               <input type="email" className="input" {...f('email')} />
             </div>
             <div>
-              <label className="label">Gender</label>
-              <select className="input" {...f('classification')}>
+              <label className="label">Gender <RequiredMark /></label>
+              <select className={cn('input', fieldErrors.classification && 'input-error')} {...f('classification')}>
                 <option value="">Select gender</option>
                 <option value="male">Male</option>
                 <option value="female">Female</option>
               </select>
+              {fieldErrors.classification && <p className="field-error">{fieldErrors.classification}</p>}
             </div>
             <div>
               <label className="label">Blood Group</label>
@@ -122,12 +154,19 @@ export default function NewEmployeePage() {
               </select>
             </div>
             <div>
-              <label className="label">ID Card Number</label>
-              <input className="input" {...f('id_card')} />
+              <label className="label">ID Card Number <RequiredMark /></label>
+              <input maxLength={12} className={cn('input', fieldErrors.id_card && 'input-error')} {...f('id_card')} />
+              {fieldErrors.id_card && <p className="field-error">{fieldErrors.id_card}</p>}
             </div>
             <div>
               <label className="label">LWF Code</label>
-              <input className="input" {...f('lwf_code')} />
+              <input
+                maxLength={15}
+                className={cn('input', fieldErrors.lwf_code && 'input-error')}
+                {...f('lwf_code')}
+                onChange={(e) => setForm((prev) => ({ ...prev, lwf_code: e.target.value.toUpperCase() }))}
+              />
+              {fieldErrors.lwf_code && <p className="field-error">{fieldErrors.lwf_code}</p>}
             </div>
           </div>
           <div className="mt-4">
@@ -150,10 +189,7 @@ export default function NewEmployeePage() {
               <label className="label">Employment Type</label>
               <select className="input" {...f('emp_type')}>
                 <option value="">Select type</option>
-                <option value="Permanent">Permanent</option>
-                <option value="Contract">Contract</option>
-                <option value="Trainee">Trainee</option>
-                <option value="Intern">Intern</option>
+                {EMP_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
               </select>
             </div>
             <div>
@@ -203,19 +239,23 @@ export default function NewEmployeePage() {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="label">PAN Number</label>
-              <input className="input" {...f('pan_no')} />
-            </div>
-            <div>
-              <label className="label">Name as on PAN</label>
-              <input className="input" {...f('name_as_on_pan')} />
+              <input
+                maxLength={10}
+                className={cn('input', fieldErrors.pan_no && 'input-error')}
+                {...f('pan_no')}
+                onChange={(e) => setForm((prev) => ({ ...prev, pan_no: e.target.value.toUpperCase() }))}
+              />
+              {fieldErrors.pan_no && <p className="field-error">{fieldErrors.pan_no}</p>}
             </div>
             <div>
               <label className="label">PF Number</label>
-              <input className="input" {...f('pf')} />
+              <input maxLength={22} className={cn('input', fieldErrors.pf && 'input-error')} {...f('pf')} />
+              {fieldErrors.pf && <p className="field-error">{fieldErrors.pf}</p>}
             </div>
             <div>
               <label className="label">Company PF</label>
-              <input className="input" {...f('company_pf')} />
+              <input maxLength={12} className={cn('input', fieldErrors.company_pf && 'input-error')} {...f('company_pf')} />
+              {fieldErrors.company_pf && <p className="field-error">{fieldErrors.company_pf}</p>}
             </div>
             <div>
               <label className="label">EPS</label>
@@ -223,7 +263,8 @@ export default function NewEmployeePage() {
             </div>
             <div>
               <label className="label">ESIC Number</label>
-              <input className="input" {...f('esi')} />
+              <input maxLength={10} className={cn('input', fieldErrors.esi && 'input-error')} {...f('esi')} />
+              {fieldErrors.esi && <p className="field-error">{fieldErrors.esi}</p>}
             </div>
             <div>
               <label className="label">ESI Dispensary</label>
@@ -237,27 +278,24 @@ export default function NewEmployeePage() {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="label">Bank Name</label>
-              <input className="input" {...f('bank_name')} />
+              <input maxLength={100} className="input" {...f('bank_name')} />
             </div>
             <div>
               <label className="label">Bank Branch</label>
-              <input className="input" {...f('bank_branch_name')} />
+              <input maxLength={100} className="input" {...f('bank_branch_name')} />
             </div>
             <div>
               <label className="label">Branch Address</label>
               <input className="input" {...f('branch_address')} />
             </div>
             <div>
-              <label className="label">Name as per Bank</label>
-              <input className="input" {...f('name_as_per_bank')} />
-            </div>
-            <div>
               <label className="label">IFSC Code</label>
-              <input className="input" {...f('ifsc_code')} />
+              <input maxLength={12} className="input" {...f('ifsc_code')} />
             </div>
             <div>
               <label className="label">Account Number</label>
-              <input className="input" {...f('account_no')} />
+              <input maxLength={18} className={cn('input', fieldErrors.account_no && 'input-error')} {...f('account_no')} />
+              {fieldErrors.account_no && <p className="field-error">{fieldErrors.account_no}</p>}
             </div>
           </div>
         </section>
@@ -286,6 +324,8 @@ export default function NewEmployeePage() {
         .label { display: block; font-size: 0.875rem; font-weight: 500; color: #374151; margin-bottom: 0.25rem; }
         .input { width: 100%; padding: 0.5rem 0.75rem; border: 1px solid #d1d5db; border-radius: 0.5rem; font-size: 0.875rem; outline: none; }
         .input:focus { box-shadow: 0 0 0 2px #6366f1; border-color: transparent; }
+        .input-error { border-color: #ef4444; }
+        .field-error { font-size: 0.75rem; color: #ef4444; margin-top: 0.25rem; }
       `}</style>
     </div>
   );

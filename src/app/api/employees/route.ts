@@ -4,6 +4,7 @@ import { getCompanyPool } from '@/lib/db';
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket, ResultSetHeader } from 'mysql2';
 import { generateNextEmpId } from '@/lib/empId';
+import { dobError, statutoryFieldErrors } from '@/lib/validation';
 
 const LIST_SELECT = `
   SELECT e.emp_pkey, e.emp_id, e.first_name, e.last_name, e.status, e.profile_pic,
@@ -78,6 +79,16 @@ export async function POST(request: NextRequest) {
   const body = await request.json();
   const pool = await getCompanyPool(session.user.companyCode);
 
+  const validationError =
+    (!body.first_name?.trim() ? 'First name is required' : null) ||
+    (!body.classification ? 'Gender is required' : null) ||
+    (!body.date_of_birth ? 'Date of birth is required' : dobError(body.date_of_birth)) ||
+    (!body.id_card ? 'Aadhaar/ID Card is required' : null) ||
+    statutoryFieldErrors(body);
+  if (validationError) {
+    return NextResponse.json({ error: validationError }, { status: 400 });
+  }
+
   // Duplicate check (mirrors legacy EmployeeController.php:3195-3221)
   if (body.id_card || body.lwf_code || body.emp_id) {
     const dupConditions: string[] = [];
@@ -104,10 +115,10 @@ export async function POST(request: NextRequest) {
       `INSERT INTO emp_details
          (company_code, branch_code, emp_id, first_name, last_name, date_of_birth, mobile_no, email,
           classification, blood, maritual_status, profile_pic, id_card, lwf_code,
-          pan_no, name_as_on_pan, pf, company_pf, eps, esi, esi_dispensary,
-          bank_name, branch_name, branch_address, name_as_per_bank, ifsc_code, account_no,
+          pan_no, pf, company_pf, eps, esi, esi_dispensary,
+          bank_name, branch_name, branch_address, ifsc_code, account_no,
           status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
       [
         session.user.companyCode,
         body.emp_branch ?? '',
@@ -124,7 +135,6 @@ export async function POST(request: NextRequest) {
         body.id_card ?? null,
         body.lwf_code ?? null,
         body.pan_no ?? null,
-        body.name_as_on_pan ?? null,
         body.pf ?? null,
         body.company_pf ?? null,
         body.eps ?? null,
@@ -133,7 +143,6 @@ export async function POST(request: NextRequest) {
         body.bank_name ?? null,
         body.bank_branch_name ?? null,
         body.branch_address ?? null,
-        body.name_as_per_bank ?? null,
         body.ifsc_code ?? null,
         body.account_no ?? null,
       ]

@@ -5,13 +5,15 @@ import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft } from 'lucide-react';
 import { EmployeeSearch } from '@/components/employees/EmployeeSearch';
 import { useSetupOptions } from '@/lib/setupOptions';
+import { EMP_TYPES } from '@/lib/employeeOptions';
 
 interface JoinDetail { join: Record<string, string> }
 
 const EMPTY_FORM = {
   emp_company_id: '', username: '', password: '',
   joining_date: '', emp_branch: '', emp_dept: '', designation: '', emp_grade: '',
-  emp_type: '', attr1: '', probation: '',
+  emp_type: '', attr1: '', probation: '', notice_days: '',
+  day_time_seq: '', holiday_group_id: '', leavepolicy_group_id: '',
 };
 
 interface OnboardFormProps {
@@ -41,6 +43,10 @@ export function OnboardForm({ id, onBack, onOnboarded, showBackLink = true }: On
   const { data: departments = [] } = useSetupOptions('setup/departments', 'dept_code', 'dept_name');
   const { data: designations = [] } = useSetupOptions('setup/designations', 'desig_code', 'desig_name');
   const { data: grades = [] } = useSetupOptions('setup/grades', 'grade_code', 'grade_name');
+  const { data: noticePeriods = [] } = useSetupOptions('setup/notice-periods', 'notice_days', 'description');
+  const { data: shifts = [] } = useSetupOptions('setup/shifts', 'day_time_seq', 'day_time_desc');
+  const { data: holidayGroups = [] } = useSetupOptions('setup/holiday-groups', 'HOLIDAY_GROUP_ID', 'HOLIDAY_GROUP_NAME');
+  const { data: leavePolicyGroups = [] } = useSetupOptions('setup/leavepolicy-groups', 'LEAVEPOLICY_GROUP_ID', 'LEAVEPOLICY_GROUP_NAME');
 
   function f(key: keyof typeof EMPTY_FORM) {
     return {
@@ -130,10 +136,7 @@ export function OnboardForm({ id, onBack, onOnboarded, showBackLink = true }: On
               <label className="label">Employment Type</label>
               <select className="input" {...f('emp_type')}>
                 <option value="">Select type</option>
-                <option value="Permanent">Permanent</option>
-                <option value="Contract">Contract</option>
-                <option value="Trainee">Trainee</option>
-                <option value="Intern">Intern</option>
+                {EMP_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
               </select>
             </div>
             <div>
@@ -169,11 +172,45 @@ export function OnboardForm({ id, onBack, onOnboarded, showBackLink = true }: On
               <input type="number" className="input" {...f('probation')} />
             </div>
             <div>
+              <label className="label">Notice Period</label>
+              <select className="input" {...f('notice_days')}>
+                <option value="">Select notice period</option>
+                {noticePeriods.map((n) => <option key={n.value} value={n.value}>{n.label}</option>)}
+              </select>
+            </div>
+            <div>
               <label className="label">Reporting Manager</label>
               <EmployeeSearch
                 value={form.attr1}
                 onChange={(empPkey) => setForm((prev) => ({ ...prev, attr1: empPkey }))}
               />
+            </div>
+          </div>
+        </section>
+
+        <section>
+          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Policies &amp; Rules</h2>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="label">Shift Policy</label>
+              <select className="input" {...f('day_time_seq')}>
+                <option value="">Select shift</option>
+                {shifts.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="label">Holiday Calendar</label>
+              <select className="input" {...f('holiday_group_id')}>
+                <option value="">Select holiday calendar</option>
+                {holidayGroups.map((h) => <option key={h.value} value={h.value}>{h.label}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="label">Leave Policy</label>
+              <select className="input" {...f('leavepolicy_group_id')}>
+                <option value="">Select leave policy</option>
+                {leavePolicyGroups.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
+              </select>
             </div>
           </div>
         </section>

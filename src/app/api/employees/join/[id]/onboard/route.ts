@@ -114,13 +114,17 @@ export async function POST(
     await connection.execute(
       `INSERT INTO emp_proff
          (emp_fkey, joining_date, emp_company_id, emp_type, designation, emp_dept, emp_grade,
-          emp_branch, attr1, probation, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          emp_branch, attr1, probation, notice_days, day_time_seq, HOLIDAY_GROUP_ID, LEAVEPOLICY_GROUP_ID, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         empPkey, body.joining_date ?? null, body.emp_company_id, body.emp_type ?? null,
         body.designation ?? null, body.emp_dept ?? null, body.emp_grade ?? null,
         body.emp_branch ?? null, body.attr1 ?? null,
         body.probation ? Number(body.probation) : null,
+        body.notice_days ? Number(body.notice_days) : null,
+        body.day_time_seq ? Number(body.day_time_seq) : null,
+        body.holiday_group_id ? Number(body.holiday_group_id) : null,
+        body.leavepolicy_group_id ? Number(body.leavepolicy_group_id) : null,
         session.user.loginUserId,
       ]
     );

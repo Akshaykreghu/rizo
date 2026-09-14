@@ -8,7 +8,10 @@ import { cn } from '@/lib/utils';
 import { AvatarUpload } from '@/components/ui/AvatarUpload';
 import { RepeatableRows } from '@/components/employees/RepeatableRows';
 import { DocumentUploadField } from '@/components/employees/DocumentUploadField';
-import { dobError, mobileError, aadhaarError } from '@/lib/validation';
+import {
+  dobError, mobileError, aadhaarError, panError, esiError, uanError, lwfError,
+  accountNoError, pfNumberError, pincodeError,
+} from '@/lib/validation';
 
 interface JoinDetailData {
   join: Record<string, string>;
@@ -241,12 +244,48 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
         : 'Aadhaar / ID Card is required',
       classification: form.classification ? '' : 'Gender is required',
       nationality_id: form.nationality_id ? '' : 'Nationality is required',
+      pincode: pincodeError(form.pincode ?? '') ?? '',
     };
     if (Object.values(errors).some(Boolean)) {
       setFieldErrors(errors);
       return false;
     }
     setFieldErrors({});
+    return true;
+  }
+
+  function validateStep1(): boolean {
+    const errors = {
+      pan_no: panError(form.pan_no ?? '') ?? '',
+      pf: pfNumberError(form.pf ?? '') ?? '',
+      company_pf: uanError(form.company_pf ?? '') ?? '',
+      esi: esiError(form.esi ?? '') ?? '',
+      lwf_code: lwfError(form.lwf_code ?? '') ?? '',
+    };
+    if (Object.values(errors).some(Boolean)) {
+      setFieldErrors(errors);
+      return false;
+    }
+    setFieldErrors({});
+    return true;
+  }
+
+  function validateStep2(): boolean {
+    const errors = {
+      account_no: accountNoError(form.account_no ?? '') ?? '',
+    };
+    if (Object.values(errors).some(Boolean)) {
+      setFieldErrors(errors);
+      return false;
+    }
+    setFieldErrors({});
+    return true;
+  }
+
+  function validateStep(idx: number): boolean {
+    if (idx === 0) return validateStep0();
+    if (idx === 1) return validateStep1();
+    if (idx === 2) return validateStep2();
     return true;
   }
 
@@ -273,12 +312,12 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
   }
 
   async function saveAndContinue() {
-    if (step === 0 && !validateStep0()) return;
+    if (!validateStep(step)) return;
     if (await persist() && step < STEPS.length - 1) goToStep(step + 1);
   }
 
   async function finish() {
-    if (step === 0 && !validateStep0()) return;
+    if (!validateStep(step)) return;
     if (await persist()) (onFinished ?? onBack)();
   }
 
@@ -430,7 +469,12 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
             </div>
             <div>
               <label className={LABEL_CLASS}>Pincode</label>
-              <input className={INPUT_CLASS} {...f('pincode')} />
+              <input
+                maxLength={6}
+                className={cn(INPUT_CLASS, fieldErrors.pincode && ERROR_INPUT_CLASS)}
+                {...f('pincode')}
+              />
+              <FieldError>{fieldErrors.pincode}</FieldError>
             </div>
           </div>
         </div>
@@ -443,23 +487,45 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-5">
             <div>
               <label className={LABEL_CLASS}>PAN Number</label>
-              <input className={INPUT_CLASS} {...f('pan_no')} placeholder="ABCDE1234D" />
+              <input
+                maxLength={10}
+                className={cn(INPUT_CLASS, fieldErrors.pan_no && ERROR_INPUT_CLASS)}
+                {...f('pan_no')}
+                onChange={(e) => setForm((prev) => ({ ...prev, pan_no: e.target.value.toUpperCase() }))}
+                placeholder="ABCDE1234D"
+              />
+              <FieldError>{fieldErrors.pan_no}</FieldError>
             </div>
             <div>
               <label className={LABEL_CLASS}>PF Number</label>
-              <input className={INPUT_CLASS} {...f('pf')} />
+              <input
+                maxLength={22}
+                className={cn(INPUT_CLASS, fieldErrors.pf && ERROR_INPUT_CLASS)}
+                {...f('pf')}
+              />
+              <FieldError>{fieldErrors.pf}</FieldError>
             </div>
             <div>
               <label className={LABEL_CLASS}>UAN (Company PF)</label>
-              <input className={INPUT_CLASS} {...f('company_pf')} />
+              <input
+                maxLength={12}
+                className={cn(INPUT_CLASS, fieldErrors.company_pf && ERROR_INPUT_CLASS)}
+                {...f('company_pf')}
+              />
+              <FieldError>{fieldErrors.company_pf}</FieldError>
             </div>
             <div>
               <label className={LABEL_CLASS}>Previous PF Member ID</label>
-              <input className={INPUT_CLASS} {...f('previous_member_id')} />
+              <input maxLength={15} className={INPUT_CLASS} {...f('previous_member_id')} />
             </div>
             <div>
               <label className={LABEL_CLASS}>ESIC Number</label>
-              <input className={INPUT_CLASS} {...f('esi')} />
+              <input
+                maxLength={10}
+                className={cn(INPUT_CLASS, fieldErrors.esi && ERROR_INPUT_CLASS)}
+                {...f('esi')}
+              />
+              <FieldError>{fieldErrors.esi}</FieldError>
             </div>
             <div>
               <label className={LABEL_CLASS}>ESI Dispensary</label>
@@ -467,11 +533,17 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
             </div>
             <div>
               <label className={LABEL_CLASS}>LWF Code</label>
-              <input className={INPUT_CLASS} {...f('lwf_code')} />
+              <input
+                maxLength={15}
+                className={cn(INPUT_CLASS, fieldErrors.lwf_code && ERROR_INPUT_CLASS)}
+                {...f('lwf_code')}
+                onChange={(e) => setForm((prev) => ({ ...prev, lwf_code: e.target.value.toUpperCase() }))}
+              />
+              <FieldError>{fieldErrors.lwf_code}</FieldError>
             </div>
             <div>
               <label className={LABEL_CLASS}>WPS Code</label>
-              <input className={INPUT_CLASS} {...f('wps_code')} />
+              <input maxLength={15} className={INPUT_CLASS} {...f('wps_code')} />
             </div>
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mt-5">
@@ -499,11 +571,16 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
           </div>
           <div>
             <label className={LABEL_CLASS}>IFSC Code</label>
-            <input className={INPUT_CLASS} {...f('ifsc_code')} />
+            <input maxLength={12} className={INPUT_CLASS} {...f('ifsc_code')} />
           </div>
           <div>
             <label className={LABEL_CLASS}>Account Number</label>
-            <input className={INPUT_CLASS} {...f('account_no')} />
+            <input
+              maxLength={18}
+              className={cn(INPUT_CLASS, fieldErrors.account_no && ERROR_INPUT_CLASS)}
+              {...f('account_no')}
+            />
+            <FieldError>{fieldErrors.account_no}</FieldError>
           </div>
         </div>
       );
@@ -532,12 +609,12 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
             onAdd={addChild('documents')}
             onRemove={removeChild('documents')}
             fields={[
-              { key: 'document_type', label: 'Type', type: 'select', options: DOCUMENT_TYPES.map((d) => ({ value: d, label: d })) },
-              { key: 'document_number', label: 'Number' },
-              { key: 'name', label: 'Name on Document' },
-              { key: 'relation', label: 'Relation' },
+              { key: 'document_type', label: 'Type', type: 'select', options: DOCUMENT_TYPES.map((d) => ({ value: d, label: d })), required: true },
+              { key: 'document_number', label: 'Number', required: true },
+              { key: 'name', label: 'Name on Document', required: true },
+              { key: 'relation', label: 'Relation', required: true },
               { key: 'nationality', label: 'Nationality' },
-              { key: 'valid_from', label: 'Valid From', type: 'date' },
+              { key: 'valid_from', label: 'Valid From', type: 'date', required: true },
               { key: 'valid_till', label: 'Valid Till', type: 'date' },
             ]}
           />
@@ -552,10 +629,10 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
             onAdd={addChild('education')}
             onRemove={removeChild('education')}
             fields={[
-              { key: 'course', label: 'Course' },
-              { key: 'university', label: 'University' },
-              { key: 'duration', label: 'Duration' },
-              { key: 'mark', label: 'Marks' },
+              { key: 'course', label: 'Course', required: true },
+              { key: 'university', label: 'University', required: true },
+              { key: 'duration', label: 'Duration', required: true },
+              { key: 'mark', label: 'Marks', required: true },
             ]}
           />
         </section>
@@ -569,12 +646,12 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
             onAdd={addChild('experience')}
             onRemove={removeChild('experience')}
             fields={[
-              { key: 'company', label: 'Company' },
-              { key: 'designation', label: 'Designation' },
-              { key: 'department', label: 'Department' },
-              { key: 'from_date', label: 'From', type: 'date' },
-              { key: 'to_date', label: 'To', type: 'date' },
-              { key: 'salary', label: 'Salary', type: 'number' },
+              { key: 'company', label: 'Company', required: true },
+              { key: 'designation', label: 'Designation', required: true },
+              { key: 'department', label: 'Department', required: true },
+              { key: 'from_date', label: 'From', type: 'date', required: true },
+              { key: 'to_date', label: 'To', type: 'date', required: true },
+              { key: 'salary', label: 'Salary', type: 'number', required: true },
             ]}
           />
         </section>
@@ -588,12 +665,12 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
             onAdd={addChild('family')}
             onRemove={removeChild('family')}
             fields={[
-              { key: 'name', label: 'Name' },
-              { key: 'relation', label: 'Relation' },
-              { key: 'gender', label: 'Gender' },
-              { key: 'DOB', label: 'Date of Birth', type: 'date' },
+              { key: 'name', label: 'Name', required: true },
+              { key: 'relation', label: 'Relation', required: true },
+              { key: 'gender', label: 'Gender', required: true },
+              { key: 'DOB', label: 'Date of Birth', type: 'date', required: true },
               { key: 'nationality', label: 'Nationality' },
-              { key: 'contact_number', label: 'Contact Number' },
+              { key: 'contact_number', label: 'Contact Number', required: true },
             ]}
           />
         </section>
