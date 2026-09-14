@@ -17,6 +17,7 @@ export default function AssetsPage() {
       apiPath="assets"
       primaryKey="asset_pkey"
       displayKey="name"
+      compactForm
       columns={[
         { key: 'name', label: 'Name' },
         { key: 'Type', label: 'Type' },
@@ -34,7 +35,7 @@ export default function AssetsPage() {
         { key: 'warranty', label: 'Warranty' },
         { key: 'value', label: 'Value' },
         { key: 'year', label: 'Year' },
-        { key: 'specifications', label: 'Specifications' },
+        { key: 'specifications', label: 'Specifications', fullWidth: true },
       ]}
     />
   );

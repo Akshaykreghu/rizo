@@ -14,6 +14,8 @@ export interface FieldDef {
   required?: boolean;
   placeholder?: string;
   options?: { value: string; label: string }[];
+  /** When the form uses a 2-column layout, span both columns for this field. */
+  fullWidth?: boolean;
 }
 
 interface SetupCrudPageProps {
@@ -28,13 +30,15 @@ interface SetupCrudPageProps {
   hideTitle?: boolean;
   /** Extra content (e.g. a filter dropdown) rendered on the left of the header row, alongside "Add New". */
   headerExtra?: React.ReactNode;
+  /** Lay the add/edit form fields out in 2 columns instead of stacking them, to keep the modal shorter. */
+  compactForm?: boolean;
 }
 
 const INPUT_CLASS =
   'w-full px-3.5 py-2.5 rounded-lg border border-slate-200 bg-white text-sm text-[#0F172A] hover:border-slate-300 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/25 focus:border-[color:var(--color-primary)]/60 transition-colors duration-150';
 
 export function SetupCrudPage({
-  title, apiPath, fields, primaryKey, displayKey, columns, queryParams, hideTitle, headerExtra,
+  title, apiPath, fields, primaryKey, displayKey, columns, queryParams, hideTitle, headerExtra, compactForm,
 }: SetupCrudPageProps) {
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState<Record<string, unknown> | null>(null);
@@ -201,7 +205,10 @@ export function SetupCrudPage({
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/25 backdrop-blur-[2px] p-4 animate-fade-in" onClick={closeModal}>
           <div
             onClick={(e) => e.stopPropagation()}
-            className="relative bg-white rounded-[20px] border border-black/[0.06] shadow-[0_25px_70px_-15px_rgba(0,0,0,0.25)] p-6 w-full max-w-md animate-modal-in"
+            className={cn(
+              'relative bg-white rounded-[20px] border border-black/[0.06] shadow-[0_25px_70px_-15px_rgba(0,0,0,0.25)] p-6 w-full animate-modal-in',
+              compactForm ? 'max-w-xl' : 'max-w-md'
+            )}
           >
             <div className="flex items-center justify-between mb-5">
               <h2 className="text-[19px] font-semibold text-[#0F172A] tracking-tight">
@@ -217,10 +224,10 @@ export function SetupCrudPage({
                 e.preventDefault();
                 save.mutate(form);
               }}
-              className="space-y-4"
+              className={compactForm ? 'grid grid-cols-2 gap-x-4 gap-y-4' : 'space-y-4'}
             >
               {fields.map((field) => (
-                <div key={field.key}>
+                <div key={field.key} className={compactForm && field.fullWidth ? 'col-span-2' : undefined}>
                   {field.type === 'checkbox' ? (
                     <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
                       <input
@@ -267,10 +274,10 @@ export function SetupCrudPage({
               ))}
 
               {save.isError && (
-                <p className="text-[color:var(--color-danger)] text-[12.5px]">{String(save.error)}</p>
+                <p className={cn('text-[color:var(--color-danger)] text-[12.5px]', compactForm && 'col-span-2')}>{String(save.error)}</p>
               )}
 
-              <div className="flex justify-end gap-2 pt-2">
+              <div className={cn('flex justify-end gap-2 pt-2', compactForm && 'col-span-2')}>
                 <button
                   type="button"
                   onClick={closeModal}
