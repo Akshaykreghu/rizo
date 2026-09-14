@@ -452,7 +452,7 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
               </div>
 
               {tab.key === 'personal' && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-5 max-w-3xl">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-5 gap-y-5">
                   <div>
                     <label className={LABEL_CLASS}>First Name<RequiredMark /></label>
                     <input maxLength={100} className={cn(INPUT_CLASS, fieldErrors.first_name && ERROR_INPUT_CLASS)} {...f('first_name')} />
@@ -542,7 +542,7 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                     <label className={LABEL_CLASS}>Relation to Guardian</label>
                     <input className={INPUT_CLASS} {...f('relation_guardian')} />
                   </div>
-                  <div className="sm:col-span-2">
+                  <div className="col-span-full">
                     <label className={LABEL_CLASS}>Address</label>
                     <textarea
                       rows={2}
@@ -552,7 +552,7 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                     />
                   </div>
 
-                  <div className="sm:col-span-2 flex flex-col gap-3 pt-1">
+                  <div className="col-span-full flex flex-col gap-3 pt-1">
                     {checkbox('international_worker', 'International Worker')}
                     {form.international_worker === 'Y' && (
                       <div className="max-w-xs">
@@ -576,7 +576,7 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
               )}
 
               {tab.key === 'professional' && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-5 max-w-3xl">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-5 gap-y-5">
                   <div>
                     <label className={LABEL_CLASS}>Joining Date</label>
                     <input type="date" className={INPUT_CLASS} {...f('joining_date')} />
@@ -620,9 +620,9 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
               )}
 
               {tab.key === 'statutory' && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-5 max-w-3xl">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-5 gap-y-5">
                   {structures.length > 0 || ctc ? (
-                    <div className="sm:col-span-2 rounded-lg bg-slate-50 border border-slate-100 px-4 py-3.5 grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-2 mb-1">
+                    <div className="col-span-full rounded-lg bg-slate-50 border border-slate-100 px-4 py-3.5 grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-2 mb-1">
                       <div>
                         <p className="text-[11px] text-slate-400 mb-0.5">Salary Structure</p>
                         <p className="text-[13px] font-medium text-[#0F172A]">
@@ -676,7 +676,7 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
               )}
 
               {tab.key === 'bank' && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-5 max-w-3xl">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-5 gap-y-5">
                   <div>
                     <label className={LABEL_CLASS}>Bank Name</label>
                     <input maxLength={100} className={INPUT_CLASS} {...f('bank_name')} />
@@ -698,7 +698,7 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
               )}
 
               {tab.key === 'documents' && (
-                <div className="max-w-3xl">
+                <div>
                   {documents.length === 0 && !showDocForm && (
                     <p className="text-sm text-slate-400 py-6 text-center border border-dashed border-slate-200 rounded-lg">
                       No documents added yet.
@@ -779,7 +779,7 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                       <h3 className="text-sm font-semibold text-[#0F172A] mb-4">
                         {replacingPkey != null ? 'Replace Document' : 'Add Document'}
                       </h3>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-5 gap-y-4">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-5 gap-y-4">
                         <div>
                           <label className={LABEL_CLASS}>Document Type<RequiredMark /></label>
                           <select
@@ -874,7 +874,7 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
               )}
 
               {tab.key === 'family' && (
-                <div className="max-w-3xl">
+                <div>
                   {family.length === 0 && !showFamilyForm && (
                     <p className="text-sm text-slate-400 py-6 text-center border border-dashed border-slate-200 rounded-lg">
                       No family members added yet.
@@ -936,7 +936,7 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                   {showFamilyForm && (
                     <div className="mt-4 rounded-xl border border-slate-100 bg-slate-50/60 p-5">
                       <h3 className="text-sm font-semibold text-[#0F172A] mb-4">Add Family Member</h3>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-5 gap-y-4">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-5 gap-y-4">
                         <div>
                           <label className={LABEL_CLASS}>Name<RequiredMark /></label>
                           <input
