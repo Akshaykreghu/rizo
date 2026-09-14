@@ -116,12 +116,6 @@ export function SalarySlipModal({ payrollMasterPkey, onClose }: { payrollMasterP
 
           {data && (
             <>
-              <div className="grid grid-cols-3 gap-4 text-[12.5px] mb-4">
-                <div><span className="text-slate-500">Present days:</span> {data.header.days_presant ?? '-'}</div>
-                <div><span className="text-slate-500">Leave days:</span> {data.header.days_leave ?? '-'}</div>
-                <div><span className="text-slate-500">LOP:</span> {data.header.loss_of_pay ?? '-'}</div>
-              </div>
-
               <h3 className="text-[11px] font-semibold text-slate-600 uppercase tracking-wide mb-3">Earnings &amp; Deductions</h3>
               {data.direct.length === 0 && (
                 <div className="text-slate-400 text-[13px] mb-4">No components yet — process payroll first.</div>

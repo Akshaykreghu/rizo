@@ -72,8 +72,7 @@ export function generatePayslipPdf(
     body: [
       ['Name', `${header.emp_name}${resignedSuffix}`, 'Branch', header.branch_code],
       ['Designation', header.desig ?? '-', 'Department', header.departments ?? '-'],
-      ['Present Days', String(header.days_presant ?? '-'), 'Leave Days', String(header.days_leave ?? '-')],
-      ['LOP Days', String(header.loss_of_pay ?? '-'), 'Bank Details', header.bank_details ?? '-'],
+      ['Bank Details', header.bank_details ?? '-', '', ''],
     ],
     columnStyles: { 0: { fontStyle: 'bold' }, 2: { fontStyle: 'bold' } },
   });

@@ -375,6 +375,8 @@ function ProcessPayrollContent() {
           pageSizeOptions={[10, 20, 30, 50]}
           isLoading={isLoading}
           rowClassName={rowClass}
+          onRowClick={(row) => toggle(row.payroll_master_pkey)}
+          isRowSelected={(row) => selected.has(row.payroll_master_pkey)}
         />
       )}
 
