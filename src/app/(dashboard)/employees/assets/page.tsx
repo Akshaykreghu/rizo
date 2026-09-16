@@ -43,7 +43,8 @@ interface AssetOption {
   asset_pkey: number;
   name: string;
   status: string;
-  Type: string | null;
+  Type: number | string | null;
+  TypeName: string | null;
   not_working?: number | boolean;
 }
 
@@ -227,11 +228,15 @@ export default function AllocateAssetsPage({ embeddedEmpPkey, embeddedEmpName }:
   // Legacy Allocatenew/getEmi only offer assets that are not currently allocated and were
   // never marked "Not Working" (asset_state 3). Asset Type, when chosen, narrows further.
   const availableAssets = assets.filter(
-    (a) => a.status !== 'Allocated' && !a.not_working && (!form.asset_type || a.Type === form.asset_type)
+    (a) => a.status !== 'Allocated' && !a.not_working && (!form.asset_type || String(a.Type) === form.asset_type)
   );
   const assetTypes = Array.from(
-    new Set(assets.filter((a) => a.status !== 'Allocated' && !a.not_working && a.Type).map((a) => a.Type as string))
-  ).sort();
+    new Map(
+      assets
+        .filter((a) => a.status !== 'Allocated' && !a.not_working && a.Type != null)
+        .map((a) => [String(a.Type), a.TypeName ?? String(a.Type)] as const)
+    ).entries()
+  ).sort((a, b) => a[1].localeCompare(b[1]));
 
   const columns: ColumnDef<AllocationRow, unknown>[] = [
     {
@@ -403,14 +408,15 @@ export default function AllocateAssetsPage({ embeddedEmpPkey, embeddedEmpName }:
                 )}
               </div>
               <div>
-                <label className="block text-[12px] font-medium text-slate-600 mb-1.5">Asset Type</label>
+                <label className="block text-[12px] font-medium text-slate-600 mb-1.5">Asset Type <span className="text-[color:var(--color-danger)]">*</span></label>
                 <select
+                  required
                   className={cn(INPUT_CLASS, 'w-full')}
                   value={form.asset_type}
                   onChange={(e) => setForm((f) => ({ ...f, asset_type: e.target.value, asset: '' }))}
                 >
-                  <option value="">All types</option>
-                  {assetTypes.map((t) => <option key={t} value={t}>{t}</option>)}
+                  <option value="">Select</option>
+                  {assetTypes.map(([pkey, typeName]) => <option key={pkey} value={pkey}>{typeName}</option>)}
                 </select>
               </div>
               <div>

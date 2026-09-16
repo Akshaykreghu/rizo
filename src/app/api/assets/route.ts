@@ -10,12 +10,15 @@ export async function GET() {
 
   const pool = await getCompanyPool(session.user.companyCode);
   const [rows] = await pool.execute<RowDataPacket[]>(
-    `SELECT asset_pkey, name, Type, specifications, serial_no, model, brand, warranty, value, year, status,
+    `SELECT m.asset_pkey, m.name, m.Type, t.asset_type_name AS TypeName, m.specifications, m.serial_no,
+            m.model, m.brand, m.warranty, m.value, m.year, m.status,
             EXISTS(
               SELECT 1 FROM asset_allocate aa
-              WHERE aa.asset = asset_management.asset_pkey AND aa.asset_state = '3'
+              WHERE aa.asset = m.asset_pkey AND aa.asset_state = '3'
             ) AS not_working
-     FROM asset_management WHERE active = '1' ORDER BY name`
+     FROM asset_management m
+     LEFT JOIN asset_types t ON t.asset_type_pkey = m.Type
+     WHERE m.active = '1' ORDER BY m.name`
   );
   return NextResponse.json(rows);
 }

@@ -20,22 +20,21 @@ export default function AssetsPage() {
       compactForm
       columns={[
         { key: 'name', label: 'Name' },
-        { key: 'Type', label: 'Type' },
+        { key: 'TypeName', label: 'Type' },
         { key: 'model', label: 'Model' },
         { key: 'brand', label: 'Brand' },
         { key: 'serial_no', label: 'Serial No.' },
         { key: 'status', label: 'Status' },
       ]}
       fields={[
+        { key: 'Type', label: 'Asset Type', type: 'select', required: true, options: assetTypes.map((t) => ({ value: String(t.asset_type_pkey), label: t.asset_type_name })) },
+        { key: 'specifications', label: 'Specification' },
+        { key: 'model', label: 'Model', required: true },
         { key: 'name', label: 'Asset Name', required: true },
-        { key: 'Type', label: 'Type', type: 'select', options: assetTypes.map((t) => ({ value: t.asset_type_name, label: t.asset_type_name })) },
-        { key: 'model', label: 'Model' },
         { key: 'brand', label: 'Brand' },
         { key: 'serial_no', label: 'Serial No.' },
         { key: 'warranty', label: 'Warranty' },
-        { key: 'value', label: 'Value' },
-        { key: 'year', label: 'Year' },
-        { key: 'specifications', label: 'Specifications', fullWidth: true },
+        { key: 'value', label: 'Value', required: true },
       ]}
     />
   );
