@@ -30,11 +30,17 @@ function currentFinYear() {
   return d.getMonth() >= 3 ? d.getFullYear() : d.getFullYear() - 1;
 }
 
-export default function Form16Page() {
+interface Form16PageProps {
+  /** When set, renders without the page header (for use inside a modal) and prefills the lookup employee. */
+  embedded?: boolean;
+  initialEmpId?: string;
+}
+
+export default function Form16Page({ embedded = false, initialEmpId = '' }: Form16PageProps = {}) {
   const { slotEl } = useHeaderSlot();
   const [finYear, setFinYear] = useState(String(currentFinYear()));
   const [files, setFiles] = useState<File[]>([]);
-  const [empId, setEmpId] = useState('');
+  const [empId, setEmpId] = useState(initialEmpId);
   const [lookupFinYear, setLookupFinYear] = useState('');
 
   const upload = useMutation({
@@ -82,7 +88,7 @@ export default function Form16Page() {
 
   return (
     <div className="space-y-4">
-      {slotEl &&
+      {!embedded && slotEl &&
         createPortal(
           <div className="min-w-0">
             <h1 className="font-heading text-2xl font-bold text-[#0F172A] tracking-tight leading-tight truncate">

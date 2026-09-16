@@ -2,16 +2,25 @@
 
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
-import Link from 'next/link';
 import { useSession } from 'next-auth/react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Lock, Unlock, Paperclip, Calculator, FileText } from 'lucide-react';
 import { EmployeeSearch } from '@/components/employees/EmployeeSearch';
+import { Modal } from '@/components/ui/Modal';
+import Form16Page from '@/app/(dashboard)/taxation/form16/page';
 import { cn, formatCurrency } from '@/lib/utils';
 import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
 
 const BTN_BASE =
   'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[9px] text-[12.5px] font-semibold shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
+
+const DECL_TABS = [
+  { key: 'income', label: 'Income' },
+  { key: 'deductions', label: 'Deductions' },
+  { key: 'other', label: 'Other Totals' },
+  { key: 'worksheet', label: 'Projection Worksheet' },
+] as const;
+type DeclTab = (typeof DECL_TABS)[number]['key'];
 
 interface TaxSummaryRow {
   taxable_income: number; tax_yearly: number; tax_monthly_proj: number;
@@ -85,6 +94,9 @@ export default function TaxDeclarationsPage({ embeddedEmpPkey }: TaxDeclarations
   const empId = embedded ? String(embeddedEmpPkey) : isAdmin ? pickedEmpId : selfEmpId;
   const setEmpId = setPickedEmpId;
   const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [showComputeModal, setShowComputeModal] = useState(false);
+  const [showForm16Modal, setShowForm16Modal] = useState(false);
+  const [declTab, setDeclTab] = useState<DeclTab>('income');
 
   const { data, isLoading } = useQuery<DeclarationData>({
     queryKey: ['employees', empId, 'tax-declarations'],
@@ -137,8 +149,12 @@ export default function TaxDeclarationsPage({ embeddedEmpPkey }: TaxDeclarations
     },
     // Matches legacy's Process button, which reloads the whole Tax/setup screen after computing:
     // the DB functions rewrite the worksheet totals/components too, so refetch those alongside
-    // the regime summary this mutation already returns directly.
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['employees', empId, 'tax-declarations'] }),
+    // the regime summary this mutation already returns directly. Unlike legacy's full-page reload,
+    // the result is surfaced in a modal instead of inline.
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['employees', empId, 'tax-declarations'] });
+      setShowComputeModal(true);
+    },
   });
 
   const chooseRegime = useMutation({
@@ -302,13 +318,14 @@ export default function TaxDeclarationsPage({ embeddedEmpPkey }: TaxDeclarations
               </p>
             </div>
             <div className="flex gap-2">
-              <Link
-                href="/taxation/form16"
+              <button
+                type="button"
+                onClick={() => setShowForm16Modal(true)}
                 className={cn(BTN_BASE, 'bg-slate-100 text-slate-600 hover:bg-slate-200 shadow-none')}
               >
                 <FileText className="w-3.5 h-3.5" />
                 Form 16
-              </Link>
+              </button>
               {isAdmin && (
                 <>
                   <button
@@ -340,7 +357,7 @@ export default function TaxDeclarationsPage({ embeddedEmpPkey }: TaxDeclarations
                 className={cn(BTN_BASE, 'bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)] text-white')}
               >
                 <Calculator className="w-3.5 h-3.5" />
-                {compute.isPending ? 'Computing…' : 'Compute Projection'}
+                {compute.isPending ? 'Processing…' : 'Process'}
               </button>
             </div>
 
@@ -352,6 +369,19 @@ export default function TaxDeclarationsPage({ embeddedEmpPkey }: TaxDeclarations
 
             {compute.isError && <p className="text-[color:var(--color-danger)] text-[12.5px] mb-2">{String(compute.error)}</p>}
 
+            {compute.data && !showComputeModal && (
+              <button
+                type="button"
+                onClick={() => setShowComputeModal(true)}
+                className="text-[11.5px] font-medium text-[color:var(--color-primary)] hover:text-[color:var(--color-primary-dark)]"
+              >
+                View last projection result
+              </button>
+            )}
+          </div>
+
+          <Modal open={showComputeModal && !!compute.data} onClose={() => setShowComputeModal(false)} className="max-w-6xl">
+            <h2 className="text-[15px] font-semibold text-[#0F172A] mb-4">Regime Comparison Result</h2>
             {compute.data && (
               <div className="grid grid-cols-2 gap-4">
                 {(['old', 'new'] as const).map((key) => {
@@ -450,37 +480,68 @@ export default function TaxDeclarationsPage({ embeddedEmpPkey }: TaxDeclarations
                 })}
               </div>
             )}
+          </Modal>
+
+          <Modal open={showForm16Modal} onClose={() => setShowForm16Modal(false)} className="max-w-6xl">
+            <Form16Page embedded initialEmpId={empId} />
+          </Modal>
+
+          <div className="flex items-center gap-1 flex-wrap text-[12.5px] bg-slate-900/[0.03] rounded-lg p-0.5 w-fit">
+            {DECL_TABS.map((t) => (
+              <button
+                key={t.key}
+                type="button"
+                onClick={() => setDeclTab(t.key)}
+                className={cn(
+                  'px-3 py-1 rounded-md transition-all duration-[180ms] font-medium border whitespace-nowrap',
+                  declTab === t.key
+                    ? 'bg-[color:var(--color-primary-light)] text-[color:var(--color-primary)] border-[color:var(--color-primary)]/30'
+                    : 'bg-white text-slate-500 border-transparent hover:bg-white/70'
+                )}
+              >
+                {t.label}
+              </button>
+            ))}
           </div>
 
-          {['Income', 'Deductions'].map((type) => {
+          {(declTab === 'income' || declTab === 'deductions') && (() => {
+            const type = declTab === 'income' ? 'Income' : 'Deductions';
             const headsOfType = data.heads!.filter((h) => h.tax_type === type);
-            if (!headsOfType.length) return null;
             return (
-              <div key={type} className="surface-card rounded-2xl p-5">
+              <div className="surface-card rounded-2xl p-5">
                 <h2 className="text-[13.5px] font-semibold text-slate-600 uppercase tracking-wide mb-2">{type}</h2>
-                {headsOfType.map((head) => (
-                  <div key={head.tax_heads_pkey} className="mt-3 first:mt-0">
-                    {head.lines.length > 1 && <p className="text-[11px] font-medium text-slate-400 mb-1">{head.tax_name}</p>}
-                    {head.lines.map((line) => renderLine(head, line))}
-                  </div>
-                ))}
+                {headsOfType.length === 0 ? (
+                  <p className="text-[12.5px] text-slate-400">No {type.toLowerCase()} tax heads configured.</p>
+                ) : (
+                  headsOfType.map((head) => (
+                    <div key={head.tax_heads_pkey} className="mt-3 first:mt-0">
+                      {head.lines.length > 1 && <p className="text-[11px] font-medium text-slate-400 mb-1">{head.tax_name}</p>}
+                      {head.lines.map((line) => renderLine(head, line))}
+                    </div>
+                  ))
+                )}
               </div>
             );
-          })}
+          })()}
 
-          {(data.otherIncomeTotal != null || data.cappedDeductionTotal != null) && (
-            <div className="surface-card rounded-2xl p-5 grid grid-cols-2 gap-4 text-[12.5px]">
-              <div>
-                <p className="text-[11px] text-slate-400">Income from other sources (declared)</p>
-                <p className="text-[15px] font-semibold text-[#0F172A]">{formatCurrency(data.otherIncomeTotal ?? 0)}</p>
+          {declTab === 'other' && (
+            (data.otherIncomeTotal != null || data.cappedDeductionTotal != null) ? (
+              <div className="surface-card rounded-2xl p-5 grid grid-cols-2 gap-4 text-[12.5px]">
+                <div>
+                  <p className="text-[11px] text-slate-400">Income from other sources (declared)</p>
+                  <p className="text-[15px] font-semibold text-[#0F172A]">{formatCurrency(data.otherIncomeTotal ?? 0)}</p>
+                </div>
+                <div>
+                  <p className="text-[11px] text-slate-400">Effective deductions (after statutory caps)</p>
+                  <p className="text-[15px] font-semibold text-[#0F172A]">{formatCurrency(data.cappedDeductionTotal ?? 0)}</p>
+                </div>
               </div>
-              <div>
-                <p className="text-[11px] text-slate-400">Effective deductions (after statutory caps)</p>
-                <p className="text-[15px] font-semibold text-[#0F172A]">{formatCurrency(data.cappedDeductionTotal ?? 0)}</p>
-              </div>
-            </div>
+            ) : (
+              <p className="text-[12.5px] text-slate-400">No totals available.</p>
+            )
           )}
 
+          {declTab === 'worksheet' && (
           <div className="surface-card rounded-2xl p-5">
             <h2 className="text-[13.5px] font-semibold text-slate-600 uppercase tracking-wide mb-3">Projection Worksheet</h2>
             {!worksheet && <p className="text-[12px] text-slate-400">Loading…</p>}
@@ -661,6 +722,7 @@ export default function TaxDeclarationsPage({ embeddedEmpPkey }: TaxDeclarations
               );
             })()}
           </div>
+          )}
 
           {(save.isError || lock.isError || upload.isError) && (
             <p className="text-[color:var(--color-danger)] text-[12.5px]">
