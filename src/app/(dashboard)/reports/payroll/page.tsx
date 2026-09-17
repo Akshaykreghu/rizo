@@ -175,7 +175,7 @@ interface SubtypeMeta {
   // {label,current,previous,change} (Comparison compares two months' worth per head). Flattened
   // into synthetic per-label columns client-side (buildItemColumns() below) so the rest of the
   // page (grouping, totals, export) can treat them like any other column.
-  itemPivot?: 'plain' | 'comparison';
+  itemPivot?: 'plain' | 'comparison' | 'grossDetailed';
 }
 
 const SUBTYPE_META: Record<Subtype, SubtypeMeta> = {
@@ -230,18 +230,23 @@ const SUBTYPE_META: Record<Subtype, SubtypeMeta> = {
     ],
   },
   Grosssalary: {
+    // Mirrors legacy's GenerateSalaryGrossNonExemted() exactly (SalaryReportsController.php:
+    // 42057-43849) — one flat table (never branch-grouped) with Sl No, a grand-total row, and a
+    // dynamic Standard/Actual salary-head pivot (see flattenItemColumns' 'grossDetailed' case and
+    // buildGrossPivotRow in reports.ts) instead of trusting payroll_master's stored totals.
     label: 'Gross Salary Detailed',
-    itemPivot: 'plain',
-    groupBy: (r) => String(r.branch_name ?? ''),
+    itemPivot: 'grossDetailed',
+    slNo: true,
+    showTotal: true,
+    pdfAllowed: true,
     columns: [
-      { key: 'employee_id', label: 'Employee ID' }, { key: 'emp_name', label: 'Employee' }, { key: 'branch_name', label: 'Branch' },
+      { key: 'employee_id', label: 'Employee ID' }, { key: 'login_user_id', label: 'User ID' }, { key: 'emp_name', label: 'Employee Name' },
+      { key: 'joining_date', label: 'Joining Date' }, { key: 'branch_name', label: 'Branch' },
       { key: 'departments', label: 'Department' }, { key: 'desig', label: 'Designation' },
-      { key: 'joining_date', label: 'Joining Date' }, { key: 'termination_date', label: 'Termination Date' },
-      { key: 'days_presant', label: 'Present Days' }, { key: 'days_leave', label: 'Leave Days' },
-      { key: 'loss_of_pay', label: 'LOP Days' }, { key: 'weekoff_total', label: 'Week Off' }, { key: 'holiday_total', label: 'Holiday' },
-      { key: 'overtime_hours', label: 'Overtime (Hrs)' },
-      { key: 'gross_salary', label: 'Gross Salary' }, { key: 'total_deduction', label: 'Deductions' },
-      { key: 'total_variables', label: 'Variables' }, { key: 'net_salary', label: 'Net Salary' },
+      { key: 'termination_date', label: 'Termination Date' },
+      { key: 'days_presant', label: 'Present Days' }, { key: 'overtime_hours', label: 'Overtime (In Hrs.)' },
+      { key: 'non_paying_days', label: 'Non Paying Days' }, { key: 'lop_days', label: 'LOP Days' },
+      { key: 'days_leave', label: 'Leave Days' }, { key: 'weekoff_total', label: 'Week Off' }, { key: 'holiday_total', label: 'Holiday' },
     ],
   },
   BankTranfer: {
@@ -359,6 +364,7 @@ function sumColumn(rows: Record<string, unknown>[], key: string): number {
 
 interface PlainItem { label: string; amount: number }
 interface ComparisonItem { label: string; current: number; previous: number; change: number }
+interface GrossItem { label: string; amount: number }
 
 // Flattens each row's dynamic `items` array (per real salary-head-item, not known ahead of time —
 // see itemPivot doc on SubtypeMeta) into synthetic keyed fields (`item__<label>` for a plain
@@ -366,10 +372,53 @@ interface ComparisonItem { label: string; current: number; previous: number; cha
 // of the page — grouping, Total rows, Excel/PDF export — can treat these like any other column
 // without special-casing. Column order follows first-appearance order across rows (stable given
 // the backend already orders items by salary_head_item_order1 per row).
+//
+// 'grossDetailed' (Gross Salary Detailed only) is a fourth shape: the backend already returns each
+// row zero-filled and in a fixed order across every row (see buildGrossPivotRow in reports.ts), so
+// columns are derived from the first row rather than by first-appearance scanning. It mirrors
+// legacy's exact section order — Standard Addition items, Gross Salary (Standard), Standard
+// Deduction items, Actual Addition items, Gross Salary (Actual), Actual Deduction items, Total
+// Deduction, Settlement Amount, Net Salary — with "(Standard)"/"(Actual)" suffixes disambiguating
+// the two sections' identically-named columns in this page's single flat header row (legacy uses a
+// two-row merged super-header instead; the Excel export reproduces that merge, see exportReport).
 function flattenItemColumns(
-  rows: Record<string, unknown>[], itemPivot: 'plain' | 'comparison' | undefined
+  rows: Record<string, unknown>[], itemPivot: 'plain' | 'comparison' | 'grossDetailed' | undefined
 ): { rows: Record<string, unknown>[]; columns: ReportColumn[] } {
   if (!itemPivot) return { rows, columns: [] };
+
+  if (itemPivot === 'grossDetailed') {
+    const labelsOf = (key: string) => (rows[0]?.[key] as GrossItem[] | undefined)?.map((i) => i.label) ?? [];
+    const standardAdditionLabels = labelsOf('standardAddition');
+    const standardDeductionLabels = labelsOf('standardDeduction');
+    const actualAdditionLabels = labelsOf('actualAddition');
+    const actualDeductionLabels = labelsOf('actualDeduction');
+
+    const flatRows = rows.map((row) => {
+      const flat: Record<string, unknown> = { ...row };
+      ((row.standardAddition as GrossItem[] | undefined) ?? []).forEach((i) => { flat[`sa__${i.label}`] = i.amount; });
+      ((row.standardDeduction as GrossItem[] | undefined) ?? []).forEach((i) => { flat[`sd__${i.label}`] = i.amount; });
+      ((row.actualAddition as GrossItem[] | undefined) ?? []).forEach((i) => { flat[`aa__${i.label}`] = i.amount; });
+      ((row.actualDeduction as GrossItem[] | undefined) ?? []).forEach((i) => { flat[`ad__${i.label}`] = i.amount; });
+      flat.gross_standard = row.standardGross;
+      flat.gross_actual = row.actualGross;
+      flat.total_deduction = row.totalDeduction;
+      flat.net_salary = row.netSalary;
+      return flat;
+    });
+
+    const columns: ReportColumn[] = [
+      ...standardAdditionLabels.map((label) => ({ key: `sa__${label}`, label: `${label} (Standard)` })),
+      { key: 'gross_standard', label: 'Gross Salary (Standard)' },
+      ...standardDeductionLabels.map((label) => ({ key: `sd__${label}`, label: `${label} (Standard)` })),
+      ...actualAdditionLabels.map((label) => ({ key: `aa__${label}`, label: `${label} (Actual)` })),
+      { key: 'gross_actual', label: 'Gross Salary (Actual)' },
+      ...actualDeductionLabels.map((label) => ({ key: `ad__${label}`, label: `${label} (Actual)` })),
+      { key: 'total_deduction', label: 'Total Deduction' },
+      { key: 'settlement_amount', label: 'Settlement Amount' },
+      { key: 'net_salary', label: 'Net Salary' },
+    ];
+    return { rows: flatRows, columns };
+  }
 
   const labels: string[] = [];
   const flatRows = rows.map((row) => {
@@ -441,21 +490,26 @@ export default function PayrollReportPage() {
     [itemColumns]
   );
   const hasCriteria = Object.values(criteria).some((v) => Array.isArray(v) && v.length > 0);
-  // Which subtypes have a real, wired-up "Include Resigned" filter — legacy's checkbox only affects
-  // the report data itself for SummaryPayroll and CTC Summary (`salary`); other subtypes render the
-  // shared employee-picker's own resigned toggle (via EmployeeChecklist) but nothing report-level.
-  const hasResignedFilter = subtype === 'SummaryPayroll' || subtype === 'salary';
-  // SummaryPayroll/CTC Summary's Excel filename/title mirror legacy's PHPExcel output exactly —
-  // every other subtype keeps the existing generic pattern.
+  // Which subtypes have a real, wired-up "Include Resigned" / "Include Negative Salary" filter —
+  // legacy's checkboxes only affect the report data itself for these subtypes; other subtypes render
+  // the shared employee-picker's own resigned toggle (via EmployeeChecklist) but nothing report-level.
+  const hasResignedFilter = subtype === 'SummaryPayroll' || subtype === 'salary' || subtype === 'Grosssalary';
+  const hasNegativeFilter = subtype === 'SummaryPayroll' || subtype === 'Grosssalary';
+  // These subtypes' Excel filename/title mirror legacy's PHPExcel output exactly — every other
+  // subtype keeps the existing generic pattern.
   const excelFilename = subtype === 'SummaryPayroll'
     ? `${session?.user?.companyCode ?? ''} Payroll Summary Report ${monthYear}`
     : subtype === 'salary'
     ? `${session?.user?.companyCode ?? ''} CTC Summary`
+    : subtype === 'Grosssalary'
+    ? `${session?.user?.companyCode ?? ''}_GrossSalaryDetailed${monthYear}`
     : `payroll_report_${monthYear}`;
   const excelTitle = subtype === 'SummaryPayroll'
     ? `Payroll Summary Report - ${monthYear}`
     : subtype === 'salary'
     ? 'Cost To Company(CTC) Summary'
+    : subtype === 'Grosssalary'
+    ? `Gross Salary Detailed Report for ${monthYear}`
     : undefined;
 
   // Shared by the View action and by Excel/PDF export — legacy's Excel/PDF buttons are independent
@@ -469,7 +523,7 @@ export default function PayrollReportPage() {
       body: JSON.stringify({
         subtype, monthYear, toMonthYear: meta.dateRange ? toMonthYear : undefined, criteria,
         includeResigned: hasResignedFilter ? includeResigned : undefined,
-        includeNegative: subtype === 'SummaryPayroll' ? includeNegative : undefined,
+        includeNegative: hasNegativeFilter ? includeNegative : undefined,
       }),
     });
     const b = await res.json();
@@ -495,9 +549,20 @@ export default function PayrollReportPage() {
       const { rows: expRows, columns: itemCols } = flattenItemColumns(r, meta.itemPivot);
       const screenColumns = [...meta.columns, ...itemCols];
       const curKeys = new Set([...CURRENCY_KEYS, ...itemCols.map((c) => c.key)]);
+      // Gross Salary Detailed's Excel export reproduces legacy's merged two-row super-header
+      // (Employee Details / Standard Salary / Actual Salary) — the flat HTML view instead
+      // disambiguates the two sections with "(Standard)"/"(Actual)" suffixes on each column label
+      // (see flattenItemColumns' 'grossDetailed' case), since a single <thead><tr> can't merge cells.
+      const superHeaders = meta.itemPivot === 'grossDetailed'
+        ? [
+            { label: 'Employee Details', span: (meta.slNo ? 1 : 0) + meta.columns.length },
+            { label: 'Standard Salary', span: itemCols.filter((c) => c.key.startsWith('sa__') || c.key.startsWith('sd__') || c.key === 'gross_standard').length },
+            { label: 'Actual Salary', span: itemCols.filter((c) => c.key.startsWith('aa__') || c.key.startsWith('ad__') || ['gross_actual', 'total_deduction', 'settlement_amount', 'net_salary'].includes(c.key)).length },
+          ]
+        : undefined;
       if (kind === 'excel') {
         if (meta.groupBy) exportGroupedReportToExcel(meta.excelColumns ?? screenColumns, groupRows(expRows, meta.groupBy), curKeys, excelFilename, { title: excelTitle, slNo: meta.excelSlNo });
-        else exportReportToExcel(meta.excelColumns ?? screenColumns, expRows, excelFilename, { title: excelTitle, slNo: meta.slNo, totalKeys: meta.showTotal ? curKeys : undefined });
+        else exportReportToExcel(meta.excelColumns ?? screenColumns, expRows, excelFilename, { title: excelTitle, slNo: meta.slNo, totalKeys: meta.showTotal ? curKeys : undefined, superHeaders });
       } else {
         if (meta.groupBy) exportGroupedReportToPdf(screenColumns, groupRows(expRows, meta.groupBy), curKeys, `${meta.label} — ${monthYear}`, `payroll_report_${monthYear}`);
         else exportReportToPdf(screenColumns, expRows, `${meta.label} — ${monthYear}`, `payroll_report_${monthYear}`, { slNo: meta.slNo, totalKeys: meta.showTotal ? curKeys : undefined });
@@ -569,7 +634,7 @@ export default function PayrollReportPage() {
               <input type="checkbox" checked={includeResigned} onChange={(e) => { setIncludeResigned(e.target.checked); resetResults(); }} />
               Include Resigned
             </label>
-            {subtype === 'SummaryPayroll' && (
+            {hasNegativeFilter && (
               <label className="flex items-center gap-1.5 text-xs text-gray-600">
                 <input type="checkbox" checked={includeNegative} onChange={(e) => { setIncludeNegative(e.target.checked); resetResults(); }} />
                 Include Negative Salary

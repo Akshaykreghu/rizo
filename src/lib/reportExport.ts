@@ -36,7 +36,7 @@ function sumFlatColumn(rows: Record<string, unknown>[], key: string): number {
 // need the same engine already used by exportGroupedReportToExcel.
 export function exportReportToExcel(
   columns: ReportColumn[], rows: Record<string, unknown>[], filename: string,
-  options?: { title?: string; slNo?: boolean; totalKeys?: Set<string> }
+  options?: { title?: string; slNo?: boolean; totalKeys?: Set<string>; superHeaders?: { label: string; span: number }[] }
 ) {
   if (!options) {
     const data = rows.map((row) => {
@@ -63,6 +63,20 @@ export function exportReportToExcel(
     titleCell.value = options.title;
     titleCell.font = { bold: true, size: 16 };
     titleCell.alignment = { horizontal: 'center' };
+    rowNum++;
+  }
+
+  if (options.superHeaders) {
+    let col = 1;
+    for (const sh of options.superHeaders) {
+      if (sh.span <= 0) continue;
+      sheet.mergeCells(rowNum, col, rowNum, col + sh.span - 1);
+      const cell = sheet.getCell(rowNum, col);
+      cell.value = sh.label;
+      cell.font = { bold: true };
+      cell.alignment = { horizontal: 'center' };
+      col += sh.span;
+    }
     rowNum++;
   }
 

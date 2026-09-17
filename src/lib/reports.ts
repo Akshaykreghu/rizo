@@ -354,15 +354,16 @@ function prevMonth(monthYear: string): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
-// Legacy's Grosssalary/GrosssalaryNew/PayrollCTC/Comparison views all pivot each employee's real
-// salary-head items (Basic, HRA, Conveyance, etc — varies per company/employee) into their own
-// columns, alongside the fixed aggregate totals already ported. Fetches the Addition-side items
-// actually processed this month from `emp_salary_slip` (the same source the aggregate
-// standard/variable totals already draw from via head_pkey category — this is that same data at
-// per-item grain instead of summed). Deliberately does NOT also pivot a parallel "Standard Salary"
-// (structure-value) column set the way legacy's HTML does — that pulls from a different source
-// (emp_ctc_transaction/emp_salary_structure) and would double the column count for a lower-value
-// planned-vs-actual distinction; documented simplification, not silently dropped.
+// Legacy's GrosssalaryNew/PayrollCTC/Comparison views pivot each employee's real salary-head items
+// (Basic, HRA, Conveyance, etc — varies per company/employee) into their own columns, alongside the
+// fixed aggregate totals already ported. Fetches the Addition-side items actually processed this
+// month from `emp_salary_slip` (the same source the aggregate standard/variable totals already draw
+// from via head_pkey category — this is that same data at per-item grain instead of summed).
+// Deliberately does NOT also pivot a parallel "Standard Salary" (structure-value) column set the way
+// legacy's HTML does for these 3 reports — documented simplification, not silently dropped. (The
+// plain `Grosssalary` report DOES get the full Standard+Actual pivot — see getSalaryHeadKeys/
+// getGrossPivot below — because legacy's actual Net Salary computation for that report depends on
+// it, unlike these three, which read a pre-aggregated total from payroll_master.)
 async function getItemWiseAdditions(pool: Pool, payrollMasterPkeys: number[]): Promise<Map<number, SalarySlipLineItem[]>> {
   const map = new Map<number, SalarySlipLineItem[]>();
   if (payrollMasterPkeys.length === 0) return map;
@@ -385,6 +386,100 @@ async function getItemWiseAdditions(pool: Pool, payrollMasterPkeys: number[]): P
     map.set(r.payroll_master_fkey, list);
   }
   return map;
+}
+
+export interface GrossPivotItem { label: string; amount: number }
+
+// Mirrors legacy's $arr_keys (GenerateSalaryGrossNonExemted, SalaryReportsController.php:42071-42076)
+// — the fixed, ordered set of every distinct salary-head-item that appears in ANY employee's
+// emp_salary_slip for the selected month. Deliberately scoped to the month only, not the selected
+// criteria, so every row in the report gets the same dynamic column set (zero-filled where an
+// employee doesn't have a given head) rather than a column set that shifts per selection.
+async function getSalaryHeadKeys(pool: Pool, monthYear: string): Promise<{ additionLabels: string[]; deductionLabels: string[] }> {
+  const [rows] = await pool.execute<RowDataPacket[]>(
+    `SELECT TRIM(ess.salary_head_item_desc) AS label, ess.head_operator
+     FROM emp_salary_slip ess
+     LEFT JOIN salary_head_items shi ON shi.salary_head_item_pkey = ess.salary_head_item_fkey
+     WHERE ess.item_part = 'Direct' AND ess.end_date_effective IS NULL AND ess.month_year = ?
+     GROUP BY ess.salary_head_item_desc
+     ORDER BY shi.salary_head_item_order1`,
+    [monthYear]
+  );
+  const additionLabels: string[] = [];
+  const deductionLabels: string[] = [];
+  for (const r of rows as RowDataPacket[]) {
+    (r.head_operator === 'Addition' ? additionLabels : deductionLabels).push(String(r.label));
+  }
+  return { additionLabels, deductionLabels };
+}
+
+interface GrossPivotAmounts { standard: number; actual: number }
+interface GrossPivotEntry { addition: Map<string, GrossPivotAmounts>; deduction: Map<string, GrossPivotAmounts> }
+
+// Per-employee, per-head-item sums of structure_det_value ("Standard Salary" in legacy's HTML —
+// confusingly legacy's own PHP array key for this is named 'actual') and salary_amount ("Actual
+// Salary" in legacy's HTML — legacy's PHP array key for this is named 'value'). A single GROUP BY
+// here computes the same per-item sums legacy accumulates in a PHP loop
+// (SalaryReportsController.php:42217-42229).
+async function getGrossPivot(pool: Pool, payrollMasterPkeys: number[]): Promise<Map<number, GrossPivotEntry>> {
+  const map = new Map<number, GrossPivotEntry>();
+  if (payrollMasterPkeys.length === 0) return map;
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT ess.payroll_master_fkey, TRIM(ess.salary_head_item_desc) AS label, ess.head_operator,
+            SUM(ess.structure_det_value) AS standard_amount, SUM(ess.salary_amount) AS actual_amount
+     FROM emp_salary_slip ess
+     WHERE ess.payroll_master_fkey IN (?) AND ess.item_part = 'Direct' AND ess.end_date_effective IS NULL
+     GROUP BY ess.payroll_master_fkey, ess.salary_head_item_desc, ess.head_operator`,
+    [payrollMasterPkeys]
+  );
+  for (const r of rows as RowDataPacket[]) {
+    let entry = map.get(r.payroll_master_fkey);
+    if (!entry) { entry = { addition: new Map(), deduction: new Map() }; map.set(r.payroll_master_fkey, entry); }
+    const bucket = r.head_operator === 'Addition' ? entry.addition : entry.deduction;
+    bucket.set(String(r.label), { standard: Number(r.standard_amount), actual: Number(r.actual_amount) });
+  }
+  return map;
+}
+
+// Builds one employee's zero-filled Standard/Actual Addition/Deduction column set plus the
+// Gross/Deduction/Net figures legacy derives from it (SalaryReportsController.php:43229-43323).
+// Only the Actual (salary_amount) section feeds Gross/Deduction/Net — the Standard (structure_det_
+// value) section is display-only, matching legacy exactly. The Actual Addition loop also replicates
+// legacy's rounding-remainder trick (lines 43269-43279): summing each item pre-rounded-to-2dp vs
+// rounded-to-integer, and folding the lost paise into the first item, so displayed items always sum
+// exactly to the displayed Gross Salary instead of drifting by a rupee from independent rounding.
+function buildGrossPivotRow(
+  entry: GrossPivotEntry | undefined,
+  additionLabels: string[],
+  deductionLabels: string[],
+  settlementAmount: number
+) {
+  const addition = entry?.addition ?? new Map<string, GrossPivotAmounts>();
+  const deduction = entry?.deduction ?? new Map<string, GrossPivotAmounts>();
+
+  const standardAddition: GrossPivotItem[] = additionLabels.map((label) => ({
+    label, amount: Math.round(addition.get(label)?.standard ?? 0),
+  }));
+  const standardGross = standardAddition.reduce((s, i) => s + i.amount, 0);
+  const standardDeduction: GrossPivotItem[] = deductionLabels.map((label) => ({
+    label, amount: -Math.round(Math.abs(deduction.get(label)?.standard ?? 0)),
+  }));
+
+  const actualValues = additionLabels.map((label) => addition.get(label)?.actual ?? 0);
+  const ogTotal = actualValues.reduce((s, v) => s + Math.round(v * 100) / 100, 0);
+  const rndTotal = actualValues.reduce((s, v) => s + Math.round(v), 0);
+  const diff = Math.round(ogTotal) - rndTotal;
+  const actualAddition: GrossPivotItem[] = additionLabels.map((label, m) => ({
+    label, amount: Math.round(actualValues[m]) + (m === 0 ? diff : 0),
+  }));
+  const actualGross = actualAddition.reduce((s, i) => s + i.amount, 0);
+  const actualDeduction: GrossPivotItem[] = deductionLabels.map((label) => ({
+    label, amount: -Math.round(Math.abs(deduction.get(label)?.actual ?? 0)),
+  }));
+  const totalDeduction = -actualDeduction.reduce((s, i) => s + Math.abs(i.amount), 0);
+  const netSalary = Math.round(actualGross + totalDeduction + settlementAmount);
+
+  return { standardAddition, standardGross, standardDeduction, actualAddition, actualGross, actualDeduction, totalDeduction, netSalary };
 }
 
 // Mirrors SalaryReportsController::GenerateSummaryPayrolreport and sibling generate<X>report
@@ -436,31 +531,57 @@ export async function generatePayrollReport(pool: Pool, params: PayrollReportPar
   }
 
   if (params.subtype === 'Grosssalary') {
+    // Gross Salary Detailed — mirrors GenerateSalaryGrossNonExemted() (SalaryReportsController.php:
+    // 42057-43849), the real path for any tenant not on the DEMO/SRTS/KWMT/GTRA/18-company-allowlist
+    // special cases. Unlike the fixed-aggregate reports elsewhere in this file, legacy never trusts
+    // payroll_master's stored gross_salary/total_deduction/net_salary here — it re-derives them from
+    // emp_salary_slip via getSalaryHeadKeys/getGrossPivot/buildGrossPivotRow below. Only employees
+    // with a user_credentials row appear (legacy: `inner join user_credentials`), and only those with
+    // at least one Direct emp_salary_slip row for the month (legacy's real base table is
+    // emp_salary_slip, not payroll_master).
+    const statusCondition = params.includeResigned ? 'ed.status IN (1,2)' : 'ed.status = 1';
+    const negativeCondition = params.includeNegative ? '' : ' AND pm.net_salary >= 0';
     const { conditions, args } = buildCriteriaConditions(params.criteria, {
       Units: 'pm.branch_code', EmployeeDetails: 'pm.emp_fkey', Departments: 'ep.emp_dept',
       Designation: 'ep.designation', Gender: 'ed.classification',
     });
     const [rows] = await pool.execute<RowDataPacket[]>(
-      `SELECT pm.payroll_master_pkey, pm.emp_fkey, pm.emp_name, ep.emp_company_id AS employee_id, pm.branch_name,
+      `SELECT pm.payroll_master_pkey, pm.emp_fkey,
+              CASE WHEN ed.status = 2 THEN CONCAT(pm.emp_name, ' (Resigned)') ELSE pm.emp_name END AS emp_name,
+              ep.emp_company_id AS employee_id, uc.user_id AS login_user_id, pm.branch_name,
               pm.departments, pm.desig, pm.month_year,
               DATE_FORMAT(i.joining_date, '%Y-%m-%d') AS joining_date,
               DATE_FORMAT(tm.last_approved_working_date, '%Y-%m-%d') AS termination_date,
-              pm.days_presant, pm.loss_of_pay, pm.days_leave, ar.weekoff_total, ar.holiday_total,
+              pm.days_presant, ar.lop_total AS non_paying_days, ar.lop_only AS lop_days,
+              pm.days_leave, ar.weekoff_total, ar.holiday_total,
               COALESCE(ot.set_duration, 0) AS overtime_hours,
-              pm.gross_salary, pm.total_deduction, pm.total_variables, pm.net_salary
+              COALESCE((SELECT SUM(ess.salary_amount) FROM emp_settle_slip ess
+                        WHERE ess.emp_fkey = pm.emp_fkey AND ess.status = 'Y' AND ess.approved = 'Y' AND ess.type <> 'SALARY'
+                          AND DATE_FORMAT(tm.last_approved_working_date, '%Y-%m') = pm.month_year), 0) AS settlement_amount
        FROM payroll_master pm
        JOIN emp_proff ep ON ep.emp_fkey = pm.emp_fkey
        JOIN emp_details ed ON ed.emp_pkey = pm.emp_fkey
+       INNER JOIN user_credentials uc ON uc.emp_fkey = pm.emp_fkey
        LEFT JOIN employee_info i ON i.emp_pkey = pm.emp_fkey
        LEFT JOIN termination tm ON tm.emp_fkey = pm.emp_fkey AND tm.status = 1
        LEFT JOIN attendance_register ar ON ar.emp_fkey = pm.emp_fkey AND ar.month_year = pm.month_year
        LEFT JOIN emp_ot_master ot ON ot.emp_fkey = pm.emp_fkey AND DATE_FORMAT(ot.month, '%Y-%m') = pm.month_year AND ot.is_verified = 'Y'
-       WHERE pm.month_year = ? AND pm.action IN ('Approved','Processed') AND ${conditions.join(' AND ')}
+       WHERE pm.month_year = ? AND pm.action IN ('Approved','Processed') AND ${statusCondition}${negativeCondition}
+         AND EXISTS (SELECT 1 FROM emp_salary_slip ess WHERE ess.payroll_master_fkey = pm.payroll_master_pkey
+                       AND ess.item_part = 'Direct' AND ess.end_date_effective IS NULL)
+         AND ${conditions.join(' AND ')}
        ORDER BY pm.emp_name`,
       [params.monthYear, ...args]
     );
-    const itemMap = await getItemWiseAdditions(pool, rows.map((r) => r.payroll_master_pkey));
-    return rows.map((row) => ({ ...row, items: itemMap.get(row.payroll_master_pkey) ?? [] }));
+    const pkeys = rows.map((r) => r.payroll_master_pkey);
+    const [{ additionLabels, deductionLabels }, pivotMap] = await Promise.all([
+      getSalaryHeadKeys(pool, params.monthYear),
+      getGrossPivot(pool, pkeys),
+    ]);
+    return rows.map((row) => {
+      const pivot = buildGrossPivotRow(pivotMap.get(row.payroll_master_pkey), additionLabels, deductionLabels, Number(row.settlement_amount));
+      return { ...row, ...pivot };
+    });
   }
 
   if (params.subtype === 'BankTranfer') {
