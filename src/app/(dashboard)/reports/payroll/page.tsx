@@ -456,6 +456,13 @@ export default function PayrollReportPage() {
     onError: (err: Error) => setError(err.message),
   });
 
+  // Any filter change invalidates the currently displayed results — without this, changing the
+  // month/criteria/checkboxes after a successful Generate would leave the previous run's rows (and
+  // its Excel/PDF buttons) on screen, letting the user export stale data that no longer matches the
+  // selected filters. Clearing here forces a fresh Generate click before export becomes available
+  // again.
+  const resetResults = () => { setRows([]); setSlips([]); setError(null); generate.reset(); };
+
   return (
     <div>
       {slotEl &&
@@ -477,7 +484,7 @@ export default function PayrollReportPage() {
             <label className="block text-[11.5px] font-medium text-slate-500 mb-1">Report Type</label>
             <select
               value={subtype}
-              onChange={(e) => { setSubtype(e.target.value as Subtype); setRows([]); setSlips([]); setCriteria({}); setIncludeResigned(false); setIncludeNegative(false); setError(null); generate.reset(); }}
+              onChange={(e) => { setSubtype(e.target.value as Subtype); setCriteria({}); setIncludeResigned(false); setIncludeNegative(false); resetResults(); }}
               className={cn(INPUT_CLASS, 'min-w-[180px]')}
             >
               {Object.entries(SUBTYPE_META).map(([key, m]) => <option key={key} value={key}>{m.label}</option>)}
@@ -487,7 +494,7 @@ export default function PayrollReportPage() {
             <label className="block text-[11.5px] font-medium text-slate-500 mb-1">{meta.dateRange ? 'From Month' : 'Month'}</label>
             <div className="relative">
               <Calendar className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
-              <input type="month" value={monthYear} onChange={(e) => setMonthYear(e.target.value)} className={cn(INPUT_CLASS, 'pl-8')} />
+              <input type="month" value={monthYear} onChange={(e) => { setMonthYear(e.target.value); resetResults(); }} className={cn(INPUT_CLASS, 'pl-8')} />
             </div>
           </div>
           {meta.dateRange && (
@@ -495,26 +502,26 @@ export default function PayrollReportPage() {
               <label className="block text-[11.5px] font-medium text-slate-500 mb-1">To Month</label>
               <div className="relative">
                 <Calendar className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
-                <input type="month" value={toMonthYear} onChange={(e) => setToMonthYear(e.target.value)} className={cn(INPUT_CLASS, 'pl-8')} />
+                <input type="month" value={toMonthYear} onChange={(e) => { setToMonthYear(e.target.value); resetResults(); }} className={cn(INPUT_CLASS, 'pl-8')} />
               </div>
             </div>
           )}
           <CriteriaFilterPanel
             reportType={subtype}
             values={criteria}
-            onChange={setCriteria}
+            onChange={(v) => { setCriteria(v); resetResults(); }}
             includeResigned={subtype === 'SummaryPayroll' ? includeResigned : undefined}
-            onIncludeResignedChange={subtype === 'SummaryPayroll' ? setIncludeResigned : undefined}
+            onIncludeResignedChange={subtype === 'SummaryPayroll' ? (v: boolean) => { setIncludeResigned(v); resetResults(); } : undefined}
           />
         </div>
         {subtype === 'SummaryPayroll' && (
           <div className="flex items-center gap-4">
             <label className="flex items-center gap-1.5 text-xs text-gray-600">
-              <input type="checkbox" checked={includeResigned} onChange={(e) => setIncludeResigned(e.target.checked)} />
+              <input type="checkbox" checked={includeResigned} onChange={(e) => { setIncludeResigned(e.target.checked); resetResults(); }} />
               Include Resigned
             </label>
             <label className="flex items-center gap-1.5 text-xs text-gray-600">
-              <input type="checkbox" checked={includeNegative} onChange={(e) => setIncludeNegative(e.target.checked)} />
+              <input type="checkbox" checked={includeNegative} onChange={(e) => { setIncludeNegative(e.target.checked); resetResults(); }} />
               Include Negative Salary
             </label>
           </div>
