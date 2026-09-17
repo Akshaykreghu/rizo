@@ -1,7 +1,7 @@
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
-import { checkAttendanceConflict, runLeaveTransaction } from '@/lib/leave';
+import { checkAttendanceRegisterVerified, getMonthlyLeaveBalanceForUpload, runLeaveTransaction } from '@/lib/leave';
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket, ResultSetHeader } from 'mysql2';
 import * as XLSX from 'xlsx';
@@ -15,12 +15,10 @@ import * as XLSX from 'xlsx';
 // same request — legacy sets LEAVESTATUS straight to 'Approved' with REMARKS 'Leave approved from
 // Leave Upload excel'. This isn't a shortcut we invented; it's legacy's own explicit final step.
 //
-// Legacy's monthly-balance gate (getLeaveBalanceForAuthOrApproval) is NOT ported: verified against
-// source it's dead code for every company except a hardcoded 11-tenant list (GRTL not among them) —
-// for everyone else monthly_balance is hardcoded to 0 and leave_days is read from a key ('l_day')
-// the function never actually returns (real key is 'l_days'), so the check `0 - 0 < 0` never fires.
-// Same "commented-out enforcement, matched not invented" precedent as the single-apply path's
-// balance-insufficiency check.
+// Per an explicit "full literal parity with legacy" decision (2026-09-17), this endpoint now
+// replicates legacy's exact validation scope — including checks that are narrower or buggier than
+// what a from-scratch implementation would write. See getMonthlyLeaveBalanceForUpload and
+// checkAttendanceRegisterVerified in lib/leave.ts, and the leaveDays: 0 comment below.
 //
 // leaveentries.emp_leave_upload_fkey referenced in legacy source does not exist in the live schema
 // (confirmed via DESCRIBE) — CakePHP silently drops it; only the reverse link
@@ -51,6 +49,22 @@ function calcLeaveDays(fromDate: string, fromHalf: number, toDate: string, toHal
   return Math.max(total, 0.5);
 }
 
+async function logUploadError(
+  pool: import('mysql2/promise').Pool,
+  pid: number,
+  type: string,
+  empFkey: number | null,
+  text: string,
+  startDate: string | null,
+  endDate: string | null
+) {
+  await pool.execute(
+    `INSERT INTO Upload_leave_errirs (PID, Type, emp_fkey, textd, start_date, end_date, creation_date)
+     VALUES (?, ?, ?, ?, ?, ?, CURDATE())`,
+    [pid, type, empFkey ?? 0, text, startDate, endDate]
+  );
+}
+
 export async function POST(request: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session || session.user.userGroup !== 1) {
@@ -68,11 +82,23 @@ export async function POST(request: NextRequest) {
   const sheet = workbook.Sheets[workbook.SheetNames[0]];
   const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
 
+  // Legacy pre-scans the whole sheet first (controller.php:1463-1498): if Employee ID or Employee
+  // Name is blank on ANY row, the entire import is rejected, nothing is saved. Replicated here
+  // rather than the previous per-row skip, per the "full literal parity" decision.
+  const hasMissingMandatory = rows.some(
+    (row) => !str(row['Employee ID *']) || !str(row['Employee Name *'])
+  );
+  if (hasMissingMandatory) {
+    return NextResponse.json({ error: 'Please check all mandatory fields entered' }, { status: 400 });
+  }
+
   const pool = await getCompanyPool(session.user.companyCode);
   const approverFkey = session.user.empFkey ?? 0;
+  const companyCode = session.user.companyCode;
 
+  // Matches legacy line 1518-1519: PID is sourced from the error-log table, not emp_leave_upload.
   const [[pidRow]] = await pool.execute<RowDataPacket[]>(
-    'SELECT COALESCE(MAX(PID), 0) + 1 AS pid FROM emp_leave_upload'
+    'SELECT COALESCE(MAX(PID), 0) + 1 AS pid FROM Upload_leave_errirs'
   );
   const batchPid = pidRow?.pid ?? 1;
 
@@ -84,9 +110,8 @@ export async function POST(request: NextRequest) {
     const rowNum = i + 2;
 
     const userId = str(row['Employee ID *']);
-    const empName = str(row['Employee Name *']);
     const leaveTypeCode = str(row['Leave Type (code) *']);
-    if (!userId || !empName || !leaveTypeCode) continue; // matches legacy: silently skips blank mandatory fields
+    if (!leaveTypeCode) continue; // matches legacy: blank leave type is silently skipped (controller.php:1530-1532)
 
     const fromDate = excelDateToISO(row['Leave Start Date * (yyyy-mm-dd)']);
     const toDate = excelDateToISO(row['Leave End Date * (yyyy-mm-dd)']);
@@ -94,49 +119,94 @@ export async function POST(request: NextRequest) {
     const toHalf = Number(row['Leave End Session * (1=Morning, 2=Full/Afternoon)']) || 2;
     const reason = str(row['Reason']) || null;
 
-    if (!fromDate || !toDate) {
-      errors.push({ row: rowNum, message: 'Leave Start Date and Leave End Date are required' });
-      continue;
-    }
-    if (fromDate > toDate) {
-      errors.push({ row: rowNum, message: 'Leave Start Date cannot be after Leave End Date' });
-      continue;
-    }
-
     const [[user]] = await pool.execute<RowDataPacket[]>(
       'SELECT emp_fkey FROM user_credentials WHERE user_id = ?',
       [userId]
     );
-    if (!user?.emp_fkey) {
+    const empFkey = (user?.emp_fkey as number | undefined) ?? null;
+    if (!empFkey) {
       errors.push({ row: rowNum, message: `No employee login found for Employee ID "${userId}"` });
       continue;
     }
-    const empFkey = user.emp_fkey as number;
 
-    const [[leaveType]] = await pool.execute<RowDataPacket[]>(
-      `SELECT salary_head_item_pkey FROM salary_head_items
-       WHERE head_fkey = 6 AND value = 'Y' AND status = 1 AND occurance = ? AND item_part = 'Direct'`,
-      [leaveTypeCode]
-    );
+    // Ported from getLeaveTypeByOccurance() (controller.php:1905-1921): STFR drops the
+    // item_part = 'Direct' filter, every other tenant keeps it.
+    const leaveTypeQuery =
+      companyCode === 'STFR'
+        ? `SELECT salary_head_item_pkey FROM salary_head_items
+           WHERE head_fkey = 6 AND value = 'Y' AND status = 1 AND occurance = ?`
+        : `SELECT salary_head_item_pkey FROM salary_head_items
+           WHERE head_fkey = 6 AND value = 'Y' AND status = 1 AND occurance = ? AND item_part = 'Direct'`;
+    const [[leaveType]] = await pool.execute<RowDataPacket[]>(leaveTypeQuery, [leaveTypeCode]);
     if (!leaveType) {
       errors.push({ row: rowNum, message: `Unrecognized leave type code "${leaveTypeCode}"` });
       continue;
     }
     const salaryHeadItemFkey = leaveType.salary_head_item_pkey as number;
 
-    const conflict = await checkAttendanceConflict(pool, empFkey, fromDate, toDate);
-    if (conflict) {
-      errors.push({ row: rowNum, message: conflict });
+    // Legacy checks attendance-register verification before validating dates (controller.php:1566),
+    // so it runs even on a since-corrected malformed date row; matched here for parity.
+    if (fromDate) {
+      const verifiedConflict = await checkAttendanceRegisterVerified(pool, empFkey, fromDate);
+      if (verifiedConflict) {
+        await logUploadError(pool, batchPid, 'VERIFIED', empFkey, verifiedConflict, fromDate, toDate);
+        errors.push({ row: rowNum, message: verifiedConflict });
+        continue;
+      }
+    }
+
+    // Balance/quota gate (controller.php:2062-2086) — live only for the 11 restricted tenants;
+    // 0 for everyone else, matching legacy's own dead branch.
+    const monthlyBalance = toDate
+      ? await getMonthlyLeaveBalanceForUpload(pool, companyCode, empFkey, salaryHeadItemFkey, toDate)
+      : 0;
+    if (monthlyBalance < 0) {
+      await logUploadError(pool, batchPid, 'BALANCE', empFkey, 'No Leave Balance Available!', fromDate, toDate);
+      errors.push({ row: rowNum, message: 'No Leave Balance Available!' });
       continue;
     }
 
+    if (!fromDate && !toDate) continue; // matches legacy: both-blank dates silently skipped (controller.php:1585-1587)
+    if (!fromDate || !toDate) {
+      errors.push({ row: rowNum, message: 'Leave Start Date and Leave End Date are required' });
+      continue;
+    }
+    if (fromDate > toDate) {
+      await logUploadError(pool, batchPid, 'BALANCE', empFkey, 'Date Validation!', fromDate, toDate);
+      errors.push({ row: rowNum, message: 'Leave Start Date cannot be after Leave End Date' });
+      continue;
+    }
+
+    // Ported from controller.php:1603-1624 — scoped only to other bulk-uploaded rows
+    // (emp_leave_upload JOIN leaveentries), with legacy's exact boundary+session predicate. This is
+    // narrower than checking all of leaveentries: it will not catch an overlap against leave applied
+    // through the normal single-apply form. Kept as-is for parity.
     const [[overlap]] = await pool.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS cnt FROM leaveentries
-       WHERE EMP_fkey = ? AND LEAVESTATUS IN ('Applied', 'Authorized', 'Approved')
-         AND FROMDATE <= ? AND TODATE >= ?`,
-      [empFkey, toDate, fromDate]
+      `SELECT COUNT(*) AS cnt
+       FROM emp_leave_upload lu
+       INNER JOIN leaveentries le ON (lu.leaveentry_id = le.LEAVEENTRYID)
+       WHERE lu.emp_fkey = ? AND lu.status = 1
+         AND le.LEAVESTATUS IN ('Applied', 'Approved', 'Authorized')
+         AND (
+           (? BETWEEN lu.leave_start_date AND lu.leave_end_date)
+           OR (? BETWEEN lu.leave_start_date AND lu.leave_end_date)
+           OR (lu.leave_start_date BETWEEN ? AND ?)
+           OR (lu.leave_end_date BETWEEN ? AND ?)
+         )
+         AND (
+           (lu.leave_start_date = ? AND lu.leave_start_session = ?)
+           OR (lu.leave_end_date = ? AND lu.leave_end_session = ?)
+           OR (? = lu.leave_end_date AND ? = lu.leave_end_session)
+           OR (? = lu.leave_start_date AND ? = lu.leave_start_session)
+         )`,
+      [
+        empFkey,
+        fromDate, toDate, fromDate, toDate, fromDate, toDate,
+        fromDate, fromHalf, toDate, toHalf, fromDate, fromHalf, toDate, toHalf,
+      ]
     );
     if (Number(overlap?.cnt ?? 0) > 0) {
+      await logUploadError(pool, batchPid, 'EXISTS', empFkey, 'Leave Already Existing!', fromDate, toDate);
       errors.push({ row: rowNum, message: 'An active leave already exists overlapping these dates' });
       continue;
     }
@@ -169,8 +239,14 @@ export async function POST(request: NextRequest) {
     // uploadandsaveempctc() does the same two-step (call with 'Applied', then separately flip both
     // leaveentries and the just-created emp_leave_transactions row to 'Approved') rather than a
     // single direct-to-Approved call — not legacy redundancy, a real proc constraint.
+    //
+    // leaveDays is intentionally 0 here, not the computed value: legacy's own ternary at
+    // controller.php:1700 (`$outputParameter['leave_days'] = (... == 'NULL') ? '0' : '0';`) evaluates
+    // to '0' on both branches — a real bug in the live code, not something we're inventing. The real
+    // leaveDays value is still written to leaveentries.leave_days via the INSERT above; only the
+    // proc's first ('Applied') call gets the legacy-buggy 0, matching what legacy actually does today.
     await runLeaveTransaction(pool, {
-      leaveEntryId, empFkey, fromDate, fromHalf, toDate, toHalf, leaveDays, status: 'Applied',
+      leaveEntryId, empFkey, fromDate, fromHalf, toDate, toHalf, leaveDays: 0, status: 'Applied',
     });
 
     // Legacy's real final step: auto-approve immediately, same request (not a two-step
@@ -196,5 +272,5 @@ export async function POST(request: NextRequest) {
     imported++;
   }
 
-  return NextResponse.json({ success: true, imported, errors });
+  return NextResponse.json({ success: true, imported, errors, pid: batchPid });
 }

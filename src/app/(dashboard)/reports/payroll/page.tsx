@@ -127,7 +127,7 @@ const CURRENCY_KEYS = new Set([
   'standard_total', 'variable_total', 'employer_total', 'other_total', 'total_gross', 'total_deductions',
   'total_net', 'current_net', 'previous_net', 'net_change', 'salary_amount',
   'current_gross', 'previous_gross', 'gross_change', 'current_deduction', 'previous_deduction', 'deduction_change',
-  'current_ctc', 'previous_ctc', 'ctc_change', 'standard_gross_salary', 'settlement_amount',
+  'current_ctc', 'previous_ctc', 'ctc_change', 'standard_gross_salary', 'settlement_amount', 'annual_ctc',
 ]);
 
 // Legacy renders every one of these subtypes grouped by branch (a separate <table> per branch,
@@ -163,6 +163,11 @@ interface SubtypeMeta {
   // to `columns` when unset.
   excelColumns?: ReportColumn[];
   excelSlNo?: boolean;
+  // For flat (non-grouped) subtypes only — CTC Summary is the one report on this screen legacy
+  // renders as a single flat table (not per-branch groups) with Sl No numbering and a grand-total
+  // footer row, both on screen and in Excel/PDF (unlike SummaryPayroll's Excel-only excelSlNo).
+  slNo?: boolean;
+  showTotal?: boolean;
   // Legacy pivots each employee's real salary-head items (Basic/HRA/etc, varies per company) into
   // their own columns on these 4 reports. Backend returns each row with an `items` array (see
   // getItemWiseAdditions() in reports.ts) instead of fixed columns, since the head set isn't known
@@ -209,14 +214,19 @@ const SUBTYPE_META: Record<Subtype, SubtypeMeta> = {
     ],
   },
   salary: {
+    // Mirrors legacy's generic generatesalaryreport() screen/Excel output exactly
+    // (SalaryReportsController.php:12680-12694, reportsalary.ctp) — a single flat table (legacy
+    // never branch-groups this report, unlike SummaryPayroll) with Sl No and a bold grand-total row
+    // summing Monthly CTC / Annual CTC.
     label: 'CTC Summary',
-    groupBy: (r) => String(r.branch ?? ''),
+    slNo: true,
+    showTotal: true,
     columns: [
-      { key: 'employee_id', label: 'Employee ID' }, { key: 'emp_name', label: 'Employee' }, { key: 'branch', label: 'Branch' },
+      { key: 'employee_id', label: 'Employee ID' }, { key: 'login_user_id', label: 'User ID' }, { key: 'emp_name', label: 'Employee Name' },
+      { key: 'joining_date', label: 'Joining Date' }, { key: 'branch_name', label: 'Branch' },
       { key: 'department', label: 'Department' }, { key: 'designation', label: 'Designation' },
-      { key: 'joining_date', label: 'Joining Date' }, { key: 'termination_date', label: 'Termination Date' },
-      { key: 'emp_anual_ctc', label: 'Annual CTC' }, { key: 'start_date_effective', label: 'Effective From' },
-      { key: 'next_increment_date', label: 'Next Increment' },
+      { key: 'termination_date', label: 'Termination Date' },
+      { key: 'monthly_ctc', label: 'Monthly CTC' }, { key: 'annual_ctc', label: 'Annual CTC' },
     ],
   },
   Grosssalary: {
@@ -421,6 +431,9 @@ export default function PayrollReportPage() {
     [rows, meta.itemPivot]
   );
   const displayColumns = useMemo(() => [...meta.columns, ...itemColumns], [meta.columns, itemColumns]);
+  // Sl No is a computed row position, not a real field — prepended for on-screen display only when
+  // meta.slNo (CTC Summary's flat table); the export mutation computes its own copy independently.
+  const flatDisplayColumns = meta.slNo ? [{ key: '__slno', label: 'Sl No' }, ...displayColumns] : displayColumns;
   // Dynamic item-pivot columns are always currency amounts, but their keys aren't in the static
   // CURRENCY_KEYS set (they're per-real-salary-head, not known ahead of time) — extend it per render.
   const currencyKeys = useMemo(
@@ -428,13 +441,22 @@ export default function PayrollReportPage() {
     [itemColumns]
   );
   const hasCriteria = Object.values(criteria).some((v) => Array.isArray(v) && v.length > 0);
-  // SummaryPayroll's Excel filename/title mirror legacy's PHPExcel output exactly
-  // (`"{company_code} Payroll Summary Report {month}.xlsx"`, title `"Payroll Summary Report - {month}"`)
-  // — every other subtype keeps the existing generic pattern.
+  // Which subtypes have a real, wired-up "Include Resigned" filter — legacy's checkbox only affects
+  // the report data itself for SummaryPayroll and CTC Summary (`salary`); other subtypes render the
+  // shared employee-picker's own resigned toggle (via EmployeeChecklist) but nothing report-level.
+  const hasResignedFilter = subtype === 'SummaryPayroll' || subtype === 'salary';
+  // SummaryPayroll/CTC Summary's Excel filename/title mirror legacy's PHPExcel output exactly —
+  // every other subtype keeps the existing generic pattern.
   const excelFilename = subtype === 'SummaryPayroll'
     ? `${session?.user?.companyCode ?? ''} Payroll Summary Report ${monthYear}`
+    : subtype === 'salary'
+    ? `${session?.user?.companyCode ?? ''} CTC Summary`
     : `payroll_report_${monthYear}`;
-  const excelTitle = subtype === 'SummaryPayroll' ? `Payroll Summary Report - ${monthYear}` : undefined;
+  const excelTitle = subtype === 'SummaryPayroll'
+    ? `Payroll Summary Report - ${monthYear}`
+    : subtype === 'salary'
+    ? 'Cost To Company(CTC) Summary'
+    : undefined;
 
   // Shared by the View action and by Excel/PDF export — legacy's Excel/PDF buttons are independent
   // actions that fetch and generate their own output rather than requiring a prior View click, so
@@ -446,7 +468,7 @@ export default function PayrollReportPage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         subtype, monthYear, toMonthYear: meta.dateRange ? toMonthYear : undefined, criteria,
-        includeResigned: subtype === 'SummaryPayroll' ? includeResigned : undefined,
+        includeResigned: hasResignedFilter ? includeResigned : undefined,
         includeNegative: subtype === 'SummaryPayroll' ? includeNegative : undefined,
       }),
     });
@@ -475,10 +497,10 @@ export default function PayrollReportPage() {
       const curKeys = new Set([...CURRENCY_KEYS, ...itemCols.map((c) => c.key)]);
       if (kind === 'excel') {
         if (meta.groupBy) exportGroupedReportToExcel(meta.excelColumns ?? screenColumns, groupRows(expRows, meta.groupBy), curKeys, excelFilename, { title: excelTitle, slNo: meta.excelSlNo });
-        else exportReportToExcel(meta.excelColumns ?? screenColumns, expRows, excelFilename);
+        else exportReportToExcel(meta.excelColumns ?? screenColumns, expRows, excelFilename, { title: excelTitle, slNo: meta.slNo, totalKeys: meta.showTotal ? curKeys : undefined });
       } else {
         if (meta.groupBy) exportGroupedReportToPdf(screenColumns, groupRows(expRows, meta.groupBy), curKeys, `${meta.label} — ${monthYear}`, `payroll_report_${monthYear}`);
-        else exportReportToPdf(screenColumns, expRows, `${meta.label} — ${monthYear}`, `payroll_report_${monthYear}`);
+        else exportReportToPdf(screenColumns, expRows, `${meta.label} — ${monthYear}`, `payroll_report_${monthYear}`, { slNo: meta.slNo, totalKeys: meta.showTotal ? curKeys : undefined });
       }
     },
     onError: (err: Error) => setError(err.message),
@@ -515,13 +537,15 @@ export default function PayrollReportPage() {
               {Object.entries(SUBTYPE_META).map(([key, m]) => <option key={key} value={key}>{m.label}</option>)}
             </select>
           </div>
-          <div>
-            <label className="block text-[11.5px] font-medium text-slate-500 mb-1">{meta.dateRange ? 'From Month' : 'Month'}</label>
-            <div className="relative">
-              <Calendar className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
-              <input type="month" value={monthYear} onChange={(e) => { setMonthYear(e.target.value); resetResults(); }} className={cn(INPUT_CLASS, 'pl-8')} />
+          {subtype !== 'salary' && (
+            <div>
+              <label className="block text-[11.5px] font-medium text-slate-500 mb-1">{meta.dateRange ? 'From Month' : 'Month'}</label>
+              <div className="relative">
+                <Calendar className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+                <input type="month" value={monthYear} onChange={(e) => { setMonthYear(e.target.value); resetResults(); }} className={cn(INPUT_CLASS, 'pl-8')} />
+              </div>
             </div>
-          </div>
+          )}
           {meta.dateRange && (
             <div>
               <label className="block text-[11.5px] font-medium text-slate-500 mb-1">To Month</label>
@@ -535,20 +559,22 @@ export default function PayrollReportPage() {
             reportType={subtype}
             values={criteria}
             onChange={(v) => { setCriteria(v); resetResults(); }}
-            includeResigned={subtype === 'SummaryPayroll' ? includeResigned : undefined}
-            onIncludeResignedChange={subtype === 'SummaryPayroll' ? (v: boolean) => { setIncludeResigned(v); resetResults(); } : undefined}
+            includeResigned={hasResignedFilter ? includeResigned : undefined}
+            onIncludeResignedChange={hasResignedFilter ? (v: boolean) => { setIncludeResigned(v); resetResults(); } : undefined}
           />
         </div>
-        {subtype === 'SummaryPayroll' && (
+        {hasResignedFilter && (
           <div className="flex items-center gap-4">
             <label className="flex items-center gap-1.5 text-xs text-gray-600">
               <input type="checkbox" checked={includeResigned} onChange={(e) => { setIncludeResigned(e.target.checked); resetResults(); }} />
               Include Resigned
             </label>
-            <label className="flex items-center gap-1.5 text-xs text-gray-600">
-              <input type="checkbox" checked={includeNegative} onChange={(e) => { setIncludeNegative(e.target.checked); resetResults(); }} />
-              Include Negative Salary
-            </label>
+            {subtype === 'SummaryPayroll' && (
+              <label className="flex items-center gap-1.5 text-xs text-gray-600">
+                <input type="checkbox" checked={includeNegative} onChange={(e) => { setIncludeNegative(e.target.checked); resetResults(); }} />
+                Include Negative Salary
+              </label>
+            )}
           </div>
         )}
         <div className="flex justify-end items-center gap-2">
@@ -644,19 +670,32 @@ export default function PayrollReportPage() {
         <div className="surface-card rounded-2xl overflow-hidden overflow-x-auto">
           <table className="w-full text-[13px]">
             <thead className="bg-slate-50 border-b border-slate-200">
-              <tr>{displayColumns.map((c) => <th key={c.key} className="text-left px-4 py-2.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">{c.label}</th>)}</tr>
+              <tr>{flatDisplayColumns.map((c) => <th key={c.key} className="text-left px-4 py-2.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">{c.label}</th>)}</tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {displayRows.map((row, i) => (
                 <tr key={i} className="hover:bg-slate-50/70">
-                  {displayColumns.map((c) => (
+                  {flatDisplayColumns.map((c) => (
                     <td key={c.key} className="px-4 py-2 text-[#0F172A] whitespace-nowrap">
-                      {currencyKeys.has(c.key) ? formatCurrency(Number(row[c.key] ?? 0)) : String(row[c.key] ?? '')}
+                      {c.key === '__slno' ? i + 1 : currencyKeys.has(c.key) ? formatCurrency(Number(row[c.key] ?? 0)) : String(row[c.key] ?? '')}
                     </td>
                   ))}
                 </tr>
               ))}
             </tbody>
+            {meta.showTotal && (
+              <tfoot className="bg-slate-50 font-medium">
+                <tr>
+                  {flatDisplayColumns.map((c, i) => (
+                    <td key={c.key} className="px-4 py-2 text-[#0F172A] whitespace-nowrap">
+                      {i === 0
+                        ? 'Total'
+                        : currencyKeys.has(c.key) ? formatCurrency(sumColumn(displayRows, c.key)) : ''}
+                    </td>
+                  ))}
+                </tr>
+              </tfoot>
+            )}
           </table>
         </div>
       )}

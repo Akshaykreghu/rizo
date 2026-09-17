@@ -24,28 +24,105 @@ export function toDataTableColumns(columns: ReportColumn[]): import('@tanstack/r
   }));
 }
 
-export function exportReportToExcel(columns: ReportColumn[], rows: Record<string, unknown>[], filename: string) {
-  const data = rows.map((row) => {
-    const out: Record<string, unknown> = {};
-    for (const col of columns) out[col.label] = row[col.key] ?? '';
-    return out;
-  });
-  const worksheet = XLSX.utils.json_to_sheet(data);
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, 'Report');
-  XLSX.writeFile(workbook, `${filename}.xlsx`);
+const SL_NO_KEY = '__slno';
+
+function sumFlatColumn(rows: Record<string, unknown>[], key: string): number {
+  return rows.reduce((s, r) => s + Number(r[key] ?? 0), 0);
 }
 
-export function exportReportToPdf(columns: ReportColumn[], rows: Record<string, unknown>[], title: string, filename: string) {
-  const doc = new jsPDF({ orientation: columns.length > 6 ? 'landscape' : 'portrait' });
+// Plain (non-styled) path stays on the free `xlsx`/SheetJS package, which every other report screen
+// already relies on. `options` opts into ExcelJS instead — SheetJS's free tier has no cell-styling
+// API at all (bold/merge is a paid feature), so a title row, Sl No numbering, or a bold Total row
+// need the same engine already used by exportGroupedReportToExcel.
+export function exportReportToExcel(
+  columns: ReportColumn[], rows: Record<string, unknown>[], filename: string,
+  options?: { title?: string; slNo?: boolean; totalKeys?: Set<string> }
+) {
+  if (!options) {
+    const data = rows.map((row) => {
+      const out: Record<string, unknown> = {};
+      for (const col of columns) out[col.label] = row[col.key] ?? '';
+      return out;
+    });
+    const worksheet = XLSX.utils.json_to_sheet(data);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Report');
+    XLSX.writeFile(workbook, `${filename}.xlsx`);
+    return;
+  }
+
+  const cols = options.slNo ? [{ key: SL_NO_KEY, label: 'Sl No' }, ...columns] : columns;
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet('Report');
+  sheet.columns = cols.map((c) => ({ header: c.label, width: 22 }));
+
+  let rowNum = 1;
+  if (options.title) {
+    sheet.mergeCells(rowNum, 1, rowNum, cols.length);
+    const titleCell = sheet.getCell(rowNum, 1);
+    titleCell.value = options.title;
+    titleCell.font = { bold: true, size: 16 };
+    titleCell.alignment = { horizontal: 'center' };
+    rowNum++;
+  }
+
+  cols.forEach((c, i) => {
+    const cell = sheet.getCell(rowNum, i + 1);
+    cell.value = c.label;
+    cell.font = { bold: true };
+  });
+  rowNum++;
+
+  rows.forEach((row, rIdx) => {
+    cols.forEach((c, i) => {
+      sheet.getCell(rowNum, i + 1).value = c.key === SL_NO_KEY ? rIdx + 1 : (row[c.key] as string | number) ?? '';
+    });
+    rowNum++;
+  });
+
+  if (options.totalKeys) {
+    cols.forEach((c, i) => {
+      const cell = sheet.getCell(rowNum, i + 1);
+      cell.font = { bold: true };
+      cell.value = i === 0 ? 'Total' : options.totalKeys!.has(c.key) ? sumFlatColumn(rows, c.key) : '';
+    });
+  }
+
+  workbook.xlsx.writeBuffer().then((buffer) => {
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${filename}.xlsx`;
+    a.click();
+    URL.revokeObjectURL(url);
+  });
+}
+
+export function exportReportToPdf(
+  columns: ReportColumn[], rows: Record<string, unknown>[], title: string, filename: string,
+  options?: { slNo?: boolean; totalKeys?: Set<string> }
+) {
+  const cols = options?.slNo ? [{ key: SL_NO_KEY, label: 'Sl No' }, ...columns] : columns;
+  const doc = new jsPDF({ orientation: cols.length > 6 ? 'landscape' : 'portrait' });
   doc.setFontSize(14);
   doc.text(title, 14, 15);
+  const body = rows.map((row, rIdx) => cols.map((c) => c.key === SL_NO_KEY ? String(rIdx + 1) : String(row[c.key] ?? '')));
+  if (options?.totalKeys) {
+    body.push(cols.map((c, i) => i === 0 ? 'Total' : options.totalKeys!.has(c.key) ? String(sumFlatColumn(rows, c.key)) : ''));
+  }
   autoTable(doc, {
     startY: 20,
-    head: [columns.map((c) => c.label)],
-    body: rows.map((row) => columns.map((c) => String(row[c.key] ?? ''))),
+    head: [cols.map((c) => c.label)],
+    body,
     styles: { fontSize: 8 },
     headStyles: { fillColor: [79, 70, 229] },
+    didParseCell: (data) => {
+      if (options?.totalKeys && data.row.index === body.length - 1 && data.section === 'body') {
+        data.cell.styles.fontStyle = 'bold';
+        data.cell.styles.fillColor = [229, 231, 235];
+      }
+    },
   });
   doc.save(`${filename}.pdf`);
 }
@@ -67,8 +144,6 @@ export interface ReportGroup {
 function sumGroupColumn(rows: Record<string, unknown>[], key: string): number {
   return rows.reduce((s, r) => s + Number(r[key] ?? 0), 0);
 }
-
-const SL_NO_KEY = '__slno';
 
 export function exportGroupedReportToExcel(
   columns: ReportColumn[], groups: ReportGroup[], currencyKeys: Set<string>, filename: string,

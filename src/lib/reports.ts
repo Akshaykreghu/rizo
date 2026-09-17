@@ -393,25 +393,43 @@ export async function generatePayrollReport(pool: Pool, params: PayrollReportPar
   requireCriteria(params.criteria);
 
   if (params.subtype === 'salary') {
-    // CTC Summary — the employee's currently-open CTC row (end_date_effective IS NULL),
-    // matching the convention already used by src/lib/increments.ts.
+    // CTC Summary — mirrors SalaryReportsController::generatesalaryreport() (the generic path used
+    // by every real tenant; a separate PSQUARE variant exists only for demo companies DEMO/SRTS and
+    // sources emp_ctc_transaction instead — an earlier port of this report was built against that
+    // demo-only variant, which returns structurally wrong numbers for every other company). The real
+    // source is emp_salary_structure: CTC = SUM(ABS(structure_det_value)) over the Addition-side
+    // rows in salary_heads 1 (Monthly Salary Components), 4 (Employer Contributions), 10 (Variable
+    // Deductions — despite the name, filtered here to its Addition-flagged rows only), replicated
+    // verbatim rather than re-derived from business meaning.
+    const statusCondition = params.includeResigned ? 'ed.status IN (1,2)' : 'ed.status = 1';
+    // Legacy filters branch selection on emp_details.branch_code even though the branch *name* is
+    // joined via emp_proff.emp_branch — kept as-is rather than "fixed", to match real behavior.
     const { conditions, args } = buildCriteriaConditions(params.criteria, {
-      Units: 'ep.emp_branch', EmployeeDetails: 'ed.emp_pkey',
+      Units: 'ed.branch_code', EmployeeDetails: 'ed.emp_pkey',
     });
     const [rows] = await pool.execute<RowDataPacket[]>(
-      `SELECT ed.emp_pkey, i.EmpName AS emp_name, ep.emp_company_id AS employee_id, i.branch, i.department, i.designation,
-              DATE_FORMAT(i.joining_date, '%Y-%m-%d') AS joining_date,
+      `SELECT ep.emp_company_id AS employee_id, uc.user_id AS login_user_id,
+              CASE WHEN ed.status = 2 THEN CONCAT(ed.first_name, ' ', ed.last_name, ' (Resigned)')
+                   ELSE CONCAT(ed.first_name, ' ', ed.last_name) END AS emp_name,
+              DATE_FORMAT(ep.joining_date, '%Y-%m-%d') AS joining_date,
+              br.branch_name, dep.dept_name AS department, desig.desig_name AS designation,
               DATE_FORMAT(tm.last_approved_working_date, '%Y-%m-%d') AS termination_date,
-              ct.emp_anual_ctc, ct.emp_derived_anualctc,
-              DATE_FORMAT(ct.start_date_effective, '%Y-%m-%d') AS start_date_effective,
-              DATE_FORMAT(ct.next_increment_date, '%Y-%m-%d') AS next_increment_date
+              ROUND(SUM(ABS(ess.structure_det_value))) AS monthly_ctc,
+              ROUND(SUM(ABS(ess.structure_det_value)) * 12) AS annual_ctc
        FROM emp_details ed
-       JOIN emp_proff ep ON ep.emp_fkey = ed.emp_pkey
-       JOIN emp_ctc_transaction ct ON ct.emp_fkey = ed.emp_pkey AND ct.end_date_effective IS NULL
-       LEFT JOIN employee_info i ON i.emp_pkey = ed.emp_pkey
-       LEFT JOIN termination tm ON tm.emp_fkey = ed.emp_pkey AND tm.status = 1
-       WHERE ed.status = 1 AND ${conditions.join(' AND ')}
-       ORDER BY i.EmpName`,
+       LEFT JOIN emp_proff ep ON ep.emp_fkey = ed.emp_pkey
+       LEFT JOIN emp_salary_structure ess ON ess.emp_fkey = ed.emp_pkey
+         AND (ess.end_date_effective IS NULL OR ess.end_date_effective = '0000-00-00')
+         AND ess.head_operator = 'Addition'
+       LEFT JOIN salary_head_items shi ON shi.salary_head_item_pkey = ess.salary_head_item_fkey
+       LEFT JOIN user_credentials uc ON uc.emp_fkey = ed.emp_pkey
+       LEFT JOIN termination tm ON tm.emp_fkey = ep.emp_fkey AND tm.status = 1
+       LEFT JOIN designation desig ON desig.desig_code = ep.designation AND desig.status = 1
+       LEFT JOIN department dep ON dep.dept_code = ep.emp_dept
+       LEFT JOIN branches br ON br.branch_code = ep.emp_branch
+       WHERE ${statusCondition} AND shi.head_fkey IN (1,4,10) AND ${conditions.join(' AND ')}
+       GROUP BY ed.emp_pkey
+       ORDER BY ed.first_name`,
       args
     );
     return rows;
