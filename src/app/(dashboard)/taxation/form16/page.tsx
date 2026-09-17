@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery, useMutation } from '@tanstack/react-query';
-import { UploadCloud, Download } from 'lucide-react';
+import { UploadCloud, Download, Paperclip } from 'lucide-react';
 import type { ColumnDef } from '@tanstack/react-table';
 import { EmployeeSearch } from '@/components/employees/EmployeeSearch';
 import { cn } from '@/lib/utils';
@@ -115,13 +115,17 @@ export default function Form16Page({ embedded = false, initialEmpId = '' }: Form
           </div>
           <div>
             <label className="block text-[11.5px] font-medium text-slate-500 mb-1">PDF files (Form-16, PAN auto-detected)</label>
-            <input
-              type="file"
-              accept="application/pdf"
-              multiple
-              onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
-              className="text-[12.5px]"
-            />
+            <label className={cn(BTN_BASE, 'bg-slate-100 text-slate-600 hover:bg-slate-200 shadow-none cursor-pointer')}>
+              <Paperclip className="w-3.5 h-3.5" />
+              {files.length > 0 ? `${files.length} file${files.length > 1 ? 's' : ''} selected` : 'Choose Files'}
+              <input
+                type="file"
+                accept="application/pdf"
+                multiple
+                onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
+                className="sr-only"
+              />
+            </label>
           </div>
           <button
             onClick={() => upload.mutate()}

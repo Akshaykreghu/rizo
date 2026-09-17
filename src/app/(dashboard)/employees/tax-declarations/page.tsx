@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useSession } from 'next-auth/react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Lock, Unlock, Paperclip, Calculator, FileText } from 'lucide-react';
+import { Lock, Unlock, Paperclip, Calculator, FileText, Search, CheckCircle2, Circle } from 'lucide-react';
 import { EmployeeSearch } from '@/components/employees/EmployeeSearch';
 import { Modal } from '@/components/ui/Modal';
 import Form16Page from '@/app/(dashboard)/taxation/form16/page';
@@ -97,6 +97,9 @@ export default function TaxDeclarationsPage({ embeddedEmpPkey }: TaxDeclarations
   const [showComputeModal, setShowComputeModal] = useState(false);
   const [showForm16Modal, setShowForm16Modal] = useState(false);
   const [declTab, setDeclTab] = useState<DeclTab>('income');
+  const [declSearch, setDeclSearch] = useState('');
+  const [declFilter, setDeclFilter] = useState<'all' | 'added' | 'not_added'>('all');
+  const [selectedCategory, setSelectedCategory] = useState<number | 'all' | null>(null);
 
   const { data, isLoading } = useQuery<DeclarationData>({
     queryKey: ['employees', empId, 'tax-declarations'],
@@ -201,18 +204,42 @@ export default function TaxDeclarationsPage({ embeddedEmpPkey }: TaxDeclarations
     return `${headFkey}:${detailFkey}`;
   }
 
-  function renderLine(head: Head, line: Line) {
+  function isAddedLine(line: Line) {
+    return line.tax_value != null && line.tax_value !== 0;
+  }
+
+  // Row version of a single declaration line — same handlers/state as before (drafts,
+  // save/upload/lock mutations), just laid out horizontally like legacy instead of as a card.
+  // showCategory adds a small category tag next to the label, used when browsing "All" or search
+  // results where lines from multiple categories are mixed together.
+  function renderDeclarationCard(head: Head, line: Line, showCategory: boolean) {
     const key = draftKey(head.tax_heads_pkey, line.tax_heads_details_pkey);
     const value = drafts[key] ?? (line.tax_value != null ? String(line.tax_value) : '');
     const files = line.file_name ? line.file_name.split(',').filter(Boolean) : [];
     const overCap = head.cap != null && Number(value || 0) > head.cap;
+    const added = isAddedLine(line);
 
     return (
       <div key={key} className="flex items-center gap-3 py-2 border-b border-slate-100 last:border-0">
-        <span className="flex-1 text-[13px] text-[#0F172A]">{line.label}</span>
+        <span
+          className={cn(
+            'inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-full shrink-0 whitespace-nowrap',
+            added
+              ? 'bg-[color:var(--color-success-light)] text-[color:var(--color-success-dark)]'
+              : 'bg-slate-100 text-slate-400'
+          )}
+        >
+          {added ? <CheckCircle2 className="w-3 h-3" aria-hidden="true" /> : <Circle className="w-3 h-3" aria-hidden="true" />}
+          {added ? 'Added' : 'Not Added'}
+        </span>
+
+        <span className="flex-1 text-[13px] text-[#0F172A] min-w-0">
+          {line.label}
+          {showCategory && <span className="text-[10.5px] text-slate-400"> — {head.tax_name}</span>}
+        </span>
 
         {head.cap != null && (
-          <span className={cn('text-[11px]', overCap ? 'text-[color:var(--color-danger)]' : 'text-slate-400')}>
+          <span className={cn('text-[11px] shrink-0', overCap ? 'text-[color:var(--color-danger)]' : 'text-slate-400')}>
             max {formatCurrency(head.cap)}
           </span>
         )}
@@ -221,9 +248,10 @@ export default function TaxDeclarationsPage({ embeddedEmpPkey }: TaxDeclarations
           type="number"
           value={value}
           disabled={line.locked}
+          aria-label={`${line.label} declared amount`}
           onChange={(e) => setDrafts((prev) => ({ ...prev, [key]: e.target.value }))}
           className={cn(
-            'w-28 px-2.5 py-1.5 border rounded-[9px] text-[12.5px] text-right focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/25 focus:border-[color:var(--color-primary)] disabled:bg-slate-50 disabled:text-slate-400 transition-colors',
+            'w-28 shrink-0 px-2.5 py-1.5 border rounded-[9px] text-[12.5px] text-right focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/25 focus:border-[color:var(--color-primary)] disabled:bg-slate-50 disabled:text-slate-400 transition-colors',
             overCap ? 'border-[color:var(--color-danger)]' : 'border-slate-200'
           )}
         />
@@ -232,17 +260,22 @@ export default function TaxDeclarationsPage({ embeddedEmpPkey }: TaxDeclarations
           type="button"
           disabled={line.locked || save.isPending}
           onClick={() => save.mutate({ tax_heads_fkey: head.tax_heads_pkey, tax_heads_details_fkey: line.tax_heads_details_pkey, tax_value: Number(value || 0) })}
-          className="text-[11.5px] font-medium text-[color:var(--color-primary)] hover:text-[color:var(--color-primary-dark)] disabled:text-slate-300"
+          className="text-[11.5px] font-medium text-[color:var(--color-primary)] hover:text-[color:var(--color-primary-dark)] disabled:text-slate-300 shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-primary)]/40 rounded"
         >
           Save
         </button>
 
-        <label className={cn('flex items-center gap-1 text-[11.5px]', line.locked ? 'text-slate-300' : 'text-slate-500 hover:text-slate-800 cursor-pointer')}>
-          <Paperclip className="w-3.5 h-3.5" />
+        <label
+          className={cn(
+            'flex items-center gap-1 text-[11.5px] shrink-0 rounded focus-within:ring-2 focus-within:ring-[color:var(--color-primary)]/40',
+            line.locked ? 'text-slate-300' : 'text-slate-500 hover:text-slate-800 cursor-pointer'
+          )}
+        >
+          <Paperclip className="w-3.5 h-3.5" aria-hidden="true" />
           <input
             type="file"
             disabled={line.locked}
-            className="hidden"
+            className="sr-only"
             onChange={(e) => {
               const file = e.target.files?.[0];
               if (file) upload.mutate({ tax_heads_fkey: head.tax_heads_pkey, tax_heads_details_fkey: line.tax_heads_details_pkey, file });
@@ -252,7 +285,7 @@ export default function TaxDeclarationsPage({ embeddedEmpPkey }: TaxDeclarations
           Proof
         </label>
         {files.length > 0 && (
-          <span className="text-[11px] text-slate-400">{files.length} file{files.length > 1 ? 's' : ''}</span>
+          <span className="text-[11px] text-slate-400 shrink-0">{files.length} file{files.length > 1 ? 's' : ''}</span>
         )}
 
         {isAdmin && (
@@ -260,7 +293,10 @@ export default function TaxDeclarationsPage({ embeddedEmpPkey }: TaxDeclarations
             type="button"
             title={line.locked ? 'Unlock' : 'Lock'}
             onClick={() => lock.mutate({ tax_heads_fkey: head.tax_heads_pkey, tax_heads_details_fkey: line.tax_heads_details_pkey, locked: !line.locked })}
-            className={line.locked ? 'text-[color:var(--color-highlight-dark)] hover:opacity-80' : 'text-slate-300 hover:text-slate-600'}
+            className={cn(
+              'shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-primary)]/40 rounded',
+              line.locked ? 'text-[color:var(--color-highlight-dark)] hover:opacity-80' : 'text-slate-300 hover:text-slate-600'
+            )}
           >
             {line.locked ? <Lock className="w-3.5 h-3.5" /> : <Unlock className="w-3.5 h-3.5" />}
           </button>
@@ -507,19 +543,151 @@ export default function TaxDeclarationsPage({ embeddedEmpPkey }: TaxDeclarations
           {(declTab === 'income' || declTab === 'deductions') && (() => {
             const type = declTab === 'income' ? 'Income' : 'Deductions';
             const headsOfType = data.heads!.filter((h) => h.tax_type === type);
-            return (
-              <div className="surface-card rounded-2xl p-5">
-                <h2 className="text-[13.5px] font-semibold text-slate-600 uppercase tracking-wide mb-2">{type}</h2>
-                {headsOfType.length === 0 ? (
+
+            if (headsOfType.length === 0) {
+              return (
+                <div className="surface-card rounded-2xl p-5">
                   <p className="text-[12.5px] text-slate-400">No {type.toLowerCase()} tax heads configured.</p>
-                ) : (
-                  headsOfType.map((head) => (
-                    <div key={head.tax_heads_pkey} className="mt-3 first:mt-0">
-                      {head.lines.length > 1 && <p className="text-[11px] font-medium text-slate-400 mb-1">{head.tax_name}</p>}
-                      {head.lines.map((line) => renderLine(head, line))}
+                </div>
+              );
+            }
+
+            const catPkeys = headsOfType.map((h) => h.tax_heads_pkey);
+            const effectiveCategory: number | 'all' =
+              selectedCategory === 'all'
+                ? 'all'
+                : catPkeys.includes(selectedCategory as number)
+                  ? (selectedCategory as number)
+                  : headsOfType[0].tax_heads_pkey;
+
+            const search = declSearch.trim().toLowerCase();
+            const passesFilter = (line: Line) => {
+              const added = isAddedLine(line);
+              if (declFilter === 'added') return added;
+              if (declFilter === 'not_added') return !added;
+              return true;
+            };
+
+            let entries: { head: Head; line: Line }[];
+            let showCategoryTag: boolean;
+            if (search) {
+              entries = headsOfType.flatMap((h) =>
+                h.lines.filter((l) => l.label.toLowerCase().includes(search)).map((l) => ({ head: h, line: l }))
+              );
+              showCategoryTag = true;
+            } else if (effectiveCategory === 'all') {
+              entries = headsOfType.flatMap((h) => h.lines.map((l) => ({ head: h, line: l })));
+              showCategoryTag = true;
+            } else {
+              const h = headsOfType.find((x) => x.tax_heads_pkey === effectiveCategory)!;
+              entries = h.lines.map((l) => ({ head: h, line: l }));
+              showCategoryTag = false;
+            }
+            entries = entries.filter(({ line }) => passesFilter(line));
+
+            const totalCount = headsOfType.reduce((sum, h) => sum + h.lines.length, 0);
+            const totalAdded = headsOfType.reduce((sum, h) => sum + h.lines.filter(isAddedLine).length, 0);
+            const paneTitle = search
+              ? `Search results for "${declSearch.trim()}"`
+              : effectiveCategory === 'all'
+                ? `All ${type}`
+                : headsOfType.find((h) => h.tax_heads_pkey === effectiveCategory)?.tax_name ?? type;
+
+            return (
+              <div className="surface-card rounded-2xl overflow-hidden">
+                {/* Sticky search + Added/Not Added filter bar — stays visible while the card grid below scrolls. */}
+                <div className="sticky top-0 z-10 bg-white/95 backdrop-blur border-b border-slate-100 p-3 flex flex-wrap items-center gap-2">
+                  <div className="relative flex-1 min-w-[180px] max-w-xs">
+                    <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" aria-hidden="true" />
+                    <input
+                      type="text"
+                      value={declSearch}
+                      onChange={(e) => setDeclSearch(e.target.value)}
+                      placeholder="Search declarations…"
+                      aria-label="Search declarations"
+                      className="w-full pl-8 pr-2.5 py-1.5 border border-slate-200 rounded-[9px] text-[12.5px] focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/25 focus:border-[color:var(--color-primary)] transition-colors"
+                    />
+                  </div>
+                  <div className="flex items-center gap-1 bg-slate-900/[0.03] rounded-lg p-0.5 text-[11.5px]">
+                    {([
+                      { key: 'all', label: 'All' },
+                      { key: 'added', label: 'Added' },
+                      { key: 'not_added', label: 'Not Added' },
+                    ] as const).map((f) => (
+                      <button
+                        key={f.key}
+                        type="button"
+                        onClick={() => setDeclFilter(f.key)}
+                        className={cn(
+                          'px-2.5 py-1 rounded-md transition-all duration-[180ms] font-medium border whitespace-nowrap focus:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-primary)]/40',
+                          declFilter === f.key
+                            ? 'bg-[color:var(--color-primary-light)] text-[color:var(--color-primary)] border-[color:var(--color-primary)]/30'
+                            : 'bg-white text-slate-500 border-transparent hover:bg-white/70'
+                        )}
+                      >
+                        {f.label}
+                      </button>
+                    ))}
+                  </div>
+                  <span className="text-[11px] text-slate-400 ml-auto">
+                    {totalAdded} / {totalCount} added
+                  </span>
+                </div>
+
+                <div className="flex flex-col sm:flex-row">
+                  {/* Category sidebar — sticky while the card grid scrolls, so it stays reachable
+                      without needing to scroll back up (req 9). */}
+                  <aside className="sm:w-56 shrink-0 border-b sm:border-b-0 sm:border-r border-slate-100 p-2 sm:sticky sm:top-[57px] sm:self-start sm:max-h-[70vh] sm:overflow-y-auto">
+                    <div className="flex sm:flex-col gap-1 overflow-x-auto sm:overflow-x-visible">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedCategory('all')}
+                        className={cn(
+                          'flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg text-[12px] text-left whitespace-nowrap focus:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-primary)]/40',
+                          effectiveCategory === 'all'
+                            ? 'bg-[color:var(--color-primary-light)] text-[color:var(--color-primary)] font-medium'
+                            : 'text-slate-600 hover:bg-slate-50'
+                        )}
+                      >
+                        <span>All</span>
+                        <span className="text-[10.5px] text-slate-400">{totalCount}</span>
+                      </button>
+                      {headsOfType.map((h) => {
+                        const addedInCat = h.lines.filter(isAddedLine).length;
+                        return (
+                          <button
+                            key={h.tax_heads_pkey}
+                            type="button"
+                            onClick={() => setSelectedCategory(h.tax_heads_pkey)}
+                            className={cn(
+                              'flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg text-[12px] text-left whitespace-nowrap sm:whitespace-normal focus:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-primary)]/40',
+                              effectiveCategory === h.tax_heads_pkey
+                                ? 'bg-[color:var(--color-primary-light)] text-[color:var(--color-primary)] font-medium'
+                                : 'text-slate-600 hover:bg-slate-50'
+                            )}
+                          >
+                            <span className="truncate">{h.tax_name}</span>
+                            <span className="text-[10.5px] text-slate-400 shrink-0">{addedInCat}/{h.lines.length}</span>
+                          </button>
+                        );
+                      })}
                     </div>
-                  ))
-                )}
+                  </aside>
+
+                  <div className="flex-1 p-3 min-w-0">
+                    <div className="flex items-center justify-between mb-2">
+                      <h3 className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide truncate">{paneTitle}</h3>
+                      <span className="text-[11px] text-slate-400 shrink-0 ml-2">{entries.length} shown</span>
+                    </div>
+                    {entries.length === 0 ? (
+                      <p className="text-[12.5px] text-slate-400 py-6 text-center">No declarations match.</p>
+                    ) : (
+                      <div>
+                        {entries.map(({ head, line }) => renderDeclarationCard(head, line, showCategoryTag))}
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
             );
           })()}
