@@ -4,7 +4,7 @@ import { useState, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { useMutation } from '@tanstack/react-query';
 import { useSession } from 'next-auth/react';
-import { Download, Play, Loader2, Calendar } from 'lucide-react';
+import { Download, Eye, Loader2, Calendar } from 'lucide-react';
 import { CriteriaFilterPanel } from '@/components/reports/CriteriaFilterPanel';
 import {
   exportReportToExcel, exportReportToPdf, exportSalarySlipsToExcel, exportSalarySlipsToPdf,
@@ -428,7 +428,6 @@ export default function PayrollReportPage() {
     [itemColumns]
   );
   const hasCriteria = Object.values(criteria).some((v) => Array.isArray(v) && v.length > 0);
-  const excelColumns = meta.excelColumns ?? displayColumns;
   // SummaryPayroll's Excel filename/title mirror legacy's PHPExcel output exactly
   // (`"{company_code} Payroll Summary Report {month}.xlsx"`, title `"Payroll Summary Report - {month}"`)
   // — every other subtype keeps the existing generic pattern.
@@ -437,30 +436,56 @@ export default function PayrollReportPage() {
     : `payroll_report_${monthYear}`;
   const excelTitle = subtype === 'SummaryPayroll' ? `Payroll Summary Report - ${monthYear}` : undefined;
 
+  // Shared by the View action and by Excel/PDF export — legacy's Excel/PDF buttons are independent
+  // actions that fetch and generate their own output rather than requiring a prior View click, so
+  // Excel/PDF here do the same: fetch fresh data for the current filters on click instead of only
+  // being able to export whatever the last View happened to load.
+  const fetchReportRows = async (): Promise<Record<string, unknown>[]> => {
+    const res = await fetch('/api/reports/payroll', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        subtype, monthYear, toMonthYear: meta.dateRange ? toMonthYear : undefined, criteria,
+        includeResigned: subtype === 'SummaryPayroll' ? includeResigned : undefined,
+        includeNegative: subtype === 'SummaryPayroll' ? includeNegative : undefined,
+      }),
+    });
+    const b = await res.json();
+    if (!res.ok) throw new Error(b.error ?? 'Failed to generate report');
+    return (b.rows ?? []) as Record<string, unknown>[];
+  };
+
   const generate = useMutation({
-    mutationFn: async () => {
-      const res = await fetch('/api/reports/payroll', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          subtype, monthYear, toMonthYear: meta.dateRange ? toMonthYear : undefined, criteria,
-          includeResigned: subtype === 'SummaryPayroll' ? includeResigned : undefined,
-          includeNegative: subtype === 'SummaryPayroll' ? includeNegative : undefined,
-        }),
-      });
-      const b = await res.json();
-      if (!res.ok) throw new Error(b.error ?? 'Failed to generate report');
-      return (b.rows ?? []) as Record<string, unknown>[];
-    },
+    mutationFn: fetchReportRows,
     onSuccess: (r) => { isSlip ? setSlips(r as unknown as SalarySlip[]) : setRows(r); setError(null); },
     onError: (err: Error) => setError(err.message),
   });
 
-  // Any filter change invalidates the currently displayed results — without this, changing the
-  // month/criteria/checkboxes after a successful Generate would leave the previous run's rows (and
-  // its Excel/PDF buttons) on screen, letting the user export stale data that no longer matches the
-  // selected filters. Clearing here forces a fresh Generate click before export becomes available
-  // again.
+  const exportReport = useMutation({
+    mutationFn: async (kind: 'excel' | 'pdf') => {
+      const r = await fetchReportRows();
+      if (isSlip) {
+        const slipData = r as unknown as SalarySlip[];
+        if (kind === 'excel') exportSalarySlipsToExcel(slipData, session?.user?.companyCode ?? '', monthLabel(monthYear), `salary_slip_${monthYear}`);
+        else exportSalarySlipsToPdf(slipData, monthLabel(monthYear), `salary_slip_${monthYear}`);
+        return;
+      }
+      const { rows: expRows, columns: itemCols } = flattenItemColumns(r, meta.itemPivot);
+      const screenColumns = [...meta.columns, ...itemCols];
+      const curKeys = new Set([...CURRENCY_KEYS, ...itemCols.map((c) => c.key)]);
+      if (kind === 'excel') {
+        if (meta.groupBy) exportGroupedReportToExcel(meta.excelColumns ?? screenColumns, groupRows(expRows, meta.groupBy), curKeys, excelFilename, { title: excelTitle, slNo: meta.excelSlNo });
+        else exportReportToExcel(meta.excelColumns ?? screenColumns, expRows, excelFilename);
+      } else {
+        if (meta.groupBy) exportGroupedReportToPdf(screenColumns, groupRows(expRows, meta.groupBy), curKeys, `${meta.label} — ${monthYear}`, `payroll_report_${monthYear}`);
+        else exportReportToPdf(screenColumns, expRows, `${meta.label} — ${monthYear}`, `payroll_report_${monthYear}`);
+      }
+    },
+    onError: (err: Error) => setError(err.message),
+  });
+
+  // Any filter change invalidates the currently displayed View results — without this, changing the
+  // month/criteria/checkboxes after a successful View would leave the previous run's rows on screen.
   const resetResults = () => { setRows([]); setSlips([]); setError(null); generate.reset(); };
 
   return (
@@ -526,58 +551,37 @@ export default function PayrollReportPage() {
             </label>
           </div>
         )}
-        <div className="flex justify-end">
+        <div className="flex justify-end items-center gap-2">
           <button
             onClick={() => generate.mutate()}
             disabled={generate.isPending || !monthYear || !hasCriteria}
+            title="View Report"
             className={cn(BTN_BASE, 'bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)] text-white')}
           >
-            {generate.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
-            {generate.isPending ? 'Generating…' : 'Generate Report'}
+            {generate.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Eye className="w-4 h-4" />}
           </button>
+          <button
+            onClick={() => exportReport.mutate('excel')}
+            disabled={exportReport.isPending || !monthYear || !hasCriteria}
+            className={cn(BTN_SM, 'bg-white border border-slate-200 hover:bg-slate-50 text-slate-600')}
+          >
+            <Download className="w-3.5 h-3.5" /> Excel
+          </button>
+          {(isSlip || meta.pdfAllowed) && (
+            <button
+              onClick={() => exportReport.mutate('pdf')}
+              disabled={exportReport.isPending || !monthYear || !hasCriteria}
+              className={cn(BTN_SM, 'bg-white border border-slate-200 hover:bg-slate-50 text-slate-600')}
+            >
+              <Download className="w-3.5 h-3.5" /> PDF
+            </button>
+          )}
         </div>
         {error && <p className="text-[12.5px] text-[color:var(--color-danger)]">{error}</p>}
       </div>
 
       {generate.isSuccess && (
-        <div className="flex items-center justify-between mb-2">
-          <h2 className="text-[13px] font-semibold text-[#0F172A]">Report Results</h2>
-          {isSlip ? (
-            slips.length > 0 && (
-              <div className="flex gap-2">
-                <button onClick={() => exportSalarySlipsToExcel(slips, session?.user?.companyCode ?? '', monthLabel(monthYear), `salary_slip_${monthYear}`)} className={cn(BTN_SM, 'bg-white border border-slate-200 hover:bg-slate-50 text-slate-600')}>
-                  <Download className="w-3.5 h-3.5" /> Excel
-                </button>
-                <button onClick={() => exportSalarySlipsToPdf(slips, monthLabel(monthYear), `salary_slip_${monthYear}`)} className={cn(BTN_SM, 'bg-white border border-slate-200 hover:bg-slate-50 text-slate-600')}>
-                  <Download className="w-3.5 h-3.5" /> PDF
-                </button>
-              </div>
-            )
-          ) : (
-            displayRows.length > 0 && (
-              <div className="flex gap-2">
-                <button
-                  onClick={() => meta.groupBy
-                    ? exportGroupedReportToExcel(excelColumns, groupRows(displayRows, meta.groupBy), currencyKeys, excelFilename, { title: excelTitle, slNo: meta.excelSlNo })
-                    : exportReportToExcel(excelColumns, displayRows, excelFilename)}
-                  className={cn(BTN_SM, 'bg-white border border-slate-200 hover:bg-slate-50 text-slate-600')}
-                >
-                  <Download className="w-3.5 h-3.5" /> Excel
-                </button>
-                {meta.pdfAllowed && (
-                  <button
-                    onClick={() => meta.groupBy
-                      ? exportGroupedReportToPdf(displayColumns, groupRows(displayRows, meta.groupBy), currencyKeys, `${meta.label} — ${monthYear}`, `payroll_report_${monthYear}`)
-                      : exportReportToPdf(displayColumns, displayRows, `${meta.label} — ${monthYear}`, `payroll_report_${monthYear}`)}
-                    className={cn(BTN_SM, 'bg-white border border-slate-200 hover:bg-slate-50 text-slate-600')}
-                  >
-                    <Download className="w-3.5 h-3.5" /> PDF
-                  </button>
-                )}
-              </div>
-            )
-          )}
-        </div>
+        <h2 className="text-[13px] font-semibold text-[#0F172A] mb-2">Report Results</h2>
       )}
 
       {isSlip ? (
