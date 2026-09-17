@@ -178,7 +178,7 @@ export const EMPLOYEE_FIELD_MAP: Record<string, { label: string; expr: string }>
   email: { label: 'Email', expr: 'ed.email' },
   marital_status: { label: 'Marital Status', expr: 'ed.maritual_status' },
   education: { label: 'Education', expr: 'ed.education' },
-  date_of_birth: { label: 'Date of Birth', expr: 'ed.date_of_birth' },
+  date_of_birth: { label: 'Date of Birth', expr: "DATE_FORMAT(ed.date_of_birth, '%Y-%m-%d')" },
   bank_name: { label: 'Bank Name', expr: 'ed.bank_name' },
   bank_branch: { label: 'Bank Branch', expr: 'ed.branch_name' },
   bank_branch_address: { label: 'Bank Branch Address', expr: 'ed.branch_address' },
@@ -195,7 +195,7 @@ export const EMPLOYEE_FIELD_MAP: Record<string, { label: string; expr: string }>
   blood_group: { label: 'Blood Group', expr: 'ed.blood' },
   lwf_reg_number: { label: 'LWF Registration Number', expr: 'ed.lwf_code' },
   company_employee_id: { label: 'Company Employee ID', expr: 'ep.emp_company_id' },
-  joining_date: { label: 'Joining Date', expr: 'i.joining_date' },
+  joining_date: { label: 'Joining Date', expr: "DATE_FORMAT(i.joining_date, '%Y-%m-%d')" },
   employee_type: { label: 'Employee Type', expr: 'ep.emp_type' },
   department: { label: 'Department', expr: 'i.department' },
   grade: { label: 'Grade', expr: 'i.grade' },
@@ -312,7 +312,7 @@ export async function generateEmployeeReport(pool: Pool, params: EmployeeReportP
 
   const [rows] = await pool.execute<RowDataPacket[]>(
     `SELECT ed.emp_pkey, i.EmpName AS emp_name, i.employee_id, i.branch, i.department, i.designation,
-            i.joining_date, i.grade, ed.mobile_no, ed.email, ed.status
+            DATE_FORMAT(i.joining_date, '%Y-%m-%d') AS joining_date, i.grade, ed.mobile_no, ed.email, ed.status
      FROM emp_details ed
      JOIN emp_proff ep ON ep.emp_fkey = ed.emp_pkey
      LEFT JOIN employee_info i ON i.emp_pkey = ed.emp_pkey
@@ -344,6 +344,8 @@ export interface PayrollReportParams {
   monthYear: string; // 'YYYY-MM' — used by all subtypes except GrossPeriod
   toMonthYear?: string; // 'YYYY-MM' — GrossPeriod only, range end (monthYear is the range start)
   criteria: CriteriaSelections;
+  includeResigned?: boolean; // SummaryPayroll only — legacy's "Include Resigned" checkbox
+  includeNegative?: boolean; // SummaryPayroll only — legacy's "Include Negative Salary" checkbox
 }
 
 function prevMonth(monthYear: string): string {
@@ -398,8 +400,11 @@ export async function generatePayrollReport(pool: Pool, params: PayrollReportPar
     });
     const [rows] = await pool.execute<RowDataPacket[]>(
       `SELECT ed.emp_pkey, i.EmpName AS emp_name, ep.emp_company_id AS employee_id, i.branch, i.department, i.designation,
-              i.joining_date, tm.last_approved_working_date AS termination_date,
-              ct.emp_anual_ctc, ct.emp_derived_anualctc, ct.start_date_effective, ct.next_increment_date
+              DATE_FORMAT(i.joining_date, '%Y-%m-%d') AS joining_date,
+              DATE_FORMAT(tm.last_approved_working_date, '%Y-%m-%d') AS termination_date,
+              ct.emp_anual_ctc, ct.emp_derived_anualctc,
+              DATE_FORMAT(ct.start_date_effective, '%Y-%m-%d') AS start_date_effective,
+              DATE_FORMAT(ct.next_increment_date, '%Y-%m-%d') AS next_increment_date
        FROM emp_details ed
        JOIN emp_proff ep ON ep.emp_fkey = ed.emp_pkey
        JOIN emp_ctc_transaction ct ON ct.emp_fkey = ed.emp_pkey AND ct.end_date_effective IS NULL
@@ -420,7 +425,8 @@ export async function generatePayrollReport(pool: Pool, params: PayrollReportPar
     const [rows] = await pool.execute<RowDataPacket[]>(
       `SELECT pm.payroll_master_pkey, pm.emp_fkey, pm.emp_name, ep.emp_company_id AS employee_id, pm.branch_name,
               pm.departments, pm.desig, pm.month_year,
-              i.joining_date, tm.last_approved_working_date AS termination_date,
+              DATE_FORMAT(i.joining_date, '%Y-%m-%d') AS joining_date,
+              DATE_FORMAT(tm.last_approved_working_date, '%Y-%m-%d') AS termination_date,
               pm.days_presant, pm.loss_of_pay, pm.days_leave, ar.weekoff_total, ar.holiday_total,
               COALESCE(ot.set_duration, 0) AS overtime_hours,
               pm.gross_salary, pm.total_deduction, pm.total_variables, pm.net_salary
@@ -446,7 +452,8 @@ export async function generatePayrollReport(pool: Pool, params: PayrollReportPar
     const [rows] = await pool.execute<RowDataPacket[]>(
       `SELECT pm.emp_fkey, pm.emp_name, ep.emp_company_id AS employee_id, pm.branch_name,
               pm.departments, pm.desig, pm.month_year,
-              i.joining_date, tm.last_approved_working_date AS termination_date,
+              DATE_FORMAT(i.joining_date, '%Y-%m-%d') AS joining_date,
+              DATE_FORMAT(tm.last_approved_working_date, '%Y-%m-%d') AS termination_date,
               pm.bank_details, ed.bank_name AS ed_bank_name, ed.branch_name AS ed_bank_branch,
               ed.ifsc_code AS ed_ifsc_code, ed.account_no AS ed_account_no, pm.net_salary
        FROM payroll_master pm
@@ -486,7 +493,8 @@ export async function generatePayrollReport(pool: Pool, params: PayrollReportPar
     const [rows] = await pool.execute<RowDataPacket[]>(
       `SELECT pm.payroll_master_pkey, pm.emp_fkey, pm.emp_name, ep.emp_company_id AS employee_id, pm.branch_name,
               pm.departments, pm.desig, pm.month_year,
-              i.joining_date, tm.last_approved_working_date AS termination_date,
+              DATE_FORMAT(i.joining_date, '%Y-%m-%d') AS joining_date,
+              DATE_FORMAT(tm.last_approved_working_date, '%Y-%m-%d') AS termination_date,
               pm.days_presant, pm.loss_of_pay, pm.days_leave, ar.weekoff_total, ar.holiday_total,
               COALESCE(ot.set_duration, 0) AS overtime_hours,
               pm.gross_salary, pm.total_deduction, pm.net_salary,
@@ -547,7 +555,8 @@ export async function generatePayrollReport(pool: Pool, params: PayrollReportPar
     const [rows] = await pool.execute<RowDataPacket[]>(
       `SELECT pm.emp_fkey, pm.emp_name, ep.emp_company_id AS employee_id, pm.branch_name,
               pm.departments, pm.desig, pm.month_year,
-              i.joining_date, tm.last_approved_working_date AS termination_date,
+              DATE_FORMAT(i.joining_date, '%Y-%m-%d') AS joining_date,
+              DATE_FORMAT(tm.last_approved_working_date, '%Y-%m-%d') AS termination_date,
               ed.classification AS gender, pm.days_presant,
               pm.gross_salary, pm.total_deduction, pm.net_salary
        FROM payroll_master pm
@@ -585,7 +594,8 @@ export async function generatePayrollReport(pool: Pool, params: PayrollReportPar
       `SELECT pm.payroll_master_pkey, prev.payroll_master_pkey AS prev_payroll_master_pkey,
               pm.emp_fkey, pm.emp_name, ep.emp_company_id AS employee_id, pm.branch_name,
               pm.departments, pm.desig, ed.status,
-              i.joining_date, tm.last_approved_working_date AS termination_date,
+              DATE_FORMAT(i.joining_date, '%Y-%m-%d') AS joining_date,
+              DATE_FORMAT(tm.last_approved_working_date, '%Y-%m-%d') AS termination_date,
               pm.gross_salary AS current_gross, prev.gross_salary AS previous_gross,
               (pm.gross_salary - COALESCE(prev.gross_salary, 0)) AS gross_change,
               pm.total_deduction AS current_deduction, prev.total_deduction AS previous_deduction,
@@ -686,18 +696,40 @@ export async function generatePayrollReport(pool: Pool, params: PayrollReportPar
   const { conditions, args } = buildCriteriaConditions(params.criteria, {
     Units: 'pm.branch_code', EmployeeDetails: 'pm.emp_fkey',
   });
+  // Mirrors legacy's $condition (status filter, SalaryReportsController.php:11854-11858) and the
+  // PSQUARE variant's negative-salary filter (:29842-29846) — applied uniformly here rather than
+  // only for the 3 PSQUARE companies, since the standard variant leaving it unfiltered is a legacy
+  // bug, not intended behavior (see reports.ts SummaryPayroll follow-up note / migration plan).
+  const statusCondition = params.includeResigned ? 'ed.status IN (1,2)' : 'ed.status = 1';
+  const negativeCondition = params.includeNegative ? '' : ' AND pm.net_salary >= 0';
   const [rows] = await pool.execute<RowDataPacket[]>(
-    `SELECT pm.emp_fkey, pm.emp_name, ep.emp_company_id AS employee_id, pm.branch_name,
+    `SELECT pm.emp_fkey,
+            CASE WHEN ed.status = 2 THEN CONCAT(pm.emp_name, ' (Resigned)') ELSE pm.emp_name END AS emp_name,
+            ep.emp_company_id AS employee_id, uc.user_id AS login_user_id, pm.branch_name,
             pm.departments, pm.desig, pm.month_year,
-            i.joining_date, tm.last_approved_working_date AS termination_date,
+            DATE_FORMAT(i.joining_date, '%Y-%m-%d') AS joining_date,
+            DATE_FORMAT(tm.last_approved_working_date, '%Y-%m-%d') AS termination_date,
             pm.days_presant, pm.days_leave, pm.loss_of_pay, pm.working_days, ar.weekoff_total, ar.holiday_total,
-            pm.monthly_ctc, pm.gross_salary, pm.total_deduction, pm.total_variables, pm.net_salary, pm.approved
+            pm.monthly_ctc,
+            COALESCE((SELECT ROUND(SUM(ess.salary_rate)) FROM emp_salary_slip ess
+                      WHERE ess.emp_fkey = pm.emp_fkey AND ess.month_year = pm.month_year AND ess.end_date_effective IS NULL
+                        AND LOWER(ess.head_operator) = 'addition' AND LOWER(ess.item_part) = 'direct'), 0) AS standard_gross_salary,
+            pm.gross_salary, pm.total_deduction, pm.total_variables,
+            COALESCE((SELECT SUM(ess.salary_amount) FROM emp_settle_slip ess
+                      WHERE ess.emp_fkey = pm.emp_fkey AND ess.status = 'Y' AND ess.approved = 'Y' AND ess.type <> 'SALARY'
+                        AND DATE_FORMAT(tm.last_approved_working_date, '%Y-%m') = pm.month_year), 0) AS settlement_amount,
+            (pm.net_salary + COALESCE((SELECT SUM(ess.salary_amount) FROM emp_settle_slip ess
+                      WHERE ess.emp_fkey = pm.emp_fkey AND ess.status = 'Y' AND ess.approved = 'Y' AND ess.type <> 'SALARY'
+                        AND DATE_FORMAT(tm.last_approved_working_date, '%Y-%m') = pm.month_year), 0)) AS net_salary,
+            CASE WHEN pm.action = 'Approved' THEN 'Yes' ELSE 'No' END AS approved_label
      FROM payroll_master pm
      LEFT JOIN emp_proff ep ON ep.emp_fkey = pm.emp_fkey
+     LEFT JOIN emp_details ed ON ed.emp_pkey = pm.emp_fkey
+     LEFT JOIN user_credentials uc ON uc.emp_fkey = pm.emp_fkey
      LEFT JOIN employee_info i ON i.emp_pkey = pm.emp_fkey
      LEFT JOIN termination tm ON tm.emp_fkey = pm.emp_fkey AND tm.status = 1
      LEFT JOIN attendance_register ar ON ar.emp_fkey = pm.emp_fkey AND ar.month_year = pm.month_year
-     WHERE pm.month_year = ? AND pm.action IN ('Approved','Processed') AND ${conditions.join(' AND ')}
+     WHERE pm.month_year = ? AND pm.action IN ('Approved','Processed') AND ${statusCondition}${negativeCondition} AND ${conditions.join(' AND ')}
      ORDER BY pm.emp_name`,
     [params.monthYear, ...args]
   );
@@ -756,13 +788,14 @@ export async function generateSalarySlips(pool: Pool, params: PayrollReportParam
 
   const [headerRows] = await pool.execute<RowDataPacket[]>(
     `SELECT pm.payroll_master_pkey, pm.emp_fkey, i.EmpName AS emp_name, i.designation, i.department,
-            i.branch AS branch_name, i.joining_date, ed.status, ed.classification AS gender,
+            i.branch AS branch_name, DATE_FORMAT(i.joining_date, '%Y-%m-%d') AS joining_date, ed.status, ed.classification AS gender,
             pm.days_leave, pm.loss_of_pay, pm.bank_details,
             ar.presant_total, ar.weekoff_total, ar.holiday_total,
             ed.company_pf, ed.esi, ed.pf AS uan,
             ed.bank_name AS ed_bank_name, ed.branch_name AS ed_bank_branch, ed.ifsc_code AS ed_ifsc_code,
             ed.account_no AS ed_account_no,
-            ep.emp_company_id AS employee_id, uc.user_id AS login_user_id, tm.last_approved_working_date AS termination_date
+            ep.emp_company_id AS employee_id, uc.user_id AS login_user_id,
+            DATE_FORMAT(tm.last_approved_working_date, '%Y-%m-%d') AS termination_date
      FROM payroll_master pm
      JOIN emp_details ed ON ed.emp_pkey = pm.emp_fkey
      LEFT JOIN employee_info i ON i.emp_pkey = pm.emp_fkey
@@ -871,7 +904,8 @@ export async function generateLopReport(pool: Pool, params: LopReportParams) {
 
   const [rows] = await pool.execute<RowDataPacket[]>(
     `SELECT ed.emp_pkey, i.EmpName AS emp_name, i.employee_id, i.branch, i.department, i.designation,
-            t.att_date, t.others, t.leaves, tm.last_approved_working_date
+            DATE_FORMAT(t.att_date, '%Y-%m-%d') AS att_date, t.others, t.leaves,
+            DATE_FORMAT(tm.last_approved_working_date, '%Y-%m-%d') AS last_approved_working_date
      FROM emp_details ed
      JOIN emp_detail_timeattandance t ON t.emp_pkey = ed.emp_pkey
      LEFT JOIN employee_info i ON i.emp_pkey = ed.emp_pkey

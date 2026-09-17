@@ -26,6 +26,8 @@ export async function POST(request: NextRequest) {
       monthYear: body.monthYear,
       toMonthYear: body.toMonthYear || undefined,
       criteria: body.criteria ?? {},
+      includeResigned: !!body.includeResigned,
+      includeNegative: !!body.includeNegative,
     });
     return NextResponse.json({ rows });
   } catch (err) {

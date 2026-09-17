@@ -4,7 +4,7 @@ import { useState, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { useMutation } from '@tanstack/react-query';
 import { useSession } from 'next-auth/react';
-import { Download, Play } from 'lucide-react';
+import { Download, Play, Loader2, Calendar } from 'lucide-react';
 import { CriteriaFilterPanel } from '@/components/reports/CriteriaFilterPanel';
 import {
   exportReportToExcel, exportReportToPdf, exportSalarySlipsToExcel, exportSalarySlipsToPdf,
@@ -14,10 +14,13 @@ import { cn, formatCurrency } from '@/lib/utils';
 import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
 
 const INPUT_CLASS =
-  'border border-slate-200 bg-white rounded-[9px] px-2.5 py-1.5 text-[12.5px] text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/25 focus:border-[color:var(--color-primary)] transition-colors';
+  'h-[42px] border border-[#E5E7EB] bg-white rounded-lg px-2.5 text-[12.5px] text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/25 focus:border-[color:var(--color-primary)] transition-colors';
 
 const BTN_BASE =
-  'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[9px] text-[12.5px] font-semibold shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
+  'h-[42px] inline-flex items-center gap-1.5 px-4 rounded-lg text-[12.5px] font-semibold shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
+
+const BTN_SM =
+  'h-[38px] inline-flex items-center gap-1.5 px-3 rounded-lg text-[12.5px] font-semibold shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
 
 type Subtype = 'SummaryPayroll' | 'salary' | 'Grosssalary' | 'BankTranfer' | 'Salaryslip'
   | 'MonthlyCTCReport' | 'PayrollCTC' | 'GrosssalaryNew' | 'Comparison' | 'GrosssalarySummary' | 'GrossPeriod';
@@ -124,7 +127,7 @@ const CURRENCY_KEYS = new Set([
   'standard_total', 'variable_total', 'employer_total', 'other_total', 'total_gross', 'total_deductions',
   'total_net', 'current_net', 'previous_net', 'net_change', 'salary_amount',
   'current_gross', 'previous_gross', 'gross_change', 'current_deduction', 'previous_deduction', 'deduction_change',
-  'current_ctc', 'previous_ctc', 'ctc_change',
+  'current_ctc', 'previous_ctc', 'ctc_change', 'standard_gross_salary', 'settlement_amount',
 ]);
 
 // Legacy renders every one of these subtypes grouped by branch (a separate <table> per branch,
@@ -153,6 +156,13 @@ interface SubtypeMeta {
   dateRange?: boolean;
   groupBy?: (row: Record<string, unknown>) => string;
   pdfAllowed?: boolean;
+  // Excel-specific column set/order, used only when it needs to diverge from the on-screen grid —
+  // e.g. SummaryPayroll's Excel export mirrors legacy's PHPExcel column order/labels exactly
+  // (Sl No, no redundant Branch column since branch is already the group header, no Monthly CTC —
+  // legacy's Excel never had it), while the on-screen grid keeps the richer column set. Falls back
+  // to `columns` when unset.
+  excelColumns?: ReportColumn[];
+  excelSlNo?: boolean;
   // Legacy pivots each employee's real salary-head items (Basic/HRA/etc, varies per company) into
   // their own columns on these 4 reports. Backend returns each row with an `items` array (see
   // getItemWiseAdditions() in reports.ts) instead of fixed columns, since the head set isn't known
@@ -168,13 +178,34 @@ const SUBTYPE_META: Record<Subtype, SubtypeMeta> = {
     label: 'Payroll Summary',
     groupBy: (r) => String(r.branch_name ?? ''),
     columns: [
-      { key: 'employee_id', label: 'Employee ID' }, { key: 'emp_name', label: 'Employee' }, { key: 'branch_name', label: 'Branch' },
+      { key: 'employee_id', label: 'Employee ID' }, { key: 'login_user_id', label: 'User ID' }, { key: 'emp_name', label: 'Employee' },
+      { key: 'branch_name', label: 'Branch' },
       { key: 'departments', label: 'Department' }, { key: 'desig', label: 'Designation' },
       { key: 'joining_date', label: 'Joining Date' }, { key: 'termination_date', label: 'Termination Date' },
       { key: 'days_presant', label: 'Present Days' }, { key: 'days_leave', label: 'Leave Days' },
       { key: 'loss_of_pay', label: 'LOP Days' }, { key: 'weekoff_total', label: 'Week Off' }, { key: 'holiday_total', label: 'Holiday' },
-      { key: 'monthly_ctc', label: 'Monthly CTC' }, { key: 'gross_salary', label: 'Gross Salary' },
-      { key: 'total_deduction', label: 'Deductions' }, { key: 'net_salary', label: 'Net Salary' },
+      { key: 'monthly_ctc', label: 'Monthly CTC' }, { key: 'standard_gross_salary', label: 'Standard Gross Salary' },
+      { key: 'gross_salary', label: 'Gross Salary' },
+      { key: 'total_deduction', label: 'Deductions' }, { key: 'settlement_amount', label: 'Settlement Amount' },
+      { key: 'net_salary', label: 'Net Salary' }, { key: 'approved_label', label: 'Approved' },
+    ],
+    // Mirrors legacy's branch-wise PHPExcel header exactly (SalaryReportsController.php:12105-12151):
+    // Sl No (added by the exporter via excelSlNo), Employee ID, User ID, Employee Name, Designation,
+    // Department, Date Of Joining, Date of Termination, Present Days, Week Off, Holiday, Leave Days,
+    // Loss Off Pay, Standard Gross Salary, This Month Gross Salary, Total Deductions, Settlement
+    // Amount, Net Salary, Approved. No Branch column (redundant — branch is already the group
+    // header) and no Month column (redundant — the whole report is already scoped to one month) or
+    // Monthly CTC (not part of legacy's Excel output at all, unlike the on-screen grid above).
+    excelSlNo: true,
+    excelColumns: [
+      { key: 'employee_id', label: 'Employee ID' }, { key: 'login_user_id', label: 'User ID' }, { key: 'emp_name', label: 'Employee Name' },
+      { key: 'desig', label: 'Designation' }, { key: 'departments', label: 'Department' },
+      { key: 'joining_date', label: 'Date Of Joining' }, { key: 'termination_date', label: 'Date of Termination' },
+      { key: 'days_presant', label: 'Present Days' }, { key: 'weekoff_total', label: 'Week Off' }, { key: 'holiday_total', label: 'Holiday' },
+      { key: 'days_leave', label: 'Leave Days' }, { key: 'loss_of_pay', label: 'Loss Off Pay' },
+      { key: 'standard_gross_salary', label: 'Standard Gross Salary' }, { key: 'gross_salary', label: 'This Month Gross Salary' },
+      { key: 'total_deduction', label: 'Total Deductions' }, { key: 'settlement_amount', label: 'Settlement Amount' },
+      { key: 'net_salary', label: 'Net Salary' }, { key: 'approved_label', label: 'Approved' },
     ],
   },
   salary: {
@@ -376,6 +407,8 @@ export default function PayrollReportPage() {
   const [monthYear, setMonthYear] = useState(currentMonthYear());
   const [toMonthYear, setToMonthYear] = useState(currentMonthYear());
   const [criteria, setCriteria] = useState<Record<string, string[]>>({});
+  const [includeResigned, setIncludeResigned] = useState(false);
+  const [includeNegative, setIncludeNegative] = useState(false);
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
   const [slips, setSlips] = useState<SalarySlip[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -394,13 +427,26 @@ export default function PayrollReportPage() {
     () => new Set([...CURRENCY_KEYS, ...itemColumns.map((c) => c.key)]),
     [itemColumns]
   );
+  const hasCriteria = Object.values(criteria).some((v) => Array.isArray(v) && v.length > 0);
+  const excelColumns = meta.excelColumns ?? displayColumns;
+  // SummaryPayroll's Excel filename/title mirror legacy's PHPExcel output exactly
+  // (`"{company_code} Payroll Summary Report {month}.xlsx"`, title `"Payroll Summary Report - {month}"`)
+  // — every other subtype keeps the existing generic pattern.
+  const excelFilename = subtype === 'SummaryPayroll'
+    ? `${session?.user?.companyCode ?? ''} Payroll Summary Report ${monthYear}`
+    : `payroll_report_${monthYear}`;
+  const excelTitle = subtype === 'SummaryPayroll' ? `Payroll Summary Report - ${monthYear}` : undefined;
 
   const generate = useMutation({
     mutationFn: async () => {
       const res = await fetch('/api/reports/payroll', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ subtype, monthYear, toMonthYear: meta.dateRange ? toMonthYear : undefined, criteria }),
+        body: JSON.stringify({
+          subtype, monthYear, toMonthYear: meta.dateRange ? toMonthYear : undefined, criteria,
+          includeResigned: subtype === 'SummaryPayroll' ? includeResigned : undefined,
+          includeNegative: subtype === 'SummaryPayroll' ? includeNegative : undefined,
+        }),
       });
       const b = await res.json();
       if (!res.ok) throw new Error(b.error ?? 'Failed to generate report');
@@ -425,13 +471,13 @@ export default function PayrollReportPage() {
           slotEl
         )}
 
-      <div className="surface-card rounded-xl px-4 py-2.5 mb-4 space-y-3">
+      <div className="surface-card rounded-xl px-5 py-4 mb-4 space-y-3">
         <div className="flex flex-wrap items-end gap-3">
           <div>
             <label className="block text-[11.5px] font-medium text-slate-500 mb-1">Report Type</label>
             <select
               value={subtype}
-              onChange={(e) => { setSubtype(e.target.value as Subtype); setRows([]); setSlips([]); setCriteria({}); setError(null); generate.reset(); }}
+              onChange={(e) => { setSubtype(e.target.value as Subtype); setRows([]); setSlips([]); setCriteria({}); setIncludeResigned(false); setIncludeNegative(false); setError(null); generate.reset(); }}
               className={cn(INPUT_CLASS, 'min-w-[180px]')}
             >
               {Object.entries(SUBTYPE_META).map(([key, m]) => <option key={key} value={key}>{m.label}</option>)}
@@ -439,58 +485,93 @@ export default function PayrollReportPage() {
           </div>
           <div>
             <label className="block text-[11.5px] font-medium text-slate-500 mb-1">{meta.dateRange ? 'From Month' : 'Month'}</label>
-            <input type="month" value={monthYear} onChange={(e) => setMonthYear(e.target.value)} className={INPUT_CLASS} />
+            <div className="relative">
+              <Calendar className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+              <input type="month" value={monthYear} onChange={(e) => setMonthYear(e.target.value)} className={cn(INPUT_CLASS, 'pl-8')} />
+            </div>
           </div>
           {meta.dateRange && (
             <div>
               <label className="block text-[11.5px] font-medium text-slate-500 mb-1">To Month</label>
-              <input type="month" value={toMonthYear} onChange={(e) => setToMonthYear(e.target.value)} className={INPUT_CLASS} />
+              <div className="relative">
+                <Calendar className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+                <input type="month" value={toMonthYear} onChange={(e) => setToMonthYear(e.target.value)} className={cn(INPUT_CLASS, 'pl-8')} />
+              </div>
             </div>
           )}
-          <CriteriaFilterPanel reportType={subtype} values={criteria} onChange={setCriteria} />
+          <CriteriaFilterPanel
+            reportType={subtype}
+            values={criteria}
+            onChange={setCriteria}
+            includeResigned={subtype === 'SummaryPayroll' ? includeResigned : undefined}
+            onIncludeResignedChange={subtype === 'SummaryPayroll' ? setIncludeResigned : undefined}
+          />
+        </div>
+        {subtype === 'SummaryPayroll' && (
+          <div className="flex items-center gap-4">
+            <label className="flex items-center gap-1.5 text-xs text-gray-600">
+              <input type="checkbox" checked={includeResigned} onChange={(e) => setIncludeResigned(e.target.checked)} />
+              Include Resigned
+            </label>
+            <label className="flex items-center gap-1.5 text-xs text-gray-600">
+              <input type="checkbox" checked={includeNegative} onChange={(e) => setIncludeNegative(e.target.checked)} />
+              Include Negative Salary
+            </label>
+          </div>
+        )}
+        <div className="flex justify-end">
           <button
             onClick={() => generate.mutate()}
-            disabled={generate.isPending || !monthYear}
+            disabled={generate.isPending || !monthYear || !hasCriteria}
             className={cn(BTN_BASE, 'bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)] text-white')}
           >
-            <Play className="w-3.5 h-3.5" />
-            {generate.isPending ? 'Generating…' : 'Generate'}
+            {generate.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
+            {generate.isPending ? 'Generating…' : 'Generate Report'}
           </button>
         </div>
         {error && <p className="text-[12.5px] text-[color:var(--color-danger)]">{error}</p>}
-        {!isSlip && displayRows.length > 0 && (
-          <div className="flex gap-2">
-            <button
-              onClick={() => meta.groupBy
-                ? exportGroupedReportToExcel(displayColumns, groupRows(displayRows, meta.groupBy), currencyKeys, `payroll_report_${monthYear}`)
-                : exportReportToExcel(displayColumns, displayRows, `payroll_report_${monthYear}`)}
-              className={cn(BTN_BASE, 'bg-white border border-slate-200 hover:bg-slate-50 text-slate-600')}
-            >
-              <Download className="w-3.5 h-3.5" /> Excel
-            </button>
-            {meta.pdfAllowed && (
-              <button
-                onClick={() => meta.groupBy
-                  ? exportGroupedReportToPdf(displayColumns, groupRows(displayRows, meta.groupBy), currencyKeys, `${meta.label} — ${monthYear}`, `payroll_report_${monthYear}`)
-                  : exportReportToPdf(displayColumns, displayRows, `${meta.label} — ${monthYear}`, `payroll_report_${monthYear}`)}
-                className={cn(BTN_BASE, 'bg-white border border-slate-200 hover:bg-slate-50 text-slate-600')}
-              >
-                <Download className="w-3.5 h-3.5" /> PDF
-              </button>
-            )}
-          </div>
-        )}
-        {isSlip && slips.length > 0 && (
-          <div className="flex gap-2">
-            <button onClick={() => exportSalarySlipsToExcel(slips, session?.user?.companyCode ?? '', monthLabel(monthYear), `salary_slip_${monthYear}`)} className={cn(BTN_BASE, 'bg-white border border-slate-200 hover:bg-slate-50 text-slate-600')}>
-              <Download className="w-3.5 h-3.5" /> Excel
-            </button>
-            <button onClick={() => exportSalarySlipsToPdf(slips, monthLabel(monthYear), `salary_slip_${monthYear}`)} className={cn(BTN_BASE, 'bg-white border border-slate-200 hover:bg-slate-50 text-slate-600')}>
-              <Download className="w-3.5 h-3.5" /> PDF
-            </button>
-          </div>
-        )}
       </div>
+
+      {generate.isSuccess && (
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="text-[13px] font-semibold text-[#0F172A]">Report Results</h2>
+          {isSlip ? (
+            slips.length > 0 && (
+              <div className="flex gap-2">
+                <button onClick={() => exportSalarySlipsToExcel(slips, session?.user?.companyCode ?? '', monthLabel(monthYear), `salary_slip_${monthYear}`)} className={cn(BTN_SM, 'bg-white border border-slate-200 hover:bg-slate-50 text-slate-600')}>
+                  <Download className="w-3.5 h-3.5" /> Excel
+                </button>
+                <button onClick={() => exportSalarySlipsToPdf(slips, monthLabel(monthYear), `salary_slip_${monthYear}`)} className={cn(BTN_SM, 'bg-white border border-slate-200 hover:bg-slate-50 text-slate-600')}>
+                  <Download className="w-3.5 h-3.5" /> PDF
+                </button>
+              </div>
+            )
+          ) : (
+            displayRows.length > 0 && (
+              <div className="flex gap-2">
+                <button
+                  onClick={() => meta.groupBy
+                    ? exportGroupedReportToExcel(excelColumns, groupRows(displayRows, meta.groupBy), currencyKeys, excelFilename, { title: excelTitle, slNo: meta.excelSlNo })
+                    : exportReportToExcel(excelColumns, displayRows, excelFilename)}
+                  className={cn(BTN_SM, 'bg-white border border-slate-200 hover:bg-slate-50 text-slate-600')}
+                >
+                  <Download className="w-3.5 h-3.5" /> Excel
+                </button>
+                {meta.pdfAllowed && (
+                  <button
+                    onClick={() => meta.groupBy
+                      ? exportGroupedReportToPdf(displayColumns, groupRows(displayRows, meta.groupBy), currencyKeys, `${meta.label} — ${monthYear}`, `payroll_report_${monthYear}`)
+                      : exportReportToPdf(displayColumns, displayRows, `${meta.label} — ${monthYear}`, `payroll_report_${monthYear}`)}
+                    className={cn(BTN_SM, 'bg-white border border-slate-200 hover:bg-slate-50 text-slate-600')}
+                  >
+                    <Download className="w-3.5 h-3.5" /> PDF
+                  </button>
+                )}
+              </div>
+            )
+          )}
+        </div>
+      )}
 
       {isSlip ? (
         <div className="space-y-4">

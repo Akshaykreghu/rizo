@@ -34,7 +34,7 @@ export function Sidebar() {
     return pathname === href || pathname.startsWith(href + '/');
   }
 
-  const visibleItems = navItems.filter((item) => !item.adminOnly || isAdmin);
+  const visibleItems = navItems.filter((item) => (!item.adminOnly || isAdmin) && (!item.employeeOnly || !isAdmin));
 
   return (
     <aside

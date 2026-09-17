@@ -12,6 +12,7 @@ import {
   Receipt,
   Sparkles,
   Wand2,
+  FolderOpen,
 } from 'lucide-react';
 
 export interface NavChild {
@@ -31,12 +32,17 @@ export interface NavItem {
   icon: React.ComponentType<{ className?: string; strokeWidth?: number }>;
   children?: NavChild[];
   adminOnly?: boolean;
+  /** Hidden for admins — used when an admin already reaches the same page via an adminOnly item. */
+  employeeOnly?: boolean;
 }
 
 export const navItems: NavItem[] = [
   { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
   { label: 'Ask RIZO', href: '/assistant', icon: Sparkles },
   { label: 'AI Navigation Demo', href: '/ai-navigation', icon: Wand2 },
+  // Same route as the admin-only "Document Upload" item below — matches legacy's
+  // document_master.ctp, which is one shared page/link for both roles, scoped by user_group.
+  { label: 'My Documents', href: '/employees/documents', icon: FolderOpen, employeeOnly: true },
   {
     label: 'Employees',
     slug: 'employees',

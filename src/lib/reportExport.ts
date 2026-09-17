@@ -68,37 +68,51 @@ function sumGroupColumn(rows: Record<string, unknown>[], key: string): number {
   return rows.reduce((s, r) => s + Number(r[key] ?? 0), 0);
 }
 
+const SL_NO_KEY = '__slno';
+
 export function exportGroupedReportToExcel(
-  columns: ReportColumn[], groups: ReportGroup[], currencyKeys: Set<string>, filename: string
+  columns: ReportColumn[], groups: ReportGroup[], currencyKeys: Set<string>, filename: string,
+  options?: { title?: string; slNo?: boolean }
 ) {
+  const cols = options?.slNo ? [{ key: SL_NO_KEY, label: 'Sl No' }, ...columns] : columns;
+
   const workbook = new ExcelJS.Workbook();
   const sheet = workbook.addWorksheet('Report');
-  sheet.columns = columns.map((c) => ({ header: c.label, width: 22 }));
+  sheet.columns = cols.map((c) => ({ header: c.label, width: 22 }));
 
   let rowNum = 1;
+  if (options?.title) {
+    sheet.mergeCells(rowNum, 1, rowNum, cols.length);
+    const titleCell = sheet.getCell(rowNum, 1);
+    titleCell.value = options.title;
+    titleCell.font = { bold: true, size: 17 };
+    titleCell.alignment = { horizontal: 'center' };
+    rowNum++;
+  }
+
   for (const group of groups) {
-    sheet.mergeCells(rowNum, 1, rowNum, columns.length);
+    sheet.mergeCells(rowNum, 1, rowNum, cols.length);
     const header = sheet.getCell(rowNum, 1);
     header.value = group.key;
     header.font = { bold: true, size: 12 };
     header.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE5E7EB' } };
     rowNum++;
 
-    columns.forEach((c, i) => {
+    cols.forEach((c, i) => {
       const cell = sheet.getCell(rowNum, i + 1);
       cell.value = c.label;
       cell.font = { bold: true };
     });
     rowNum++;
 
-    for (const row of group.rows) {
-      columns.forEach((c, i) => {
-        sheet.getCell(rowNum, i + 1).value = (row[c.key] as string | number) ?? '';
+    group.rows.forEach((row, rIdx) => {
+      cols.forEach((c, i) => {
+        sheet.getCell(rowNum, i + 1).value = c.key === SL_NO_KEY ? rIdx + 1 : (row[c.key] as string | number) ?? '';
       });
       rowNum++;
-    }
+    });
 
-    columns.forEach((c, i) => {
+    cols.forEach((c, i) => {
       const cell = sheet.getCell(rowNum, i + 1);
       cell.font = { bold: true };
       cell.value = i === 0 ? 'Total' : currencyKeys.has(c.key) ? sumGroupColumn(group.rows, c.key) : '';

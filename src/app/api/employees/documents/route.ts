@@ -7,20 +7,49 @@ import type { RowDataPacket, ResultSetHeader } from 'mysql2';
 // Ports DocumentManagersController::documentUpload()/getDocumentsFromDatabase() — the standalone
 // "Document Upload" library (feature_id 78, distinct from the per-employee identity/KYC Documents
 // section on the employee profile page). Admin uploads a file once here, then allocates it to one
-// or more employees via a separate step (documentAllocate()/save_allocate()). Matching this app's
-// established precedent (no separate employee self-service login exists in this port), only the
-// admin-facing library + allocate flow is built — not an employee-side "view my allocated docs" page.
-export async function GET() {
+// or more employees via a separate step (documentAllocate()/save_allocate()). Matches legacy's
+// document_master.ctp: admins see/manage the full library, regular employees get a read-only view
+// scoped to documents allocated to them (via document_allocation).
+export async function GET(request: NextRequest) {
   const session = await getServerSession(authOptions);
-  if (!session || session.user.userGroup !== 1) {
+  if (!session) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
+  const search = request.nextUrl.searchParams.get('q')?.trim() ?? '';
   const pool = await getCompanyPool(session.user.companyCode);
+
+  if (session.user.userGroup === 1) {
+    const [rows] = await pool.execute<RowDataPacket[]>(
+      `SELECT du.document_upload_pkey, du.document_name, du.document_path, du.type, du.created_by, du.creation_date,
+              du.document_allocated_by, du.document_allocated_date,
+              EXISTS(
+                SELECT 1 FROM document_allocation da
+                WHERE da.document_upload_fkey = du.document_upload_pkey AND da.status = 1
+              ) AS is_allocated
+       FROM document_upload du
+       WHERE du.status = 1 ${search ? 'AND du.document_name LIKE ?' : ''}
+       ORDER BY du.creation_date DESC`,
+      search ? [`%${search}%`] : []
+    );
+    return NextResponse.json(rows);
+  }
+
+  if (!session.user.empFkey) {
+    return NextResponse.json([]);
+  }
+
   const [rows] = await pool.execute<RowDataPacket[]>(
-    `SELECT document_upload_pkey, document_name, document_path, type, created_by, creation_date,
-            document_allocated_by, document_allocated_date
-     FROM document_upload WHERE status = 1 ORDER BY creation_date DESC`
+    `SELECT du.document_upload_pkey, du.document_name, du.document_path, du.type, du.created_by, du.creation_date,
+            du.document_allocated_by, du.document_allocated_date
+     FROM document_upload du
+     WHERE du.status = 1
+       AND du.document_upload_pkey IN (
+         SELECT DISTINCT document_upload_fkey FROM document_allocation WHERE emp_fkey = ? AND status = 1
+       )
+       ${search ? 'AND du.document_name LIKE ?' : ''}
+     ORDER BY du.creation_date DESC`,
+    search ? [session.user.empFkey, `%${search}%`] : [session.user.empFkey]
   );
   return NextResponse.json(rows);
 }

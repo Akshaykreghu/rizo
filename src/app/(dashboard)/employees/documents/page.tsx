@@ -2,14 +2,16 @@
 
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useSession } from 'next-auth/react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Upload, Trash2, Users, X, Download } from 'lucide-react';
+import { Upload, Trash2, Users, X, Download, Eye, Search } from 'lucide-react';
 import type { ColumnDef } from '@tanstack/react-table';
 import { DocumentUploadField } from '@/components/employees/DocumentUploadField';
 import { EmployeeSearch } from '@/components/employees/EmployeeSearch';
 import { cn } from '@/lib/utils';
 import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
 import { DataTable } from '@/components/data-table/DataTable';
+import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 
 const INPUT_CLASS =
   'border border-slate-200 bg-white rounded-[9px] px-2.5 py-1.5 text-[12.5px] text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/25 focus:border-[color:var(--color-primary)] transition-colors';
@@ -26,6 +28,7 @@ interface DocumentRow {
   creation_date: string;
   document_allocated_by: string | null;
   document_allocated_date: string | null;
+  is_allocated: number | boolean;
 }
 
 interface AllocationRow {
@@ -47,16 +50,22 @@ function previewKind(doc: DocumentRow): 'pdf' | 'image' | 'other' {
 
 export default function DocumentLibraryPage() {
   const { slotEl } = useHeaderSlot();
+  const { data: session } = useSession();
+  const isAdmin = session?.user.userGroup === 1;
   const queryClient = useQueryClient();
   const [newName, setNewName] = useState('');
   const [newPath, setNewPath] = useState('');
   const [allocateFor, setAllocateFor] = useState<DocumentRow | null>(null);
   const [allocateEmp, setAllocateEmp] = useState('');
   const [previewDoc, setPreviewDoc] = useState<DocumentRow | null>(null);
+  const [searchInput, setSearchInput] = useState('');
+  const search = useDebouncedValue(searchInput, 300);
+  const [deleteError, setDeleteError] = useState('');
+  const [uploadOpen, setUploadOpen] = useState(false);
 
   const { data: documents = [] } = useQuery<DocumentRow[]>({
-    queryKey: ['employees/documents'],
-    queryFn: () => fetch('/api/employees/documents').then((r) => r.json()),
+    queryKey: ['employees/documents', search],
+    queryFn: () => fetch(`/api/employees/documents?q=${encodeURIComponent(search)}`).then((r) => r.json()),
   });
 
   const { data: allocations = [] } = useQuery<AllocationRow[]>({
@@ -75,12 +84,21 @@ export default function DocumentLibraryPage() {
       queryClient.invalidateQueries({ queryKey: ['employees/documents'] });
       setNewName('');
       setNewPath('');
+      setUploadOpen(false);
     },
   });
 
   const remove = useMutation({
-    mutationFn: (id: number) => fetch(`/api/employees/documents/${id}`, { method: 'DELETE' }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['employees/documents'] }),
+    mutationFn: (id: number) =>
+      fetch(`/api/employees/documents/${id}`, { method: 'DELETE' }).then(async (r) => {
+        if (!r.ok) throw new Error((await r.json()).error ?? 'Failed to remove document');
+        return r.json();
+      }),
+    onSuccess: () => {
+      setDeleteError('');
+      queryClient.invalidateQueries({ queryKey: ['employees/documents'] });
+    },
+    onError: (err: Error) => setDeleteError(err.message),
   });
 
   const allocate = useMutation({
@@ -89,6 +107,18 @@ export default function DocumentLibraryPage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ emp_fkey: Number(allocateEmp) }),
     }).then((r) => { if (!r.ok) throw new Error('Already allocated to this employee'); return r.json(); }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['employees/documents/allocate', allocateFor?.document_upload_pkey] });
+      setAllocateEmp('');
+    },
+  });
+
+  const allocateAll = useMutation({
+    mutationFn: () => fetch(`/api/employees/documents/${allocateFor!.document_upload_pkey}/allocate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ emp_fkey: 'all' }),
+    }).then((r) => { if (!r.ok) throw new Error('Failed to allocate to all employees'); return r.json(); }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['employees/documents/allocate', allocateFor?.document_upload_pkey] });
       setAllocateEmp('');
@@ -105,34 +135,52 @@ export default function DocumentLibraryPage() {
     {
       accessorKey: 'document_name',
       header: 'Document Name',
-      cell: ({ row }) => (
-        <button onClick={(e) => { e.stopPropagation(); setPreviewDoc(row.original); }} className="text-[color:var(--color-primary)] hover:underline text-left">
-          {row.original.document_name}
-        </button>
-      ),
+      cell: ({ row }) => <span className="text-[#0F172A]">{row.original.document_name}</span>,
     },
     { accessorKey: 'created_by', header: 'Uploaded By' },
     { id: 'date', header: 'Date', cell: ({ row }) => new Date(row.original.creation_date).toLocaleDateString() },
     {
       id: 'actions',
       header: '',
-      meta: { className: 'w-20' },
+      meta: { className: isAdmin ? 'w-28' : 'w-10' },
       cell: ({ row }) => (
         <div className="flex items-center justify-end gap-1">
           <button
-            onClick={(e) => { e.stopPropagation(); setAllocateFor(row.original); }}
+            onClick={(e) => { e.stopPropagation(); setPreviewDoc(row.original); }}
             className="p-1.5 rounded-lg text-slate-400 hover:text-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-light)] transition-colors duration-150"
-            title="Allocate to employees"
+            title="View"
           >
-            <Users className="w-3.5 h-3.5" />
+            <Eye className="w-3.5 h-3.5" />
           </button>
-          <button
-            onClick={(e) => { e.stopPropagation(); if (confirm('Remove this document?')) remove.mutate(row.original.document_upload_pkey); }}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-[color:var(--color-danger)] hover:bg-[color:var(--color-danger)]/10 transition-colors duration-150"
-            title="Remove"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-          </button>
+          {isAdmin && (
+            <>
+              <button
+                onClick={(e) => { e.stopPropagation(); setAllocateFor(row.original); }}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-light)] transition-colors duration-150"
+                title="Allocate to employees"
+              >
+                <Users className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (row.original.is_allocated) return;
+                  setDeleteError('');
+                  if (confirm('Remove this document?')) remove.mutate(row.original.document_upload_pkey);
+                }}
+                disabled={!!row.original.is_allocated}
+                className={cn(
+                  'p-1.5 rounded-lg transition-colors duration-150',
+                  row.original.is_allocated
+                    ? 'text-slate-300 opacity-50 cursor-not-allowed select-none'
+                    : 'text-slate-400 hover:text-[color:var(--color-danger)] hover:bg-[color:var(--color-danger)]/10'
+                )}
+                title={row.original.is_allocated ? 'Already allocated' : 'Remove'}
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </>
+          )}
         </div>
       ),
     },
@@ -144,38 +192,74 @@ export default function DocumentLibraryPage() {
         createPortal(
           <div className="min-w-0">
             <h1 className="font-heading text-2xl font-bold text-[#0F172A] tracking-tight leading-tight truncate">
-              Document Upload
+              {isAdmin ? 'Document Upload' : 'Document View'}
             </h1>
             <p className="text-sm text-[#64748B] mt-0.5 truncate">
-              Upload company documents once, then allocate them to specific employees
+              {isAdmin
+                ? 'Upload company documents once, then allocate them to specific employees'
+                : 'Documents allocated to you'}
             </p>
           </div>,
           slotEl
         )}
 
-      <div className="surface-card rounded-xl px-4 py-4 max-w-xl mb-4 space-y-3">
-        <h2 className="text-[13.5px] font-semibold text-slate-600 uppercase tracking-wide">Upload New Document</h2>
-        <div>
-          <label className="block text-[12px] font-medium text-slate-600 mb-1.5">Document Name</label>
+      <div className="flex items-center justify-between gap-3 mb-3">
+        <div className="relative max-w-xs w-full">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
           <input
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-            className={cn(INPUT_CLASS, 'w-full')}
-            placeholder="e.g. Offer Letter Template"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            placeholder="Search by document name"
+            className={cn(INPUT_CLASS, 'w-full pl-8')}
           />
         </div>
-        <DocumentUploadField value={newPath} onChange={setNewPath} />
-        <button
-          onClick={() => create.mutate()}
-          disabled={!newName || !newPath || create.isPending}
-          className={cn(BTN_BASE, 'bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)] text-white')}
-        >
-          <Upload className="w-3.5 h-3.5" /> {create.isPending ? 'Saving…' : 'Add to Library'}
-        </button>
-        {create.isError && <p className="text-[11.5px] text-[color:var(--color-danger)]">Failed to save document.</p>}
+
+        {isAdmin && (
+          <button
+            onClick={() => setUploadOpen(true)}
+            className={cn(BTN_BASE, 'bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)] text-white shrink-0')}
+          >
+            <Upload className="w-3.5 h-3.5" /> Add Document
+          </button>
+        )}
       </div>
 
+      {deleteError && (
+        <p className="text-[12.5px] text-[color:var(--color-danger)] mb-3">{deleteError}</p>
+      )}
+
       <DataTable data={documents} columns={columns} pageSize={10} pageSizeOptions={[10, 20, 30, 50]} />
+
+      {uploadOpen && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setUploadOpen(false)}>
+          <div className="bg-white rounded-xl w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+            <div className="p-4 border-b border-gray-100 flex items-center justify-between">
+              <h3 className="text-base font-semibold">Upload New Document</h3>
+              <button onClick={() => setUploadOpen(false)}><X className="w-4 h-4 text-gray-400" /></button>
+            </div>
+            <div className="p-4 space-y-3">
+              <div>
+                <label className="block text-[12px] font-medium text-slate-600 mb-1.5">Document Name</label>
+                <input
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  className={cn(INPUT_CLASS, 'w-full')}
+                  placeholder="e.g. Offer Letter Template"
+                />
+              </div>
+              <DocumentUploadField value={newPath} onChange={setNewPath} />
+              <button
+                onClick={() => create.mutate()}
+                disabled={!newName || !newPath || create.isPending}
+                className={cn(BTN_BASE, 'bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)] text-white w-full justify-center')}
+              >
+                <Upload className="w-3.5 h-3.5" /> {create.isPending ? 'Saving…' : 'Add to Library'}
+              </button>
+              {create.isError && <p className="text-[11.5px] text-[color:var(--color-danger)]">Failed to save document.</p>}
+            </div>
+          </div>
+        </div>
+      )}
 
       {allocateFor && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setAllocateFor(null)}>
@@ -186,14 +270,24 @@ export default function DocumentLibraryPage() {
             </div>
             <div className="p-4 border-b border-gray-100">
               <EmployeeSearch value={allocateEmp} onChange={setAllocateEmp} />
-              <button
-                onClick={() => allocate.mutate()}
-                disabled={!allocateEmp || allocate.isPending}
-                className="mt-2 w-full text-sm text-white bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 px-3 py-2 rounded-lg"
-              >
-                {allocate.isPending ? 'Allocating…' : 'Allocate'}
-              </button>
+              <div className="mt-2 flex gap-2">
+                <button
+                  onClick={() => allocate.mutate()}
+                  disabled={!allocateEmp || allocate.isPending}
+                  className="flex-1 text-sm text-white bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 px-3 py-2 rounded-lg"
+                >
+                  {allocate.isPending ? 'Allocating…' : 'Allocate'}
+                </button>
+                <button
+                  onClick={() => allocateAll.mutate()}
+                  disabled={allocateAll.isPending}
+                  className="flex-1 text-sm text-white bg-slate-700 hover:bg-slate-800 disabled:bg-slate-400 px-3 py-2 rounded-lg"
+                >
+                  {allocateAll.isPending ? 'Allocating…' : 'Allocate all'}
+                </button>
+              </div>
               {allocate.isError && <p className="text-xs text-red-500 mt-1">Already allocated to this employee.</p>}
+              {allocateAll.isError && <p className="text-xs text-red-500 mt-1">Failed to allocate to all employees.</p>}
             </div>
             <div className="p-4 overflow-y-auto flex-1">
               <h4 className="text-xs font-semibold text-gray-500 uppercase mb-2">Currently Allocated</h4>
