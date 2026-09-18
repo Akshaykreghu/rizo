@@ -231,14 +231,21 @@ const SUBTYPE_META: Record<Subtype, SubtypeMeta> = {
   },
   Grosssalary: {
     // Mirrors legacy's GenerateSalaryGrossNonExemted() exactly (SalaryReportsController.php:
-    // 42057-43849) — one flat table (never branch-grouped) with Sl No, a grand-total row, and a
-    // dynamic Standard/Actual salary-head pivot (see flattenItemColumns' 'grossDetailed' case and
-    // buildGrossPivotRow in reports.ts) instead of trusting payroll_master's stored totals.
+    // 42057-43849) — Sl No, a grand-total row, and a dynamic Standard/Actual salary-head pivot (see
+    // flattenItemColumns' 'grossDetailed' case and buildGrossPivotRow in reports.ts) instead of
+    // trusting payroll_master's stored totals. The on-screen View is grouped dynamically by whichever
+    // criteria is selected — see grosssalaryViewGroupBy — while Excel stays flat (see exportReport).
     label: 'Gross Salary Detailed',
     itemPivot: 'grossDetailed',
     slNo: true,
     showTotal: true,
-    pdfAllowed: true,
+    // Legacy's own toolbar (showreport.ctp:403, `//edited by amal on 08/08/2019 hide pdf`) explicitly
+    // hides the PDF button for this report type — the controller's `case 'pdf':` branch and the view's
+    // Download-As-PDF link both still exist server-side (SalaryReportsController.php:42887-42900,
+    // grossreport_non_exempted.ctp:1869) but are dead/unreachable from the real UI. Kept `false` here
+    // (not deleted) to mirror that same "code exists, button hidden" state rather than removing the
+    // export path entirely.
+    pdfAllowed: false,
     columns: [
       { key: 'employee_id', label: 'Employee ID' }, { key: 'login_user_id', label: 'User ID' }, { key: 'emp_name', label: 'Employee Name' },
       { key: 'joining_date', label: 'Joining Date' }, { key: 'branch_name', label: 'Branch' },
@@ -360,6 +367,25 @@ function groupRows(rows: Record<string, unknown>[], groupBy: (row: Record<string
 
 function sumColumn(rows: Record<string, unknown>[], key: string): number {
   return rows.reduce((s, r) => s + Number(r[key] ?? 0), 0);
+}
+
+// Gross Salary Detailed's View is always sectioned into separate boxed tables in legacy — never one
+// flat grid — but WHICH field it sections by depends on the criteria actually selected (confirmed via
+// grossreport_non_exempted.ctp: Units criteria groups by branch with a per-branch subtotal; every
+// other criteria legacy literally renders one fieldset per individual employee, i.e. groups by
+// employee). We keep legacy's per-employee behavior for the Employee criteria (a one-row "group" per
+// employee, matching legacy exactly), but for Departments/Designation/Gender we group by that
+// criteria's own dimension instead of blindly copying legacy's per-employee fallback — a deliberate,
+// more useful deviation for those three (per explicit product decision), not a missed case.
+// Excel/PDF export intentionally ignores this — legacy's own Excel export is always one flat table
+// regardless of criteria (see exportReport's superHeaders comment), so `meta.groupBy` stays unset for
+// this subtype and only the on-screen view uses this dynamic grouping.
+function grosssalaryViewGroupBy(criteria: Record<string, string[]>): (row: Record<string, unknown>) => string {
+  if (criteria.EmployeeDetails?.length) return (r) => String(r.emp_name ?? '');
+  if (criteria.Departments?.length) return (r) => String(r.departments ?? '');
+  if (criteria.Designation?.length) return (r) => String(r.desig ?? '');
+  if (criteria.Gender?.length) return (r) => String(r.gender ?? '');
+  return (r) => String(r.branch_name ?? '');
 }
 
 interface PlainItem { label: string; amount: number }
@@ -490,6 +516,10 @@ export default function PayrollReportPage() {
     [itemColumns]
   );
   const hasCriteria = Object.values(criteria).some((v) => Array.isArray(v) && v.length > 0);
+  // View-only grouping for Gross Salary Detailed — see grosssalaryViewGroupBy for why this is
+  // separate from meta.groupBy (which stays unset here so Excel/PDF export remain the single flat
+  // table legacy always produces for this report, regardless of criteria).
+  const viewGroupBy = subtype === 'Grosssalary' ? grosssalaryViewGroupBy(criteria) : meta.groupBy;
   // Which subtypes have a real, wired-up "Include Resigned" / "Include Negative Salary" filter —
   // legacy's checkboxes only affect the report data itself for these subtypes; other subtypes render
   // the shared employee-picker's own resigned toggle (via EmployeeChecklist) but nothing report-level.
@@ -696,9 +726,9 @@ export default function PayrollReportPage() {
               ? 'No records found for the selected criteria.'
               : 'Choose at least one criteria value and click Generate.'}
         </div>
-      ) : meta.groupBy ? (
+      ) : viewGroupBy ? (
         <div className="space-y-4">
-          {groupRows(displayRows, meta.groupBy).map((group) => (
+          {groupRows(displayRows, viewGroupBy).map((group) => (
             <div key={group.key} className="surface-card rounded-2xl overflow-hidden overflow-x-auto">
               <div className="bg-slate-100 border-b border-slate-200 px-4 py-2 text-[13px] font-semibold text-[#0F172A]">{group.key}</div>
               <table className="w-full text-[13px]">

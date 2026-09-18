@@ -401,7 +401,7 @@ async function getSalaryHeadKeys(pool: Pool, monthYear: string): Promise<{ addit
      FROM emp_salary_slip ess
      LEFT JOIN salary_head_items shi ON shi.salary_head_item_pkey = ess.salary_head_item_fkey
      WHERE ess.item_part = 'Direct' AND ess.end_date_effective IS NULL AND ess.month_year = ?
-     GROUP BY ess.salary_head_item_desc
+     GROUP BY ess.salary_head_item_desc, ess.head_operator, shi.salary_head_item_order1
      ORDER BY shi.salary_head_item_order1`,
     [monthYear]
   );
@@ -549,7 +549,7 @@ export async function generatePayrollReport(pool: Pool, params: PayrollReportPar
       `SELECT pm.payroll_master_pkey, pm.emp_fkey,
               CASE WHEN ed.status = 2 THEN CONCAT(pm.emp_name, ' (Resigned)') ELSE pm.emp_name END AS emp_name,
               ep.emp_company_id AS employee_id, uc.user_id AS login_user_id, pm.branch_name,
-              pm.departments, pm.desig, pm.month_year,
+              pm.departments, pm.desig, pm.month_year, ed.classification AS gender,
               DATE_FORMAT(i.joining_date, '%Y-%m-%d') AS joining_date,
               DATE_FORMAT(tm.last_approved_working_date, '%Y-%m-%d') AS termination_date,
               pm.days_presant, ar.lop_total AS non_paying_days, ar.lop_only AS lop_days,
