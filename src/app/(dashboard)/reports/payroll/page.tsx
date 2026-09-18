@@ -2,13 +2,13 @@
 
 import { useState, useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { useSession } from 'next-auth/react';
 import { Download, Eye, Loader2, Calendar } from 'lucide-react';
 import { CriteriaFilterPanel } from '@/components/reports/CriteriaFilterPanel';
 import {
   exportReportToExcel, exportReportToPdf, exportSalarySlipsToExcel, exportSalarySlipsToPdf,
-  exportGroupedReportToExcel, exportGroupedReportToPdf, type ReportColumn,
+  exportGroupedReportToExcel, exportGroupedReportToPdf, type ReportColumn, type SalarySlipCompanyInfo,
 } from '@/lib/reportExport';
 import { cn, formatCurrency } from '@/lib/utils';
 import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
@@ -40,6 +40,7 @@ interface SalarySlip {
   status: number;
   leave_days: number;
   present_days: number;
+  non_paying_days: number;
   lop_days: number;
   weekoff_days: number;
   holiday_days: number;
@@ -54,6 +55,7 @@ interface SalarySlip {
   deductions: SalarySlipLineItem[];
   total_earnings: number;
   total_deductions: number;
+  settlement_amount: number;
   net_pay: number;
 }
 
@@ -72,6 +74,7 @@ function SalarySlipCard({ slip }: { slip: SalarySlip }) {
         <div><span className="text-slate-500">Date of Joining:</span> {slip.joining_date ?? '—'}</div>
         <div><span className="text-slate-500">Leave Days:</span> {slip.leave_days}</div>
         <div><span className="text-slate-500">Present Days:</span> {slip.present_days}</div>
+        <div><span className="text-slate-500">Non Paying Days:</span> {slip.non_paying_days}</div>
         <div><span className="text-slate-500">LOP Days:</span> {slip.lop_days}</div>
         <div><span className="text-slate-500">Week Off:</span> {slip.weekoff_days}</div>
         <div><span className="text-slate-500">Holidays:</span> {slip.holiday_days}</div>
@@ -112,6 +115,12 @@ function SalarySlipCard({ slip }: { slip: SalarySlip }) {
             <td className="px-4 py-2 text-[#0F172A]">Total Deductions</td>
             <td className="px-4 py-2 text-right text-[#0F172A]">{formatCurrency(slip.total_deductions)}</td>
           </tr>
+          {slip.status === 2 && (
+            <tr>
+              <td className="px-4 py-2 text-[#0F172A]" colSpan={3}>Settlement Amount</td>
+              <td className="px-4 py-2 text-right text-[#0F172A]">{formatCurrency(slip.settlement_amount)}</td>
+            </tr>
+          )}
           <tr>
             <td className="px-4 py-2 text-[#0F172A]" colSpan={3}>Net Pay</td>
             <td className="px-4 py-2 text-right text-[#0F172A]">{formatCurrency(slip.net_pay)}</td>
@@ -528,6 +537,13 @@ export default function PayrollReportPage() {
   const isBankStatementMode = subtype === 'BankTranfer' && !!criteria.Banks?.length;
   const meta = isBankStatementMode ? BANK_STATEMENT_META : SUBTYPE_META[subtype];
   const isSlip = subtype === 'Salaryslip';
+  // Company letterhead for the Salary Slip PDF header (mirrors legacy's salaryslip_not_exempted.ctp
+  // header block) — only fetched when actually needed.
+  const { data: companyInfo } = useQuery<SalarySlipCompanyInfo>({
+    queryKey: ['company-info'],
+    queryFn: () => fetch('/api/company').then((r) => r.json()),
+    enabled: isSlip,
+  });
 
   const { rows: displayRows, columns: itemColumns } = useMemo(
     () => flattenItemColumns(rows, meta.itemPivot),
@@ -619,7 +635,7 @@ export default function PayrollReportPage() {
       if (isSlip) {
         const slipData = r as unknown as SalarySlip[];
         if (kind === 'excel') exportSalarySlipsToExcel(slipData, session?.user?.companyCode ?? '', monthLabel(monthYear), `salary_slip_${monthYear}`);
-        else exportSalarySlipsToPdf(slipData, monthLabel(monthYear), `salary_slip_${monthYear}`);
+        else exportSalarySlipsToPdf(slipData, monthLabel(monthYear), `salary_slip_${monthYear}`, companyInfo, session?.user?.name ?? undefined);
         return;
       }
       const { rows: expRows, columns: itemCols } = flattenItemColumns(r, meta.itemPivot);
@@ -702,22 +718,10 @@ export default function PayrollReportPage() {
             onChange={(v) => { setCriteria(v); resetResults(); }}
             includeResigned={hasResignedFilter ? includeResigned : undefined}
             onIncludeResignedChange={hasResignedFilter ? (v: boolean) => { setIncludeResigned(v); resetResults(); } : undefined}
+            includeNegative={hasNegativeFilter ? includeNegative : undefined}
+            onIncludeNegativeChange={hasNegativeFilter ? (v: boolean) => { setIncludeNegative(v); resetResults(); } : undefined}
           />
         </div>
-        {hasResignedFilter && (
-          <div className="flex items-center gap-4">
-            <label className="flex items-center gap-1.5 text-xs text-gray-600">
-              <input type="checkbox" checked={includeResigned} onChange={(e) => { setIncludeResigned(e.target.checked); resetResults(); }} />
-              Include Resigned
-            </label>
-            {hasNegativeFilter && (
-              <label className="flex items-center gap-1.5 text-xs text-gray-600">
-                <input type="checkbox" checked={includeNegative} onChange={(e) => { setIncludeNegative(e.target.checked); resetResults(); }} />
-                Include Negative Salary
-              </label>
-            )}
-          </div>
-        )}
         <div className="flex justify-end items-center gap-2">
           <button
             onClick={() => generate.mutate()}

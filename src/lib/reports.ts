@@ -939,6 +939,10 @@ export interface SalarySlip {
   status: number;
   leave_days: number;
   present_days: number;
+  // Legacy's PDF (salaryslip_not_exempted.ctp:942-955) shows these as two distinct fields:
+  // "Non Paying Days" (payroll_master.loss_of_pay) and "LOP Days" (attendance_register.lop_only) —
+  // not the same value. An earlier port conflated them (lop_days was populated from loss_of_pay).
+  non_paying_days: number;
   lop_days: number;
   weekoff_days: number;
   holiday_days: number;
@@ -953,6 +957,7 @@ export interface SalarySlip {
   deductions: SalarySlipLineItem[];
   total_earnings: number;
   total_deductions: number;
+  settlement_amount: number;
   net_pay: number;
 }
 
@@ -973,12 +978,15 @@ export async function generateSalarySlips(pool: Pool, params: PayrollReportParam
     `SELECT pm.payroll_master_pkey, pm.emp_fkey, i.EmpName AS emp_name, i.designation, i.department,
             i.branch AS branch_name, DATE_FORMAT(i.joining_date, '%Y-%m-%d') AS joining_date, ed.status, ed.classification AS gender,
             pm.days_leave, pm.loss_of_pay, pm.bank_details,
-            ar.presant_total, ar.weekoff_total, ar.holiday_total,
+            ar.presant_total, ar.weekoff_total, ar.holiday_total, ar.lop_only,
             ed.company_pf, ed.esi, ed.pf AS uan,
             ed.bank_name AS ed_bank_name, ed.branch_name AS ed_bank_branch, ed.ifsc_code AS ed_ifsc_code,
             ed.account_no AS ed_account_no,
             ep.emp_company_id AS employee_id, uc.user_id AS login_user_id,
-            DATE_FORMAT(tm.last_approved_working_date, '%Y-%m-%d') AS termination_date
+            DATE_FORMAT(tm.last_approved_working_date, '%Y-%m-%d') AS termination_date,
+            COALESCE((SELECT SUM(ess.salary_amount) FROM emp_settle_slip ess
+                      WHERE ess.emp_fkey = pm.emp_fkey AND ess.status = 'Y' AND ess.approved = 'Y' AND ess.type <> 'SALARY'
+                        AND DATE_FORMAT(tm.last_approved_working_date, '%Y-%m') = pm.month_year), 0) AS settlement_amount
      FROM payroll_master pm
      JOIN emp_details ed ON ed.emp_pkey = pm.emp_fkey
      LEFT JOIN employee_info i ON i.emp_pkey = pm.emp_fkey
@@ -1025,17 +1033,25 @@ export async function generateSalarySlips(pool: Pool, params: PayrollReportParam
     accountNo = accountNo || row.ed_account_no || '';
 
     const items = itemsByPayroll.get(row.payroll_master_pkey) ?? [];
-    const earnings: SalarySlipLineItem[] = [];
-    const deductions: SalarySlipLineItem[] = [];
-    for (const item of items) {
-      const line = {
-        label: String(item.salary_head_item_desc).trim(),
-        amount: Math.abs(Math.round(Number(item.salary_amount))),
-        rate: Math.abs(Math.round(Number(item.structure_det_value ?? item.salary_amount))),
-      };
-      if (item.head_operator === 'Addition') earnings.push(line);
-      else deductions.push(line);
-    }
+    const earningItems = items.filter((i) => i.head_operator === 'Addition');
+    const deductionItems = items.filter((i) => i.head_operator !== 'Addition');
+    // Legacy nudges the first earnings line by the total rounding delta (salaryslip_not_exempted.ctp:
+    // 1033-1040) so displayed earnings sum exactly to the displayed Total Earnings instead of
+    // drifting by a rupee from independently-rounded line items.
+    const earningValues = earningItems.map((i) => Math.abs(Number(i.salary_amount)));
+    const ogTotal = earningValues.reduce((s, v) => s + Math.round(v * 100) / 100, 0);
+    const rndTotal = earningValues.reduce((s, v) => s + Math.round(v), 0);
+    const diff = Math.round(ogTotal) - rndTotal;
+    const earnings: SalarySlipLineItem[] = earningItems.map((item, m) => ({
+      label: String(item.salary_head_item_desc).trim(),
+      amount: Math.round(earningValues[m]) + (m === 0 ? diff : 0),
+      rate: Math.abs(Math.round(Number(item.structure_det_value ?? item.salary_amount))),
+    }));
+    const deductions: SalarySlipLineItem[] = deductionItems.map((item) => ({
+      label: String(item.salary_head_item_desc).trim(),
+      amount: Math.abs(Math.round(Number(item.salary_amount))),
+      rate: Math.abs(Math.round(Number(item.structure_det_value ?? item.salary_amount))),
+    }));
     const totalEarnings = earnings.reduce((s, e) => s + e.amount, 0);
     const totalDeductions = deductions.reduce((s, d) => s + d.amount, 0);
 
@@ -1053,7 +1069,8 @@ export async function generateSalarySlips(pool: Pool, params: PayrollReportParam
       status: row.status,
       leave_days: row.days_leave ?? 0,
       present_days: row.presant_total ?? 0,
-      lop_days: row.loss_of_pay ?? 0,
+      non_paying_days: row.loss_of_pay ?? 0,
+      lop_days: row.lop_only ?? 0,
       weekoff_days: row.weekoff_total ?? 0,
       holiday_days: row.holiday_total ?? 0,
       pf_account_no: row.company_pf,
@@ -1067,7 +1084,8 @@ export async function generateSalarySlips(pool: Pool, params: PayrollReportParam
       deductions,
       total_earnings: totalEarnings,
       total_deductions: totalDeductions,
-      net_pay: totalEarnings - totalDeductions,
+      settlement_amount: Number(row.settlement_amount),
+      net_pay: Math.round(totalEarnings - totalDeductions + Number(row.settlement_amount)),
     };
   });
 }

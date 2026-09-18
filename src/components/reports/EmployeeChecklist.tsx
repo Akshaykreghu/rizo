@@ -16,21 +16,27 @@ interface Option { value: number; label: string }
 // to align to its tall height, which is what produced the large empty space at the top of the
 // Payroll Report filter card.
 //
-// `includeResigned`/`onIncludeResignedChange` are optional: pass them when the parent screen
-// already renders its own "Include Resigned" toggle at the report level (e.g. Payroll Summary) so
-// this component doesn't duplicate it inside the picker — it then just reads the parent's value to
-// decide which employees to list. When omitted, this component manages that toggle itself (every
-// other report screen using this picker today).
+// `includeResigned`/`onIncludeResignedChange` are optional: pass them when the parent screen has
+// this filter wired up (its value affects the report query itself, e.g. Payroll Summary) so it
+// lives inside this dropdown instead of a separate report-level row — this component then just
+// reads the parent's value to decide which employees to list. When omitted, this component manages
+// that toggle itself (every other report screen using this picker today) and doesn't render
+// "Include Negative Salary" at all (that one has no meaningful per-picker default — it's always
+// either report-level-wired or absent).
 export function EmployeeChecklist({
   selected,
   onChange,
   includeResigned: controlledIncludeResigned,
   onIncludeResignedChange,
+  includeNegative,
+  onIncludeNegativeChange,
 }: {
   selected: string[];
   onChange: (values: string[]) => void;
   includeResigned?: boolean;
   onIncludeResignedChange?: (value: boolean) => void;
+  includeNegative?: boolean;
+  onIncludeNegativeChange?: (value: boolean) => void;
 }) {
   const [search, setSearch] = useState('');
   const [internalIncludeResigned, setInternalIncludeResigned] = useState(false);
@@ -86,44 +92,52 @@ export function EmployeeChecklist({
       </button>
 
       {open && (
-        <div className="absolute z-20 mt-1 w-64 bg-white border border-gray-200 rounded-lg shadow-lg p-3">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-medium text-gray-600">Select Employees</span>
-            <span className="text-xs text-gray-400">{selected.length} selected</span>
-          </div>
-          <div className="relative mb-2">
-            <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
-            <input
-              type="text"
-              placeholder="Search employees…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="w-full border border-gray-300 rounded pl-7 pr-2 py-1 text-xs"
-            />
-          </div>
-          <div className="flex gap-3 mb-2 text-xs">
-            <button type="button" className="text-indigo-600 hover:underline" onClick={() => onChange(options.map((o) => String(o.value)))}>
-              Select all
-            </button>
-            <button type="button" className="text-indigo-600 hover:underline" onClick={() => onChange([])}>
-              Deselect all
-            </button>
-          </div>
-          {!isControlled && (
-            <label className="flex items-center gap-1.5 text-xs text-gray-600 mb-2">
-              <input type="checkbox" checked={includeResigned} onChange={(e) => setIncludeResigned(e.target.checked)} />
-              Include Resigned
-            </label>
-          )}
-          <div className="max-h-40 overflow-y-auto border-t border-gray-100 pt-1 space-y-0.5">
-            {isLoading && <div className="text-xs text-gray-400 py-2">Loading...</div>}
-            {!isLoading && options.length === 0 && <div className="text-xs text-gray-400 py-2">No matches.</div>}
-            {options.map((o) => (
-              <label key={o.value} className="flex items-center gap-1.5 text-xs text-gray-700 py-0.5 cursor-pointer">
-                <input type="checkbox" checked={selected.includes(String(o.value))} onChange={() => toggle(o.value)} />
-                {o.label}
+        <div className="absolute z-20 mt-1 w-72 bg-white border border-gray-200 rounded-lg shadow-lg overflow-hidden">
+          <div className="bg-slate-50 border-b border-gray-200 px-3 py-2">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-xs font-semibold text-gray-700">Select Employees</span>
+              <span className="text-xs text-gray-400">{selected.length} selected</span>
+            </div>
+            <div className="flex items-center gap-3 text-xs flex-wrap">
+              <button type="button" className="text-indigo-600 hover:underline" onClick={() => onChange(options.map((o) => String(o.value)))}>
+                Select all
+              </button>
+              <button type="button" className="text-indigo-600 hover:underline" onClick={() => onChange([])}>
+                Deselect all
+              </button>
+              <label className="flex items-center gap-1 text-gray-600">
+                <input type="checkbox" checked={includeResigned} onChange={(e) => setIncludeResigned(e.target.checked)} />
+                Include Resigned
               </label>
-            ))}
+              {onIncludeNegativeChange && (
+                <label className="flex items-center gap-1 text-gray-600">
+                  <input type="checkbox" checked={!!includeNegative} onChange={(e) => onIncludeNegativeChange(e.target.checked)} />
+                  Include Negative Salary
+                </label>
+              )}
+            </div>
+          </div>
+          <div className="p-2">
+            <div className="relative mb-1">
+              <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+              <input
+                type="text"
+                placeholder="Search employees…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="w-full border border-gray-300 rounded pl-7 pr-2 py-1.5 text-xs"
+              />
+            </div>
+            <div className="max-h-52 overflow-y-auto">
+              {isLoading && <div className="text-xs text-gray-400 py-2">Loading...</div>}
+              {!isLoading && options.length === 0 && <div className="text-xs text-gray-400 py-2">No matches.</div>}
+              {options.map((o) => (
+                <label key={o.value} className="flex items-center gap-2 px-1 py-1.5 text-sm text-gray-700 cursor-pointer border-b border-gray-50 last:border-0">
+                  <input type="checkbox" checked={selected.includes(String(o.value))} onChange={() => toggle(o.value)} />
+                  {o.label}
+                </label>
+              ))}
+            </div>
           </div>
         </div>
       )}

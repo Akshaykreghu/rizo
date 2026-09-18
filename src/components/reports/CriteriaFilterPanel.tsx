@@ -34,14 +34,20 @@ export function CriteriaFilterPanel({
   onChange,
   includeResigned,
   onIncludeResignedChange,
+  includeNegative,
+  onIncludeNegativeChange,
 }: {
   reportType: string;
   values: Record<string, string[]>;
   onChange: (values: Record<string, string[]>) => void;
-  // Forwarded to EmployeeChecklist so a screen with its own report-level "Include Resigned"
-  // toggle (Payroll Summary) doesn't get a second, duplicate one inside the employee picker.
+  // Forwarded into whichever criteria dropdown is currently active (EmployeeChecklist or
+  // CriteriaOptionSelect) so a report-level "Include Resigned"/"Include Negative Salary" toggle
+  // lives inside that dropdown instead of as a separate row — undefined on screens/subtypes that
+  // don't have these filters wired at all, in which case neither dropdown renders them.
   includeResigned?: boolean;
   onIncludeResignedChange?: (value: boolean) => void;
+  includeNegative?: boolean;
+  onIncludeNegativeChange?: (value: boolean) => void;
 }) {
   const { data } = useQuery<{ rows: CriteriaRow[] }>({
     queryKey: ['reports/criteria', reportType],
@@ -94,6 +100,8 @@ export function CriteriaFilterPanel({
             onChange={(vals) => setFor('EmployeeDetails', vals)}
             includeResigned={includeResigned}
             onIncludeResignedChange={onIncludeResignedChange}
+            includeNegative={includeNegative}
+            onIncludeNegativeChange={onIncludeNegativeChange}
           />
         ) : (
           <CriteriaOptionSelect
@@ -102,6 +110,10 @@ export function CriteriaFilterPanel({
             label={activeMeta.reportcriteria_desc}
             selected={values[activeName!] ?? []}
             onChange={(vals) => setFor(activeName!, vals)}
+            includeResigned={includeResigned}
+            onIncludeResignedChange={onIncludeResignedChange}
+            includeNegative={includeNegative}
+            onIncludeNegativeChange={onIncludeNegativeChange}
           />
         )
       )}
@@ -114,14 +126,19 @@ export function CriteriaFilterPanel({
 // enough that it reads as single-select. Explicit checkboxes make multi-select unambiguous,
 // matching the pattern already established for the Employee criteria (EmployeeChecklist).
 function CriteriaOptionSelect({
-  name, reportType, label, selected, onChange,
-}: { name: string; reportType: string; label: string; selected: string[]; onChange: (vals: string[]) => void }) {
+  name, reportType, label, selected, onChange, includeResigned, onIncludeResignedChange, includeNegative, onIncludeNegativeChange,
+}: {
+  name: string; reportType: string; label: string; selected: string[]; onChange: (vals: string[]) => void;
+  includeResigned?: boolean; onIncludeResignedChange?: (value: boolean) => void;
+  includeNegative?: boolean; onIncludeNegativeChange?: (value: boolean) => void;
+}) {
   const { data } = useQuery<{ rows: Option[] }>({
     queryKey: ['reports/criteria-options', name, reportType],
     queryFn: () => fetch(`/api/reports/criteria-options?criteria=${name}&reportType=${reportType}`).then((r) => r.json()),
   });
   const options = data?.rows ?? [];
   const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState('');
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -136,6 +153,10 @@ function CriteriaOptionSelect({
   const toggle = (value: string) => {
     onChange(selected.includes(value) ? selected.filter((v) => v !== value) : [...selected, value]);
   };
+
+  const filteredOptions = search
+    ? options.filter((o) => o.label.toLowerCase().includes(search.toLowerCase()))
+    : options;
 
   const summary = selected.length === 0 ? 'Select…' : selected.length === 1
     ? (options.find((o) => String(o.value) === selected[0])?.label ?? `1 selected`)
@@ -153,22 +174,48 @@ function CriteriaOptionSelect({
         <ChevronDown className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
       </button>
       {open && (
-        <div className="absolute z-20 mt-1 w-full min-w-[220px] bg-white border border-gray-200 rounded-lg shadow-lg max-h-64 overflow-y-auto">
-          <div className="flex justify-between px-3 py-1.5 border-b border-gray-100 text-xs">
-            <button type="button" className="text-indigo-600 hover:underline" onClick={() => onChange(options.map((o) => String(o.value)))}>Select all</button>
-            <button type="button" className="text-gray-500 hover:underline" onClick={() => onChange([])}>Clear</button>
+        <div className="absolute z-20 mt-1 w-72 bg-white border border-gray-200 rounded-lg shadow-lg overflow-hidden">
+          <div className="bg-slate-50 border-b border-gray-200 px-3 py-2">
+            <div className="text-xs font-semibold text-gray-700 mb-1.5">{label}</div>
+            <div className="flex items-center gap-3 text-xs flex-wrap">
+              <button type="button" className="text-indigo-600 hover:underline" onClick={() => onChange(options.map((o) => String(o.value)))}>Select all</button>
+              <button type="button" className="text-indigo-600 hover:underline" onClick={() => onChange([])}>Deselect all</button>
+              {onIncludeResignedChange && (
+                <label className="flex items-center gap-1 text-gray-600">
+                  <input type="checkbox" checked={!!includeResigned} onChange={(e) => onIncludeResignedChange(e.target.checked)} />
+                  Include Resigned
+                </label>
+              )}
+              {onIncludeNegativeChange && (
+                <label className="flex items-center gap-1 text-gray-600">
+                  <input type="checkbox" checked={!!includeNegative} onChange={(e) => onIncludeNegativeChange(e.target.checked)} />
+                  Include Negative Salary
+                </label>
+              )}
+            </div>
           </div>
-          {options.length === 0 && <div className="px-3 py-2 text-sm text-gray-400">No options</div>}
-          {options.map((o) => (
-            <label key={o.value} className="flex items-center gap-2 px-3 py-1.5 text-sm hover:bg-gray-50 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={selected.includes(String(o.value))}
-                onChange={() => toggle(String(o.value))}
-              />
-              {o.label}
-            </label>
-          ))}
+          <div className="p-2">
+            <input
+              type="text"
+              placeholder="Search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full border border-gray-300 rounded px-2 py-1.5 text-xs mb-1"
+            />
+            <div className="max-h-52 overflow-y-auto">
+              {filteredOptions.length === 0 && <div className="px-1 py-2 text-sm text-gray-400">No options</div>}
+              {filteredOptions.map((o) => (
+                <label key={o.value} className="flex items-center gap-2 px-1 py-1.5 text-sm hover:bg-gray-50 cursor-pointer border-b border-gray-50 last:border-0">
+                  <input
+                    type="checkbox"
+                    checked={selected.includes(String(o.value))}
+                    onChange={() => toggle(String(o.value))}
+                  />
+                  {o.label}
+                </label>
+              ))}
+            </div>
+          </div>
         </div>
       )}
     </div>

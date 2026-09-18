@@ -274,6 +274,9 @@ export interface SalarySlipExportData {
   status: number;
   leave_days: number;
   present_days: number;
+  // Legacy's PDF shows these as two distinct fields (salaryslip_not_exempted.ctp:942-955) — "Non
+  // Paying Days" (payroll_master.loss_of_pay) and "LOP Days" (attendance_register.lop_only).
+  non_paying_days: number;
   lop_days: number;
   weekoff_days: number;
   holiday_days: number;
@@ -288,58 +291,131 @@ export interface SalarySlipExportData {
   deductions: SalarySlipLineItem[];
   total_earnings: number;
   total_deductions: number;
+  settlement_amount: number;
   net_pay: number;
 }
 
-function slipDetailRows(slip: SalarySlipExportData): [string, string][] {
+// Company letterhead info for the PDF header — same shape/source as payslipPdf.ts's CompanyInfo
+// (GET /api/company, comp_contact_info table), reused here rather than re-fetched with a new shape.
+export interface SalarySlipCompanyInfo {
+  business_name?: string | null;
+  address?: string | null;
+  city?: string | null;
+  state?: string | null;
+  pincode?: string | null;
+  phone?: string | null;
+  email?: string | null;
+}
+
+function slipDetailRows(slip: SalarySlipExportData): [string, string, string, string][] {
+  // Mirrors legacy's exact row-pairing (salaryslip_not_exempted.ctp:920-1002) — Branch is its own
+  // row at the end (colspan 4 in legacy), not paired with anything, so it's appended separately.
   return [
-    ['Department', slip.department ?? ''], ['Gender', slip.gender ?? ''],
-    ['Date of Joining', slip.joining_date ?? ''], ['Leave Days', String(slip.leave_days)],
-    ['Present Days', String(slip.present_days)], ['LOP Days', String(slip.lop_days)],
-    ['No. of Week Off', String(slip.weekoff_days)], ['No. of Holiday', String(slip.holiday_days)],
-    ['PF Account No', slip.pf_account_no ?? ''], ['ESI No', slip.esi_no ?? ''],
-    ['UAN No', slip.uan_no ?? ''], ['Bank Name', slip.bank_name ?? ''],
-    ['Branch', slip.bank_branch ?? ''], ['IFSC Code', slip.ifsc_code ?? ''],
-    ['Account Number', slip.account_no ?? ''],
+    ['Employee ID', slip.employee_id ?? '', 'Date of Joining', slip.joining_date ?? ''],
+    ['Department', slip.department ?? '', 'Gender', slip.gender ?? ''],
+    ['Leave Days', String(slip.leave_days), 'Present Days', String(slip.present_days)],
+    ['Non Paying Days', String(slip.non_paying_days), 'No. of Week Off', String(slip.weekoff_days)],
+    ['LOP Days', String(slip.lop_days), 'No. of Holiday', String(slip.holiday_days)],
+    ['PF account No', slip.pf_account_no ?? '', 'ESI No', slip.esi_no ?? ''],
+    ['UAN No', slip.uan_no ?? '', 'Bank Name', slip.bank_name ?? ''],
+    ['Account Number', slip.account_no ?? '', 'IFSC Code', slip.ifsc_code ?? ''],
   ];
 }
 
-export function exportSalarySlipsToPdf(slips: SalarySlipExportData[], periodLabel: string, filename: string) {
+// Mirrors legacy's HTML2PDF-rendered salaryslip_not_exempted.ctp (PDF branch, lines 771-1417) —
+// same content sections (letterhead, per-employee detail grid, Earnings/Deductions table with a
+// conditional Settlement Amount row, footer disclaimer) in the same order and with the same exact
+// field labels, via jsPDF/jspdf-autotable instead of HTML2PDF. Not replicated: byte-identical
+// HTML2PDF fonts/margins/page numbering (same disclosed jsPDF-vs-HTML2PDF limitation already
+// accepted for other reports' PDFs), and the PDF-specific omission of a "(Resigned)" name suffix
+// that legacy's screen/Excel outputs include but its PDF header oddly doesn't — kept here since
+// dropping it would be less useful and looks like an unintentional legacy gap, not a deliberate one.
+export function exportSalarySlipsToPdf(
+  slips: SalarySlipExportData[], periodLabel: string, filename: string,
+  company?: SalarySlipCompanyInfo | null, downloadedBy?: string
+) {
   const doc = new jsPDF({ orientation: 'portrait' });
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const GRAY: [number, number, number] = [204, 204, 204];
 
   slips.forEach((slip, i) => {
     if (i > 0) doc.addPage();
 
+    let y = 15;
+    doc.setFontSize(14);
+    doc.setFont('helvetica', 'bold');
+    doc.text(company?.business_name ?? '', 14, y);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    y += 5;
+    const addressLine = [company?.address, company?.city && `${company.city} ,PIN - ${company?.pincode ?? ''}`, company?.state]
+      .filter(Boolean).join(', ');
+    if (addressLine) { doc.text(addressLine, 14, y); y += 5; }
+    const contactLine = [company?.phone && `Phone : ${company.phone}`, company?.email && `Email : ${company.email}`].filter(Boolean).join('   ');
+    if (contactLine) { doc.text(contactLine, 14, y); y += 5; }
+    y += 2;
+    doc.setDrawColor(0);
+    doc.line(14, y, pageWidth - 14, y);
+    y += 8;
+
     doc.setFontSize(13);
-    doc.text(`Salary Slip - ${periodLabel}`, 105, 15, { align: 'center' });
+    doc.setFont('helvetica', 'bold');
+    // Legacy's literal title format glues the month to the year with a hyphen, no space
+    // (e.g. "Salary Slip - March-2026") — periodLabel comes in as "March 2026".
+    doc.text(`Salary Slip - ${periodLabel.replace(' ', '-')}`, pageWidth / 2, y, { align: 'center' });
+    y += 8;
+
     doc.setFontSize(11);
     const name = `${slip.emp_name}${slip.status === 2 ? ' (Resigned)' : ''} - ${slip.designation ?? ''} - ${slip.branch_name ?? ''}`;
-    doc.text(name, 14, 25);
+    doc.text(name, pageWidth / 2, y, { align: 'center' });
+    y += 4;
 
     autoTable(doc, {
-      startY: 30,
-      body: slipDetailRows(slip),
+      startY: y,
+      body: [...slipDetailRows(slip), ['Branch', slip.bank_branch ?? '', '', '']],
       styles: { fontSize: 9 },
       theme: 'grid',
-      columnStyles: { 0: { fontStyle: 'bold', cellWidth: 60 } },
+      columnStyles: { 0: { fontStyle: 'bold', cellWidth: 40 }, 2: { fontStyle: 'bold', cellWidth: 40 } },
     });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    y = (doc as any).lastAutoTable.finalY + 4;
 
     const rowCount = Math.max(slip.earnings.length, slip.deductions.length);
     const body = Array.from({ length: rowCount }).map((_, r) => [
       slip.earnings[r]?.label ?? '', slip.earnings[r] ? String(slip.earnings[r].amount) : '',
       slip.deductions[r]?.label ?? '', slip.deductions[r] ? String(slip.deductions[r].amount) : '',
     ]);
-    body.push(['Total Earnings', String(slip.total_earnings), 'Total Deductions', String(slip.total_deductions)]);
+    body.push(['Total Earnings', String(slip.total_earnings), 'Total Deductions ', String(slip.total_deductions)]);
+    if (slip.status === 2) body.push(['Settlement Amount', String(slip.settlement_amount), '', '']);
     body.push(['Net Pay', String(slip.net_pay), '', '']);
 
+    const totalsStartRow = rowCount;
     autoTable(doc, {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      startY: (doc as any).lastAutoTable.finalY + 5,
+      startY: y,
       head: [['Earnings', 'Amount', 'Deductions', 'Amount']],
       body,
       styles: { fontSize: 9 },
-      headStyles: { fillColor: [79, 70, 229] },
+      headStyles: { fillColor: GRAY, textColor: 0, fontStyle: 'bold' },
+      didParseCell: (data) => {
+        if (data.section === 'body' && data.row.index >= totalsStartRow) {
+          data.cell.styles.fillColor = GRAY;
+          data.cell.styles.fontStyle = 'bold';
+        }
+      },
     });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    y = (doc as any).lastAutoTable.finalY + 6;
+
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'italic');
+    doc.text('*This is a System generated pay slip and does not require signature.', 14, y);
+
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'normal');
+    const footerY = pageHeight - 10;
+    if (downloadedBy) doc.text(`Downloaded By ${downloadedBy} ${new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}`, 14, footerY);
+    doc.text(`page ${i + 1}/${slips.length}`, pageWidth - 14, footerY, { align: 'right' });
   });
 
   doc.save(`${filename}.pdf`);
