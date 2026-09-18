@@ -37,6 +37,18 @@ function isFunctionCallStep(step: { type: string }): step is FunctionCallStep {
   return step.type === 'function_call';
 }
 
+// `client.interactions.create` is overloaded across streaming/non-streaming and model/agent
+// param shapes, so TS's ReturnType/Awaited on it (and even the SDK's own declared response
+// alias) resolve through a self-referential type graph — `next build`'s standalone type-check
+// pass rejects that as an implicit-any cycle even though `tsc --noEmit` on this file alone does
+// not. Sidestep the SDK's response type entirely with a local shape covering only what's used
+// here, cast at the two call sites below.
+interface AssistantInteraction {
+  id: string;
+  steps?: { type: string; id?: string; name?: string; arguments?: Record<string, unknown> }[];
+  output_text?: string;
+}
+
 export async function runAssistant(
   messages: ChatMessage[],
   ctx: AssistantContext
@@ -54,9 +66,9 @@ export async function runAssistant(
   const genAiTools = tools.map(toGenAiTool);
   const toolsCalled: { name: string; args: Record<string, unknown> }[] = [];
 
-  let interaction;
+  let interaction: AssistantInteraction;
   try {
-    interaction = await client.interactions.create({
+    interaction = (await client.interactions.create({
       model: MODEL_NAME,
       system_instruction: SYSTEM_PROMPT,
       tools: genAiTools,
@@ -64,7 +76,7 @@ export async function runAssistant(
         type: m.role === 'assistant' ? ('model_output' as const) : ('user_input' as const),
         content: [{ type: 'text' as const, text: m.content }],
       })),
-    });
+    })) as unknown as AssistantInteraction;
   } catch (err) {
     const message = err instanceof ApiError ? err.message : 'The AI Assistant is temporarily unavailable.';
     return { answer: message, toolsCalled };
@@ -99,12 +111,12 @@ export async function runAssistant(
     }
 
     try {
-      interaction = await client.interactions.create({
+      interaction = (await client.interactions.create({
         model: MODEL_NAME,
         previous_interaction_id: interaction.id,
         tools: genAiTools,
         input: resultSteps,
-      });
+      })) as unknown as AssistantInteraction;
     } catch (err) {
       const message = err instanceof ApiError ? err.message : 'The AI Assistant is temporarily unavailable.';
       return { answer: message, toolsCalled };
