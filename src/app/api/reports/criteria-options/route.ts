@@ -12,8 +12,9 @@ export async function GET(request: NextRequest) {
 
   const criteria = request.nextUrl.searchParams.get('criteria');
   if (!criteria) return NextResponse.json({ error: 'criteria is required' }, { status: 400 });
+  const reportType = request.nextUrl.searchParams.get('reportType') ?? undefined;
 
   const pool = await getCompanyPool(session.user.companyCode);
-  const rows = await getCriteriaOptions(pool, criteria);
+  const rows = await getCriteriaOptions(pool, criteria, reportType);
   return NextResponse.json({ rows });
 }

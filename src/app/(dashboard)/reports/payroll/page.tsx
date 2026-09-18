@@ -136,13 +136,8 @@ const CURRENCY_KEYS = new Set([
 // flattened everything into one ungrouped grid, the same kind of gap Salary Slip had. This fixes
 // the on-screen view first (per explicit decision — Excel/PDF export for these subtypes still
 // produce a flat sheet/table for now, a known follow-up, not silently matched to this view).
-// `groupBy` names the row field to group on; BankTranfer groups by bank name, which isn't its own
-// column — it's parsed out of the `bank_details` snapshot string instead (matching legacy, which
-// groups this one report by bank, not branch).
-function bankNameOf(row: Record<string, unknown>): string {
-  const details = String(row.bank_details ?? '');
-  return details.split(',')[0]?.trim() || 'Unknown Bank';
-}
+// `groupBy` names the row field to group on. BankTranfer's grouping is dynamic (depends on which
+// criteria was selected) rather than a fixed field — see bankTranferGroupBy below.
 
 // Legacy only offers a PDF download for a specific subset of Payroll Report types (confirmed by
 // user against the real legacy screen) — Salary Account, Salary Bank Transfer, Salary Bank
@@ -257,13 +252,18 @@ const SUBTYPE_META: Record<Subtype, SubtypeMeta> = {
     ],
   },
   BankTranfer: {
+    // Mirrors bankreport.ctp's non-"Banks" table (report_table1) exactly — see BANK_STATEMENT_META
+    // below for the separate "Banks" criteria output shape, and bankTranferGroupBy for the
+    // per-criteria on-screen grouping (legacy always sections this report: by employee, branch, or
+    // bank name depending on the criteria picked).
     label: 'Salary Bank Transfer',
     pdfAllowed: true,
-    groupBy: bankNameOf,
+    excelSlNo: true,
     columns: [
-      { key: 'employee_id', label: 'Employee ID' }, { key: 'emp_name', label: 'Employee' }, { key: 'branch_name', label: 'Branch' },
+      { key: 'employee_id', label: 'Employee ID' }, { key: 'login_user_id', label: 'User ID' }, { key: 'emp_name', label: 'Employee' },
+      { key: 'joining_date', label: 'Joining Date' }, { key: 'branch_name', label: 'Branch' },
       { key: 'departments', label: 'Department' }, { key: 'desig', label: 'Designation' },
-      { key: 'joining_date', label: 'Joining Date' }, { key: 'termination_date', label: 'Termination Date' },
+      { key: 'termination_date', label: 'Termination Date' },
       { key: 'bank_name', label: 'Bank Name' }, { key: 'bank_branch', label: 'Bank Branch' },
       { key: 'ifsc_code', label: 'IFSC Code' }, { key: 'account_no', label: 'Account Number' },
       { key: 'net_salary', label: 'Net Salary' },
@@ -353,6 +353,30 @@ const SUBTYPE_META: Record<Subtype, SubtypeMeta> = {
     ],
   },
 };
+
+// Legacy's "Banks" criteria for BankTranfer switches the whole report into a different "Bank
+// Statement" shape (bankreport.ctp's report_table2, lines 244-253) — same underlying rows as the
+// normal Salary Bank Transfer table, just a narrower column set and a different Excel filename.
+const BANK_STATEMENT_META: SubtypeMeta = {
+  label: 'Salary Bank Transfer',
+  pdfAllowed: true,
+  excelSlNo: true,
+  columns: [
+    { key: 'emp_name', label: 'Beneficiary Identification' },
+    { key: 'net_salary', label: 'Transaction Amount' },
+    { key: 'ifsc_code', label: 'Beneficiary Bank IFSC' },
+    { key: 'account_no', label: 'Beneficiary Bank A/C Number' },
+  ],
+};
+
+// BankTranfer's View is always sectioned in legacy (bankreport.ctp), never flat — but which field it
+// groups by depends on the selected criteria: employee name (EmployeeDetails), branch name (Units),
+// or resolved bank name (LeavePolicyGroup/Banks — both legacy's mislabeled "belonging to a Bank").
+function bankTranferGroupBy(criteria: Record<string, string[]>): (row: Record<string, unknown>) => string {
+  if (criteria.EmployeeDetails?.length) return (r) => String(r.emp_name ?? '');
+  if (criteria.Units?.length) return (r) => String(r.branch_name ?? '');
+  return (r) => String(r.bank_name ?? '');
+}
 
 function groupRows(rows: Record<string, unknown>[], groupBy: (row: Record<string, unknown>) => string) {
   const order: string[] = [];
@@ -498,7 +522,11 @@ export default function PayrollReportPage() {
   const [slips, setSlips] = useState<SalarySlip[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  const meta = SUBTYPE_META[subtype];
+  // Legacy's "Banks" criteria under BankTranfer switches the whole report into the narrower "Bank
+  // Statement" shape (see BANK_STATEMENT_META) — every other criteria (or subtype) uses the normal
+  // per-subtype metadata.
+  const isBankStatementMode = subtype === 'BankTranfer' && !!criteria.Banks?.length;
+  const meta = isBankStatementMode ? BANK_STATEMENT_META : SUBTYPE_META[subtype];
   const isSlip = subtype === 'Salaryslip';
 
   const { rows: displayRows, columns: itemColumns } = useMemo(
@@ -516,15 +544,29 @@ export default function PayrollReportPage() {
     [itemColumns]
   );
   const hasCriteria = Object.values(criteria).some((v) => Array.isArray(v) && v.length > 0);
-  // View-only grouping for Gross Salary Detailed — see grosssalaryViewGroupBy for why this is
-  // separate from meta.groupBy (which stays unset here so Excel/PDF export remain the single flat
-  // table legacy always produces for this report, regardless of criteria).
-  const viewGroupBy = subtype === 'Grosssalary' ? grosssalaryViewGroupBy(criteria) : meta.groupBy;
+  // View-only grouping for Gross Salary Detailed/BankTranfer — see grosssalaryViewGroupBy/
+  // bankTranferGroupBy for why these are separate from meta.groupBy. Grosssalary's meta.groupBy
+  // stays unset so Excel/PDF export remain the single flat table legacy always produces for it; for
+  // BankTranfer, the View is always grouped (legacy sections it regardless of criteria) but Excel
+  // only groups for the Banks criteria (see excelGroupBy below) — a different rule per output, not a
+  // single shared meta.groupBy.
+  const viewGroupBy = subtype === 'Grosssalary' ? grosssalaryViewGroupBy(criteria)
+    : subtype === 'BankTranfer' ? bankTranferGroupBy(criteria)
+    : meta.groupBy;
+  // Legacy's Excel export for BankTranfer is flat-stacked for EmployeeDetails/Units/LeavePolicyGroup
+  // criteria and grouped-per-bank only for the Banks criteria (SalaryReportsController.php:
+  // 4271-4517 vs 4518-4688) — unlike the View, which is always grouped. PDF stays flat for this
+  // subtype regardless (see meta.groupBy, left unset on both BankTranfer metas) — a disclosed,
+  // documented simplification rather than replicating legacy's sectioned HTML2PDF template.
+  const excelGroupBy = subtype === 'BankTranfer' ? (isBankStatementMode ? bankTranferGroupBy(criteria) : undefined) : meta.groupBy;
   // Which subtypes have a real, wired-up "Include Resigned" / "Include Negative Salary" filter —
   // legacy's checkboxes only affect the report data itself for these subtypes; other subtypes render
   // the shared employee-picker's own resigned toggle (via EmployeeChecklist) but nothing report-level.
-  const hasResignedFilter = subtype === 'SummaryPayroll' || subtype === 'salary' || subtype === 'Grosssalary';
-  const hasNegativeFilter = subtype === 'SummaryPayroll' || subtype === 'Grosssalary';
+  // BankTranfer's Banks criteria hides both (legacy: loadcriteriaitems.ctp:88, `criteria !== 'Banks'`).
+  const hasResignedFilter = subtype === 'SummaryPayroll' || subtype === 'salary' || subtype === 'Grosssalary'
+    || (subtype === 'BankTranfer' && !isBankStatementMode);
+  const hasNegativeFilter = subtype === 'SummaryPayroll' || subtype === 'Grosssalary'
+    || (subtype === 'BankTranfer' && !isBankStatementMode);
   // These subtypes' Excel filename/title mirror legacy's PHPExcel output exactly — every other
   // subtype keeps the existing generic pattern.
   const excelFilename = subtype === 'SummaryPayroll'
@@ -533,6 +575,10 @@ export default function PayrollReportPage() {
     ? `${session?.user?.companyCode ?? ''} CTC Summary`
     : subtype === 'Grosssalary'
     ? `${session?.user?.companyCode ?? ''}_GrossSalaryDetailed${monthYear}`
+    : subtype === 'BankTranfer'
+    ? (isBankStatementMode
+        ? `${session?.user?.companyCode ?? ''}_BankStatement - ${monthYear}`
+        : `${session?.user?.companyCode ?? ''}_SalaryBankTransfer - ${monthYear}`)
     : `payroll_report_${monthYear}`;
   const excelTitle = subtype === 'SummaryPayroll'
     ? `Payroll Summary Report - ${monthYear}`
@@ -591,7 +637,7 @@ export default function PayrollReportPage() {
           ]
         : undefined;
       if (kind === 'excel') {
-        if (meta.groupBy) exportGroupedReportToExcel(meta.excelColumns ?? screenColumns, groupRows(expRows, meta.groupBy), curKeys, excelFilename, { title: excelTitle, slNo: meta.excelSlNo });
+        if (excelGroupBy) exportGroupedReportToExcel(meta.excelColumns ?? screenColumns, groupRows(expRows, excelGroupBy), curKeys, excelFilename, { title: excelTitle, slNo: meta.excelSlNo });
         else exportReportToExcel(meta.excelColumns ?? screenColumns, expRows, excelFilename, { title: excelTitle, slNo: meta.slNo, totalKeys: meta.showTotal ? curKeys : undefined, superHeaders });
       } else {
         if (meta.groupBy) exportGroupedReportToPdf(screenColumns, groupRows(expRows, meta.groupBy), curKeys, `${meta.label} — ${monthYear}`, `payroll_report_${monthYear}`);

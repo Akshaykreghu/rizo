@@ -20,7 +20,7 @@ interface Option {
 // (e.g. EmployeeProfessionalDetails, a date-range criterion) is silently skipped — not modeled
 // yet, matching the project's "ignore what's not wired" pattern rather than rendering broken UI.
 const OPTION_LIST_CRITERIA = new Set([
-  'Units', 'Departments', 'SalaryStructures', 'Designation', 'DayTimeProcedures', 'LeavePolicyGroup', 'HolidayGroup', 'Gender',
+  'Units', 'Departments', 'SalaryStructures', 'Designation', 'DayTimeProcedures', 'LeavePolicyGroup', 'HolidayGroup', 'Gender', 'Banks',
 ]);
 
 // Criteria selection is exclusive: the user picks exactly ONE criteria type (e.g. "belonging to a
@@ -98,6 +98,7 @@ export function CriteriaFilterPanel({
         ) : (
           <CriteriaOptionSelect
             name={activeName!}
+            reportType={reportType}
             label={activeMeta.reportcriteria_desc}
             selected={values[activeName!] ?? []}
             onChange={(vals) => setFor(activeName!, vals)}
@@ -113,11 +114,11 @@ export function CriteriaFilterPanel({
 // enough that it reads as single-select. Explicit checkboxes make multi-select unambiguous,
 // matching the pattern already established for the Employee criteria (EmployeeChecklist).
 function CriteriaOptionSelect({
-  name, label, selected, onChange,
-}: { name: string; label: string; selected: string[]; onChange: (vals: string[]) => void }) {
+  name, reportType, label, selected, onChange,
+}: { name: string; reportType: string; label: string; selected: string[]; onChange: (vals: string[]) => void }) {
   const { data } = useQuery<{ rows: Option[] }>({
-    queryKey: ['reports/criteria-options', name],
-    queryFn: () => fetch(`/api/reports/criteria-options?criteria=${name}`).then((r) => r.json()),
+    queryKey: ['reports/criteria-options', name, reportType],
+    queryFn: () => fetch(`/api/reports/criteria-options?criteria=${name}&reportType=${reportType}`).then((r) => r.json()),
   });
   const options = data?.rows ?? [];
   const [open, setOpen] = useState(false);

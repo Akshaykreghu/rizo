@@ -13,10 +13,14 @@ import type { Pool, RowDataPacket } from 'mysql2/promise';
 // LeavePolicyGroup(LEAVEPOLICY_GROUP_ID); 'holiday' -> HolidayGroup(HOLIDAY_GROUP_ID);
 // 'salarystructures' -> SalaryStructures(structure_id); 'SummaryPayroll'/'salary'/'Lop' ->
 // EmployeeDetails(emp_pkey), Units(branch_code); 'Grosssalary' -> + Departments/Designation/Gender;
-// 'BankTranfer' -> + Banks (a mislabeled/dead criteria row in live data — its
-// reportcriteria_field is 'emp_pkey', identical to EmployeeDetails, not an actual bank
-// reference — a real legacy data-quality issue, not modeled here since there's nothing coherent
-// to filter on).
+// 'BankTranfer' -> EmployeeDetails, Units, LeavePolicyGroup, Banks. LeavePolicyGroup here is
+// legacy's mislabeled "belonging to a Bank" criteria (reportcriteria_field is 'emp_pkey', same as
+// EmployeeDetails, but that field is never actually used for this report) — legacy's own
+// listcriteriaitems() (SalaryReportsController.php:498-499, 583-639) redirects BOTH
+// 'LeavePolicyGroup' and 'Banks' under this report type to the exact same distinct-bank-name list
+// (IFNULL(SUBSTRING_INDEX(bank_details,',',1), bank_name) from payroll_master ∪ emp_details.bank_name).
+// 'Banks' additionally switches the whole report into a different "Bank Statement" output shape —
+// see the BankTranfer branch below and SUBTYPE_META.BankTranfer in page.tsx.
 //
 // Deliberate deviation from legacy (functional, not just cosmetic): legacy builds each filter as
 // a raw SQL string (`"<alias>.<reportcriteria_field> IN (...)"`, with the alias/column names
@@ -50,7 +54,28 @@ export async function getActiveCriteria(pool: Pool, reporttype: string) {
   return rows;
 }
 
-export async function getCriteriaOptions(pool: Pool, reportcriteria: string) {
+// Distinct bank names for BankTranfer's LeavePolicyGroup/Banks criteria (see the comment above the
+// imports) — mirrors legacy's listcriteriaitems() query exactly, including the payroll_master ∪
+// emp_details union and blank-name exclusion.
+async function getBankNameOptions(pool: Pool) {
+  const [rows] = await pool.execute<RowDataPacket[]>(
+    `SELECT bank_name AS value, bank_name AS label FROM (
+       SELECT DISTINCT IFNULL(SUBSTRING_INDEX(pm.bank_details, ',', 1), ed.bank_name) AS bank_name
+       FROM payroll_master pm
+       INNER JOIN emp_details ed ON ed.emp_pkey = pm.emp_fkey
+       UNION
+       SELECT DISTINCT bank_name FROM emp_details WHERE status IN ('1', '2')
+     ) b
+     WHERE bank_name IS NOT NULL AND bank_name <> ''
+     ORDER BY bank_name`
+  );
+  return rows;
+}
+
+export async function getCriteriaOptions(pool: Pool, reportcriteria: string, reportType?: string) {
+  if (reportType === 'BankTranfer' && (reportcriteria === 'LeavePolicyGroup' || reportcriteria === 'Banks')) {
+    return getBankNameOptions(pool);
+  }
   switch (reportcriteria) {
     case 'Units': {
       const [rows] = await pool.execute<RowDataPacket[]>(
@@ -344,8 +369,8 @@ export interface PayrollReportParams {
   monthYear: string; // 'YYYY-MM' — used by all subtypes except GrossPeriod
   toMonthYear?: string; // 'YYYY-MM' — GrossPeriod only, range end (monthYear is the range start)
   criteria: CriteriaSelections;
-  includeResigned?: boolean; // SummaryPayroll only — legacy's "Include Resigned" checkbox
-  includeNegative?: boolean; // SummaryPayroll only — legacy's "Include Negative Salary" checkbox
+  includeResigned?: boolean; // SummaryPayroll/salary/Grosssalary/BankTranfer — "Include Resigned" checkbox
+  includeNegative?: boolean; // SummaryPayroll/Grosssalary/BankTranfer — "Include Negative Salary" checkbox
 }
 
 function prevMonth(monthYear: string): string {
@@ -585,22 +610,41 @@ export async function generatePayrollReport(pool: Pool, params: PayrollReportPar
   }
 
   if (params.subtype === 'BankTranfer') {
+    // Mirrors generateBanktransferreport() (SalaryReportsController.php:3996-4193), the generic
+    // variant used by real tenants (DEMO/GLET/SRTS route to a separate PSQUARE-only variant, not
+    // ported). LeavePolicyGroup and Banks are both legacy's mislabeled "belonging to a Bank"
+    // criteria — both filter on the same resolved bank-name expression and share the same query
+    // here; only the on-screen/Excel column set differs (Banks switches to the "Bank Statement"
+    // shape — see SUBTYPE_META.BankTranfer in page.tsx). Not ported: legacy's extra "unbanked
+    // employees" appended group for these two criteria (SalaryReportsController.php:4174-4193) — a
+    // small, disclosed simplification, not silently dropped.
+    const statusCondition = params.includeResigned ? 'ed.status IN (1,2)' : 'ed.status = 1';
+    const negativeCondition = params.includeNegative ? '' : ' AND pm.net_salary >= 0';
+    const bankNameExpr = "IFNULL(SUBSTRING_INDEX(pm.bank_details, ',', 1), ed.bank_name)";
     const { conditions, args } = buildCriteriaConditions(params.criteria, {
       Units: 'pm.branch_code', EmployeeDetails: 'pm.emp_fkey',
+      LeavePolicyGroup: bankNameExpr, Banks: bankNameExpr,
     });
     const [rows] = await pool.execute<RowDataPacket[]>(
-      `SELECT pm.emp_fkey, pm.emp_name, ep.emp_company_id AS employee_id, pm.branch_name,
+      `SELECT pm.emp_fkey,
+              CASE WHEN ed.status = 2 THEN CONCAT(pm.emp_name, ' (Resigned)') ELSE pm.emp_name END AS emp_name,
+              ep.emp_company_id AS employee_id, uc.user_id AS login_user_id, pm.branch_name,
               pm.departments, pm.desig, pm.month_year,
               DATE_FORMAT(i.joining_date, '%Y-%m-%d') AS joining_date,
               DATE_FORMAT(tm.last_approved_working_date, '%Y-%m-%d') AS termination_date,
               pm.bank_details, ed.bank_name AS ed_bank_name, ed.branch_name AS ed_bank_branch,
-              ed.ifsc_code AS ed_ifsc_code, ed.account_no AS ed_account_no, pm.net_salary
+              ed.ifsc_code AS ed_ifsc_code, ed.account_no AS ed_account_no,
+              (pm.net_salary + COALESCE((SELECT SUM(ess.salary_amount) FROM emp_settle_slip ess
+                        WHERE ess.emp_fkey = pm.emp_fkey AND ess.status = 'Y' AND ess.approved = 'Y' AND ess.type <> 'SALARY'
+                          AND DATE_FORMAT(tm.last_approved_working_date, '%Y-%m') = pm.month_year), 0)) AS net_salary
        FROM payroll_master pm
        JOIN emp_details ed ON ed.emp_pkey = pm.emp_fkey
        LEFT JOIN emp_proff ep ON ep.emp_fkey = pm.emp_fkey
+       LEFT JOIN user_credentials uc ON uc.emp_fkey = pm.emp_fkey
        LEFT JOIN employee_info i ON i.emp_pkey = pm.emp_fkey
        LEFT JOIN termination tm ON tm.emp_fkey = pm.emp_fkey AND tm.status = 1
-       WHERE pm.month_year = ? AND pm.action IN ('Approved','Processed') AND ${conditions.join(' AND ')}
+       WHERE pm.month_year = ? AND pm.action IN ('Approved','Processed') AND ${statusCondition}${negativeCondition}
+         AND ${conditions.join(' AND ')}
        ORDER BY pm.emp_name`,
       [params.monthYear, ...args]
     );
