@@ -56,7 +56,8 @@ export async function GET(
       `SELECT e.*, b.branch_name AS emp_branch_name, d.dept_name, ds.desig_name, g.grade_name,
               m.first_name AS manager_first_name, m.last_name AS manager_last_name,
               wdtp.day_time_desc AS shift_name, hg.HOLIDAY_GROUP_NAME AS holiday_group_name,
-              lpg.LEAVEPOLICY_GROUP_NAME AS leave_policy_group_name
+              lpg.LEAVEPOLICY_GROUP_NAME AS leave_policy_group_name,
+              nat.nationality AS nationality_name, cty.country_name AS country_name
        FROM emp_details e
        LEFT JOIN emp_proff p ON p.emp_fkey = e.emp_pkey
        LEFT JOIN branches b ON b.branch_code = p.emp_branch
@@ -67,6 +68,8 @@ export async function GET(
        LEFT JOIN working_day_time_procedures wdtp ON wdtp.day_time_seq = p.day_time_seq
        LEFT JOIN holiday_group hg ON hg.HOLIDAY_GROUP_ID = p.HOLIDAY_GROUP_ID
        LEFT JOIN leavepolicy_group lpg ON lpg.LEAVEPOLICY_GROUP_ID = p.LEAVEPOLICY_GROUP_ID
+       LEFT JOIN countries_nationality nat ON nat.id = e.nationality_id
+       LEFT JOIN countries_nationality cty ON cty.id = e.country
        WHERE e.emp_pkey = ?`,
       [empPkey]
     ),
@@ -94,12 +97,19 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await getServerSession(authOptions);
-  if (!session || session.user.userGroup !== 1) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const { id } = await params;
   const empPkey = parseInt(id);
+  const isAdmin = session.user.userGroup === 1;
+
+  // Employees can edit their own personal/contact/banking/statutory details (New Rizo's ESS
+  // "About Me" edit form), but never their own professional record — see the emp_proff guard
+  // below, which is skipped entirely for a self-edit regardless of what the body contains.
+  if (!isAdmin && session.user.empFkey !== empPkey) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
+
   const body = await request.json();
   const pool = await getCompanyPool(session.user.companyCode);
 
@@ -160,46 +170,51 @@ export async function PUT(
       ]
     );
 
-    const [existingProff] = await connection.execute<RowDataPacket[]>(
-      'SELECT emp_fkey FROM emp_proff WHERE emp_fkey = ?',
-      [empPkey]
-    );
+    // Department, designation, grade, shift, branch, joining date and reporting structure are
+    // HR-managed and never touched by a self-edit — New Rizo shows these as a locked "Official"
+    // section on ESS About Me, and this skip is what actually enforces that server-side.
+    if (isAdmin) {
+      const [existingProff] = await connection.execute<RowDataPacket[]>(
+        'SELECT emp_fkey FROM emp_proff WHERE emp_fkey = ?',
+        [empPkey]
+      );
 
-    // Salary structure and CTC are not edited from the employee form — matching legacy, they
-    // are managed via Bulk Policies -> Salary and the CTC-upload step. emp_proff.structure_id
-    // is left to its emp_config trigger.
-    if (existingProff.length) {
-      await connection.execute(
-        `UPDATE emp_proff SET
-           joining_date = ?, emp_branch = ?, emp_dept = ?, designation = ?, emp_grade = ?,
-           emp_type = ?, attr1 = ?, probation = ?, day_time_seq = ?,
-           HOLIDAY_GROUP_ID = ?, LEAVEPOLICY_GROUP_ID = ?
-         WHERE emp_fkey = ?`,
-        [
-          nn(body.joining_date), nn(body.emp_branch), nn(body.emp_dept),
-          nn(body.designation), nn(body.emp_grade),
-          nn(body.emp_type), body.attr1 ? Number(body.attr1) : null,
-          body.probation ? Number(body.probation) : null,
-          body.day_time_seq ? Number(body.day_time_seq) : null,
-          body.holiday_group_id ? Number(body.holiday_group_id) : null,
-          body.leavepolicy_group_id ? Number(body.leavepolicy_group_id) : null,
-          empPkey,
-        ]
-      );
-    } else {
-      await connection.execute(
-        `INSERT INTO emp_proff
-           (emp_fkey, joining_date, emp_branch, emp_dept, designation, emp_grade, emp_type, attr1, probation, day_time_seq, HOLIDAY_GROUP_ID, LEAVEPOLICY_GROUP_ID)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          empPkey, nn(body.joining_date), nn(body.emp_branch), nn(body.emp_dept),
-          nn(body.designation), nn(body.emp_grade), nn(body.emp_type), body.attr1 ? Number(body.attr1) : null,
-          body.probation ? Number(body.probation) : null,
-          body.day_time_seq ? Number(body.day_time_seq) : null,
-          body.holiday_group_id ? Number(body.holiday_group_id) : null,
-          body.leavepolicy_group_id ? Number(body.leavepolicy_group_id) : null,
-        ]
-      );
+      // Salary structure and CTC are not edited from the employee form — matching legacy, they
+      // are managed via Bulk Policies -> Salary and the CTC-upload step. emp_proff.structure_id
+      // is left to its emp_config trigger.
+      if (existingProff.length) {
+        await connection.execute(
+          `UPDATE emp_proff SET
+             joining_date = ?, emp_branch = ?, emp_dept = ?, designation = ?, emp_grade = ?,
+             emp_type = ?, attr1 = ?, probation = ?, day_time_seq = ?,
+             HOLIDAY_GROUP_ID = ?, LEAVEPOLICY_GROUP_ID = ?
+           WHERE emp_fkey = ?`,
+          [
+            nn(body.joining_date), nn(body.emp_branch), nn(body.emp_dept),
+            nn(body.designation), nn(body.emp_grade),
+            nn(body.emp_type), body.attr1 ? Number(body.attr1) : null,
+            body.probation ? Number(body.probation) : null,
+            body.day_time_seq ? Number(body.day_time_seq) : null,
+            body.holiday_group_id ? Number(body.holiday_group_id) : null,
+            body.leavepolicy_group_id ? Number(body.leavepolicy_group_id) : null,
+            empPkey,
+          ]
+        );
+      } else {
+        await connection.execute(
+          `INSERT INTO emp_proff
+             (emp_fkey, joining_date, emp_branch, emp_dept, designation, emp_grade, emp_type, attr1, probation, day_time_seq, HOLIDAY_GROUP_ID, LEAVEPOLICY_GROUP_ID)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            empPkey, nn(body.joining_date), nn(body.emp_branch), nn(body.emp_dept),
+            nn(body.designation), nn(body.emp_grade), nn(body.emp_type), body.attr1 ? Number(body.attr1) : null,
+            body.probation ? Number(body.probation) : null,
+            body.day_time_seq ? Number(body.day_time_seq) : null,
+            body.holiday_group_id ? Number(body.holiday_group_id) : null,
+            body.leavepolicy_group_id ? Number(body.leavepolicy_group_id) : null,
+          ]
+        );
+      }
     }
 
     await connection.commit();

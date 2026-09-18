@@ -18,7 +18,7 @@ export async function GET(
   const pool = await getCompanyPool(session.user.companyCode);
 
   const [[header]] = await pool.execute<RowDataPacket[]>(
-    `SELECT pm.payroll_master_pkey, pm.emp_name, pm.branch_code, pm.month_year, pm.days_presant,
+    `SELECT pm.payroll_master_pkey, pm.emp_fkey, pm.emp_name, pm.branch_code, pm.month_year, pm.days_presant,
             pm.days_leave, pm.loss_of_pay, pm.gross_salary, pm.net_salary, pm.total_deduction,
             pm.action, pm.bank_details, pm.desig, pm.departments, pm.working_days, pm.holidays,
             pm.week_off_days, ed.status AS emp_status
@@ -28,6 +28,9 @@ export async function GET(
     [id]
   );
   if (!header) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  if (session.user.userGroup !== 1 && session.user.empFkey !== header.emp_fkey) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
 
   const [lines] = await pool.execute<RowDataPacket[]>(
     `SELECT ess.head_type, ess.structure_det_value, ess.salary_head_item_desc, ess.salary_rate,

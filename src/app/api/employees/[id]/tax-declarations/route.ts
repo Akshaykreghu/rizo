@@ -19,6 +19,10 @@ export async function GET(
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const { id } = await params;
+  if (session.user.userGroup !== 1 && session.user.empFkey !== parseInt(id)) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
+
   const pool = await getCompanyPool(session.user.companyCode);
 
   const [[emp]] = await pool.execute<RowDataPacket[]>(
@@ -131,6 +135,10 @@ export async function POST(
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const { id } = await params;
+  if (session.user.userGroup !== 1 && session.user.empFkey !== parseInt(id)) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
+
   const body = await request.json();
   const { tax_heads_fkey, tax_heads_details_fkey, tax_value, fin_year } = body as {
     tax_heads_fkey: number; tax_heads_details_fkey: number; tax_value: number; fin_year: number;

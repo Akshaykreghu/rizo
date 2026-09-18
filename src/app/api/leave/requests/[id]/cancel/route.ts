@@ -23,9 +23,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await getServerSession(authOptions);
-  if (!session || session.user.userGroup !== 1) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const { id } = await params;
   const body = await request.json().catch(() => ({}));
@@ -39,6 +37,10 @@ export async function POST(
     [id]
   );
   if (!entry) return NextResponse.json({ error: 'Leave request not found' }, { status: 404 });
+  // Only admin or the leave's own owner may cancel it.
+  if (session.user.userGroup !== 1 && session.user.empFkey !== entry.EMP_fkey) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
 
   let newStatus: string;
   if (entry.LEAVESTATUS === 'Applied') {

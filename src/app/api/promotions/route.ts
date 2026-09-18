@@ -12,14 +12,21 @@ import type { RowDataPacket, ResultSetHeader } from 'mysql2';
 
 export async function GET(request: NextRequest) {
   const session = await getServerSession(authOptions);
-  if (!session || session.user.userGroup !== 1) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const pool = await getCompanyPool(session.user.companyCode);
   const { searchParams } = new URL(request.url);
   const status = searchParams.get('status') ?? 'N';
   const empFkey = searchParams.get('emp_fkey');
+
+  // Employees may only read their own promotion history (e.g. the ESS "Career Journey" panel),
+  // never the admin approval queue for other people.
+  if (session.user.userGroup !== 1) {
+    if (!empFkey || Number(empFkey) !== session.user.empFkey) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+  }
+
+  const pool = await getCompanyPool(session.user.companyCode);
 
   const [rows] = await pool.execute<RowDataPacket[]>(
     `SELECT pr.promotion_pkey, pr.emp_fkey, pr.created_date, pr.approved_status, pr.approved_date,

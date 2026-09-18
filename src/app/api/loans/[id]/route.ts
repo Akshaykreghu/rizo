@@ -10,15 +10,16 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await getServerSession(authOptions);
-  if (!session || session.user.userGroup !== 1) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const { id } = await params;
   const pool = await getCompanyPool(session.user.companyCode);
   const detail = await getLoanDetail(pool, Number(id));
   if (!detail) {
     return NextResponse.json({ error: 'Loan not found' }, { status: 404 });
+  }
+  if (session.user.userGroup !== 1 && session.user.empFkey !== detail.emp_fkey) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
   return NextResponse.json(detail);
 }

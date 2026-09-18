@@ -12,6 +12,11 @@ export async function GET(
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const { id } = await params;
+  // Employees can only view their own family records (matches GET /api/employees/[id]).
+  if (session.user.userGroup !== 1 && session.user.empFkey !== parseInt(id)) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
+
   const pool = await getCompanyPool(session.user.companyCode);
   const [rows] = await pool.execute<RowDataPacket[]>(
     `SELECT emp_family_pkey, name, DOB, gender, blood_group, relation, nationality,
@@ -29,11 +34,14 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await getServerSession(authOptions);
-  if (!session || session.user.userGroup !== 1) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const { id } = await params;
+  // Employees can add their own family members (matches GET /api/employees/[id]/family).
+  if (session.user.userGroup !== 1 && session.user.empFkey !== parseInt(id)) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
+
   const body = await request.json();
   const pool = await getCompanyPool(session.user.companyCode);
 

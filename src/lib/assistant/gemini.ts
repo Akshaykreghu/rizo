@@ -1,7 +1,7 @@
-import { GoogleGenerativeAI, SchemaType, type Content, type FunctionDeclaration, type Schema } from '@google/generative-ai';
-import { tools, getToolByName, type AssistantContext } from './tools';
+import { GoogleGenAI, ApiError } from '@google/genai';
+import { tools, getToolByName, type AssistantContext, type ChatMessage, type ChatTurnResult } from './tools';
 
-const MODEL_NAME = 'gemini-2.0-flash';
+const MODEL_NAME = 'gemini-3.6-flash';
 const MAX_TOOL_HOPS = 4;
 
 const SYSTEM_PROMPT = `You are the RIZO HR Assistant, embedded in a payroll/HR system.
@@ -13,32 +13,32 @@ Rules:
 - If a tool returns an error (e.g. permission denied) or "found: false", tell the user plainly rather than guessing.
 - Keep answers short and direct, formatted for a chat window.`;
 
-function toGeminiSchema(def: (typeof tools)[number]): FunctionDeclaration {
-  const properties: Record<string, Schema> = {};
-  for (const [key, val] of Object.entries(def.parameters.properties)) {
-    properties[key] =
-      val.type === 'number'
-        ? { type: SchemaType.NUMBER, description: val.description }
-        : { type: SchemaType.STRING, description: val.description };
-  }
+function toGenAiTool(def: (typeof tools)[number]) {
   return {
+    type: 'function' as const,
     name: def.name,
     description: def.description,
     parameters: {
-      type: SchemaType.OBJECT,
-      properties,
+      type: 'object',
+      properties: def.parameters.properties,
       required: def.parameters.required ?? [],
     },
   };
 }
 
-export interface ChatTurnResult {
-  answer: string;
-  toolsCalled: { name: string; args: Record<string, unknown> }[];
+interface FunctionCallStep {
+  type: 'function_call';
+  id: string;
+  name: string;
+  arguments: Record<string, unknown>;
+}
+
+function isFunctionCallStep(step: { type: string }): step is FunctionCallStep {
+  return step.type === 'function_call';
 }
 
 export async function runAssistant(
-  history: Content[],
+  messages: ChatMessage[],
   ctx: AssistantContext
 ): Promise<ChatTurnResult> {
   const apiKey = process.env.GEMINI_API_KEY;
@@ -50,47 +50,65 @@ export async function runAssistant(
     };
   }
 
-  const genAI = new GoogleGenerativeAI(apiKey);
-  const model = genAI.getGenerativeModel({
-    model: MODEL_NAME,
-    systemInstruction: SYSTEM_PROMPT,
-    tools: [{ functionDeclarations: tools.map(toGeminiSchema) }],
-  });
-
-  const contents: Content[] = [...history];
+  const client = new GoogleGenAI({ apiKey });
+  const genAiTools = tools.map(toGenAiTool);
   const toolsCalled: { name: string; args: Record<string, unknown> }[] = [];
 
-  for (let hop = 0; hop < MAX_TOOL_HOPS; hop++) {
-    const result = await model.generateContent({ contents });
-    const candidate = result.response.candidates?.[0];
-    const parts = candidate?.content?.parts ?? [];
-    const functionCalls = parts.filter((p) => !!p.functionCall).map((p) => p.functionCall!);
+  let interaction;
+  try {
+    interaction = await client.interactions.create({
+      model: MODEL_NAME,
+      system_instruction: SYSTEM_PROMPT,
+      tools: genAiTools,
+      input: messages.map((m) => ({
+        type: m.role === 'assistant' ? ('model_output' as const) : ('user_input' as const),
+        content: [{ type: 'text' as const, text: m.content }],
+      })),
+    });
+  } catch (err) {
+    const message = err instanceof ApiError ? err.message : 'The AI Assistant is temporarily unavailable.';
+    return { answer: message, toolsCalled };
+  }
 
-    if (functionCalls.length === 0) {
-      const text = result.response.text().trim();
+  for (let hop = 0; hop < MAX_TOOL_HOPS; hop++) {
+    const functionCallSteps = (interaction.steps ?? []).filter(isFunctionCallStep);
+
+    if (functionCallSteps.length === 0) {
+      const text = (interaction.output_text ?? '').trim();
       return { answer: text || "I couldn't find an answer to that.", toolsCalled };
     }
 
-    contents.push({ role: 'model', parts });
+    const resultSteps = [];
+    for (const step of functionCallSteps) {
+      toolsCalled.push({ name: step.name, args: step.arguments });
+      const tool = getToolByName(step.name);
 
-    const responseParts = [];
-    for (const call of functionCalls) {
-      const tool = getToolByName(call.name);
-      const args = (call.args ?? {}) as Record<string, unknown>;
-      toolsCalled.push({ name: call.name, args });
-
-      let response: unknown;
+      let result: unknown;
       try {
-        response = tool ? await tool.execute(args, ctx) : { error: `Unknown tool: ${call.name}` };
+        result = tool ? await tool.execute(step.arguments, ctx) : { error: `Unknown tool: ${step.name}` };
       } catch (err) {
-        response = { error: err instanceof Error ? err.message : 'Tool execution failed' };
+        result = { error: err instanceof Error ? err.message : 'Tool execution failed' };
       }
 
-      responseParts.push({
-        functionResponse: { name: call.name, response: response as object },
+      resultSteps.push({
+        type: 'function_result' as const,
+        call_id: step.id,
+        name: step.name,
+        result: JSON.stringify(result),
       });
     }
-    contents.push({ role: 'function', parts: responseParts });
+
+    try {
+      interaction = await client.interactions.create({
+        model: MODEL_NAME,
+        previous_interaction_id: interaction.id,
+        tools: genAiTools,
+        input: resultSteps,
+      });
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : 'The AI Assistant is temporarily unavailable.';
+      return { answer: message, toolsCalled };
+    }
   }
 
   return {

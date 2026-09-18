@@ -7,6 +7,16 @@ export interface AssistantContext {
   loginUserId: string;
 }
 
+export interface ChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+export interface ChatTurnResult {
+  answer: string;
+  toolsCalled: { name: string; args: Record<string, unknown> }[];
+}
+
 export interface ToolDefinition {
   name: string;
   description: string;

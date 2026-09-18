@@ -8,11 +8,14 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string; docId: string }> }
 ) {
   const session = await getServerSession(authOptions);
-  if (!session || session.user.userGroup !== 1) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const { id, docId } = await params;
+  // Employees can remove their own documents (matches GET /api/employees/[id]/documents).
+  if (session.user.userGroup !== 1 && session.user.empFkey !== parseInt(id)) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
+
   const pool = await getCompanyPool(session.user.companyCode);
 
   // Soft delete (status=0): emp_passport_visa is the permanent, post-onboarding record,

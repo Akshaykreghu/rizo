@@ -1,9 +1,12 @@
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
-import { runAssistant } from '@/lib/assistant/gemini';
+import { runAssistant as runGeminiAssistant } from '@/lib/assistant/gemini';
+import { runAssistant as runOpenAiAssistant } from '@/lib/assistant/openai';
 import { NextRequest, NextResponse } from 'next/server';
-import type { Content } from '@google/generative-ai';
+import type { ChatMessage } from '@/lib/assistant/tools';
+
+const runAssistant = process.env.ASSISTANT_PROVIDER === 'openai' ? runOpenAiAssistant : runGeminiAssistant;
 
 const RATE_LIMIT = 30; // messages per hour per user
 const RATE_WINDOW_MS = 60 * 60 * 1000;
@@ -31,11 +34,6 @@ function isRateLimited(key: string): boolean {
   return false;
 }
 
-interface ChatMessage {
-  role: 'user' | 'assistant';
-  content: string;
-}
-
 export async function POST(request: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -57,12 +55,7 @@ export async function POST(request: NextRequest) {
 
   const pool = await getCompanyPool(session.user.companyCode);
 
-  const history: Content[] = messages.map((m) => ({
-    role: m.role === 'assistant' ? 'model' : 'user',
-    parts: [{ text: m.content }],
-  }));
-
-  const result = await runAssistant(history, {
+  const result = await runAssistant(messages, {
     pool,
     userGroup: session.user.userGroup,
     empFkey: session.user.empFkey,

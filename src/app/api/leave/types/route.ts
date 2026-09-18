@@ -8,12 +8,13 @@ import { NextRequest, NextResponse } from 'next/server';
 // joined through leavepolicy — matches LeaveRequestController's leave-type dropdown source).
 export async function GET(request: NextRequest) {
   const session = await getServerSession(authOptions);
-  if (!session || session.user.userGroup !== 1) {
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (session.user.userGroup !== 1 && !session.user.empFkey) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   const { searchParams } = new URL(request.url);
-  const employee = searchParams.get('employee');
+  const employee = session.user.userGroup === 1 ? searchParams.get('employee') : String(session.user.empFkey);
   if (!employee) return NextResponse.json({ error: 'employee is required' }, { status: 400 });
 
   const pool = await getCompanyPool(session.user.companyCode);

@@ -16,6 +16,10 @@ export async function POST(
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const { id } = await params;
+  if (session.user.userGroup !== 1 && session.user.empFkey !== parseInt(id)) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
+
   const pool = await getCompanyPool(session.user.companyCode);
 
   const [[emp]] = await pool.execute<RowDataPacket[]>(

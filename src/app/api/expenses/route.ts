@@ -6,19 +6,19 @@ import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket, ResultSetHeader } from 'mysql2';
 
 // Ports EmployeeExpensesController (menu items "Expense Requests" + "Manage Expenses" — both the
-// same controller/table, emp_expense). Admin-only, matching the established precedent for every
-// other request/approve flow in this app (Leave Requests, Regularisation, Resignation) — there is
-// no separate employee self-service login, so admin picks the employee and acts on their behalf.
+// same controller/table, emp_expense). Employee self-service (userGroup !== 1) is scoped to their
+// own emp_fkey on GET/POST, same precedent as attendance/regularisation and leave/encashment.
 // `is_credited` confirmed vestigial for expenses (unlike EmployeeAdvance, where it drives payroll
 // deduction) — expenses never feed payroll_master in legacy; this is a tracking workflow only.
 export async function GET(request: NextRequest) {
   const session = await getServerSession(authOptions);
-  if (!session || session.user.userGroup !== 1) {
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (session.user.userGroup !== 1 && !session.user.empFkey) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   const { searchParams } = new URL(request.url);
-  const employee = searchParams.get('employee') ?? '';
+  const employee = session.user.userGroup === 1 ? (searchParams.get('employee') ?? '') : String(session.user.empFkey);
   const status = searchParams.get('status') ?? '';
 
   const pool = await getCompanyPool(session.user.companyCode);
@@ -45,15 +45,18 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   const session = await getServerSession(authOptions);
-  if (!session || session.user.userGroup !== 1) {
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (session.user.userGroup !== 1 && !session.user.empFkey) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   const body = await request.json();
-  const { empFkey, expenseType, expensesAmount, affectedMonth, expenseDate, vendor, purpose, remarks } = body as {
-    empFkey: number; expenseType: string; expensesAmount: number; affectedMonth: string;
+  const { expenseType, expensesAmount, affectedMonth, expenseDate, vendor, purpose, remarks } = body as {
+    empFkey?: number; expenseType: string; expensesAmount: number; affectedMonth: string;
     expenseDate?: string; vendor?: string; purpose?: string; remarks?: string;
   };
+  // Employee self-service can only ever file a claim for themselves.
+  const empFkey = session.user.userGroup === 1 ? body.empFkey : session.user.empFkey;
 
   if (!empFkey || !expenseType || !expensesAmount || !affectedMonth) {
     return NextResponse.json(

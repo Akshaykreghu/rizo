@@ -15,9 +15,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await getServerSession(authOptions);
-  if (!session || session.user.userGroup !== 1) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const { id } = await params;
   const body = await request.json().catch(() => ({}));
@@ -31,6 +29,10 @@ export async function POST(
     [id]
   );
   if (!entry) return NextResponse.json({ error: 'Leave request not found' }, { status: 404 });
+  // Only admin or the designated authorizer for this specific request may authorize it.
+  if (session.user.userGroup !== 1 && session.user.empFkey !== entry.ISAutherizedby) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
   if (entry.LEAVESTATUS !== 'Applied') {
     return NextResponse.json({ error: `Cannot authorize a request in status '${entry.LEAVESTATUS}'` }, { status: 409 });
   }

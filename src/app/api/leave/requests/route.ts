@@ -6,8 +6,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket, ResultSetHeader } from 'mysql2';
 
 // Ports LeaveRequestController's core list + saveLeaveEntry() (apply path only — edit/cancel are
-// separate routes). Admin-only: admin picks an employee and applies on their behalf, same precedent
-// as Regularisation/Resignation (no ESS/hierarchy-manager login exists in this app).
+// separate routes). Employee self-service (userGroup !== 1) is scoped to their own emp_fkey on
+// GET/POST, same precedent as attendance/regularisation and leave/encashment — plus an
+// approver-queue mode (?authorizerFkey= / ?approverFkey=), always forced to the caller's own
+// empFkey for non-admins, backing the ESS Approvals page.
 
 // Day-count for a FROMDATE/TOHALF range: inclusive calendar days minus 0.5 for each half-day end.
 // NOTE: unlike insert_update_att_reg (attendance), this raw count does not exclude weekoffs/holidays —
@@ -25,19 +27,35 @@ function calcLeaveDays(fromDate: string, fromHalf: number, toDate: string, toHal
 
 export async function GET(request: NextRequest) {
   const session = await getServerSession(authOptions);
-  if (!session || session.user.userGroup !== 1) {
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (session.user.userGroup !== 1 && !session.user.empFkey) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   const { searchParams } = new URL(request.url);
-  const employee = searchParams.get('employee') ?? '';
   const status = searchParams.get('status') ?? '';
-
+  const isAdmin = session.user.userGroup === 1;
   const pool = await getCompanyPool(session.user.companyCode);
 
   const conditions: string[] = [];
   const values: (string | number)[] = [];
-  if (employee) { conditions.push('le.EMP_fkey = ?'); values.push(Number(employee)); }
+
+  if (isAdmin) {
+    const employee = searchParams.get('employee') ?? '';
+    const authorizerFkey = searchParams.get('authorizerFkey') ?? '';
+    const approverFkey = searchParams.get('approverFkey') ?? '';
+    if (employee) { conditions.push('le.EMP_fkey = ?'); values.push(Number(employee)); }
+    if (authorizerFkey) { conditions.push('le.ISAutherizedby = ?'); values.push(Number(authorizerFkey)); }
+    if (approverFkey) { conditions.push('le.APPROVEDBY = ?'); values.push(Number(approverFkey)); }
+  } else if (searchParams.get('authorizerFkey') || searchParams.get('approverFkey')) {
+    // Approver queue: always the caller's own empFkey, never an arbitrary id from the query string.
+    conditions.push('(le.ISAutherizedby = ? OR le.APPROVEDBY = ?)');
+    values.push(session.user.empFkey!, session.user.empFkey!);
+  } else {
+    // Own leave history — regardless of what's in the query string.
+    conditions.push('le.EMP_fkey = ?');
+    values.push(session.user.empFkey!);
+  }
   if (status) { conditions.push('le.LEAVESTATUS = ?'); values.push(status); }
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
@@ -60,19 +78,23 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   const session = await getServerSession(authOptions);
-  if (!session || session.user.userGroup !== 1) {
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (session.user.userGroup !== 1 && !session.user.empFkey) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   const body = await request.json();
   const {
-    empFkey, salaryHeadItemFkey, fromDate, fromHalf, toDate, toHalf,
+    salaryHeadItemFkey, fromDate, fromHalf, toDate, toHalf,
     reason, contactNo, contactPerson, authorizerFkey, approverFkey,
   } = body as {
-    empFkey: number; salaryHeadItemFkey: number; fromDate: string; fromHalf: number;
+    empFkey?: number; salaryHeadItemFkey: number; fromDate: string; fromHalf: number;
     toDate: string; toHalf: number; reason?: string; contactNo?: string; contactPerson?: string;
     authorizerFkey?: number; approverFkey?: number;
   };
+  // Employee self-service can only ever apply for themselves — the emp_fkey comes from the
+  // session, not the request body, regardless of what a tampered payload sends.
+  const empFkey = session.user.userGroup === 1 ? body.empFkey : session.user.empFkey;
 
   if (!empFkey || !salaryHeadItemFkey || !fromDate || !toDate || !fromHalf || !toHalf) {
     return NextResponse.json(

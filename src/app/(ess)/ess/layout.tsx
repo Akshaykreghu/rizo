@@ -1,21 +1,17 @@
 import { getServerSession } from 'next-auth';
 import { redirect } from 'next/navigation';
 import { authOptions } from '@/lib/auth';
-import { EssHeader } from '@/components/ess/EssHeader';
+import { EssLegacyShell } from '@/components/ess/EssLegacyShell';
+import '@/styles/ess-legacy.css';
 
-// Minimal shell for employee self-service (userGroup 2) logins — deliberately not the admin
-// Sidebar/Header, since every admin page/API route rejects userGroup!==1. Kept intentionally
-// small: one feature (Regularisation) today, structured so more ESS pages can be added as
-// separate route segments under here without touching this shell.
+// Shell for employee self-service (userGroup 2) logins — deliberately not the admin
+// Sidebar/Header, since every admin page/API route rejects userGroup!==1. The nav/visual design
+// here is a 1:1 port of New Rizo's components/ESSLayout.jsx (see ess-legacy.css for the ported
+// design system, scoped under `.ess-legacy` so it can't leak into or collide with admin styles).
 export default async function EssLayout({ children }: { children: React.ReactNode }) {
   const session = await getServerSession(authOptions);
   if (!session) redirect('/login');
   if (session.user.userGroup === 1) redirect('/dashboard');
 
-  return (
-    <div className="min-h-screen app-shell-bg">
-      <EssHeader />
-      <main className="max-w-3xl mx-auto px-4 py-6">{children}</main>
-    </div>
-  );
+  return <EssLegacyShell>{children}</EssLegacyShell>;
 }

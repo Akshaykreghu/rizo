@@ -12,9 +12,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await getServerSession(authOptions);
-  if (!session || session.user.userGroup !== 1) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const { id } = await params;
   const body = await request.json().catch(() => ({}));
@@ -23,11 +21,15 @@ export async function POST(
   const pool = await getCompanyPool(session.user.companyCode);
 
   const [[entry]] = await pool.execute<RowDataPacket[]>(
-    `SELECT LEAVEENTRYID, EMP_fkey, FROMDATE, FROMHALF, TODATE, TOHALF, leave_days, LEAVESTATUS
+    `SELECT LEAVEENTRYID, EMP_fkey, FROMDATE, FROMHALF, TODATE, TOHALF, leave_days, LEAVESTATUS, APPROVEDBY
      FROM leaveentries WHERE LEAVEENTRYID = ?`,
     [id]
   );
   if (!entry) return NextResponse.json({ error: 'Leave request not found' }, { status: 404 });
+  // Only admin or the designated approver for this specific request may approve it.
+  if (session.user.userGroup !== 1 && session.user.empFkey !== entry.APPROVEDBY) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
   if (entry.LEAVESTATUS !== 'Authorized') {
     return NextResponse.json({ error: `Cannot approve a request in status '${entry.LEAVESTATUS}'` }, { status: 409 });
   }
