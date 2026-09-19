@@ -4,22 +4,27 @@ import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { signOut, useSession } from 'next-auth/react';
+import { TAB_MENU_GATES } from '@/lib/essMenuLinks';
 
 // Ported 1:1 from New Rizo's components/ESSLayout.jsx (website-style navbar: logo, primary tabs,
 // "More" overflow dropdown, theme toggle + avatar pill). react-router-dom → next/navigation,
 // the old AuthContext/ThemeContext → next-auth session + a small localStorage-backed theme state
 // scoped to this shell only (admin side keeps its own theme). Visual design is untouched.
-
+//
+// Tab visibility: Home / About Me / My Team have no `gate` and always show. Every other tab lists
+// a `gate` key into TAB_MENU_GATES, checked against the employee's real menu-allocation grants
+// (fetched below from /api/ess/menu-access) — a fresh login with nothing allocated yet sees only
+// the three ungated tabs.
 const ALL_TABS = [
   { to: '/ess', label: 'Home', emoji: '🏠' },
   { to: '/ess/about', label: 'About Me', emoji: '👤' },
   { to: '/ess/team', label: 'My Team', emoji: '👥' },
-  { to: '/ess/presence', label: 'My Presence', emoji: '📊' },
-  { to: '/ess/salary', label: 'My Salary', emoji: '💰' },
+  { to: '/ess/presence', label: 'My Presence', emoji: '📊', gate: 'presence' },
+  { to: '/ess/salary', label: 'My Salary', emoji: '💰', gate: 'salary' },
   // overflow → "More" dropdown
-  { to: '/ess/requests', label: 'My Requests', emoji: '📋' },
-  { to: '/ess/approvals', label: 'Approvals', emoji: '✅' },
-  { to: '/ess/reports', label: 'Reports', emoji: '📊' },
+  { to: '/ess/requests', label: 'My Requests', emoji: '📋', gate: 'requests' },
+  { to: '/ess/approvals', label: 'Approvals', emoji: '✅', gate: 'approvals' },
+  { to: '/ess/reports', label: 'Reports', emoji: '📊', gate: 'reports' },
   { to: '/ess/others', label: 'Others', emoji: '⚙️' },
 ];
 
@@ -107,6 +112,7 @@ export function EssLegacyShell({ children }: { children: React.ReactNode }) {
   const [moreOpen, setMoreOpen] = useState(false);
   const [avatarOpen, setAvatarOpen] = useState(false);
   const [companyName, setCompanyName] = useState<string | null>(null);
+  const [grantedUrls, setGrantedUrls] = useState<Set<string> | null>(null);
 
   const moreRef = useRef<HTMLDivElement>(null);
   const avatarRef = useRef<HTMLDivElement>(null);
@@ -130,13 +136,29 @@ export function EssLegacyShell({ children }: { children: React.ReactNode }) {
       .catch(() => {});
   }, []);
 
+  // Drives which optional nav tabs show (see TAB_MENU_GATES above) — real per-employee
+  // menu-allocation grants, not a hardcoded set every login sees.
+  useEffect(() => {
+    fetch('/api/ess/menu-access')
+      .then((r) => (r.ok ? r.json() : []))
+      .then((items: { menu_url: string | null }[]) => {
+        setGrantedUrls(new Set(items.map((i) => (i.menu_url || '').trim().toLowerCase())));
+      })
+      .catch(() => setGrantedUrls(new Set()));
+  }, []);
+
   useEffect(() => {
     setMoreOpen(false);
     setAvatarOpen(false);
   }, [pathname]);
 
-  const primaryTabs = ALL_TABS.slice(0, PRIMARY_COUNT);
-  const overflowTabs = ALL_TABS.slice(PRIMARY_COUNT);
+  const visibleTabs = ALL_TABS.filter((t) => {
+    if (!t.gate) return true;
+    if (!grantedUrls) return false; // grants not loaded yet — don't flash a tab that may get hidden
+    return TAB_MENU_GATES[t.gate].some((u) => grantedUrls.has(u));
+  });
+  const primaryTabs = visibleTabs.slice(0, PRIMARY_COUNT);
+  const overflowTabs = visibleTabs.slice(PRIMARY_COUNT);
   const hasOverflow = overflowTabs.length > 0;
   const overflowActive = overflowTabs.some((t) => pathname === t.to || pathname.startsWith(t.to + '/'));
 

@@ -21,6 +21,7 @@ export const ESS_MENU_LINK_MAP: Record<string, string> = {
   'leaverequest/employeeleaves': '/ess/approvals',
   'empreport/leavepolicyreport': '/ess/requests',
   'empreport/leavedetailsreport': '/ess/requests',
+  'empreportnew/leavedetailsreport': '/ess/requests',
   'empreport/leavedaysreport': '/ess/requests',
 
   // Leave encashment
@@ -28,14 +29,17 @@ export const ESS_MENU_LINK_MAP: Record<string, string> = {
 
   // Attendance / regularisation
   'empreport/attendancereports': '/ess/presence',
+  'empreportnew/attendancereports': '/ess/presence',
   'employeeregister/index': '/ess/presence',
   attendanceregister: '/ess/presence',
   regularisation: '/ess/regularisation',
 
   // Salary / tax
   'empreport/salarystructure': '/ess/salary',
+  'empreportnew/salarystructure': '/ess/salary',
   salaryslipreports: '/ess/salary',
   'empreport/shiftpolicyreport': '/ess/about',
+  'empreportnew/shiftpolicyreport': '/ess/about',
   'tax/tabs': '/ess/salary',
   'employeetax/tabs': '/ess/salary',
 
@@ -45,6 +49,7 @@ export const ESS_MENU_LINK_MAP: Record<string, string> = {
 
   // Loans / advances
   employeeloan: '/ess/requests',
+  'employeeloan/myloan': '/ess/requests',
 
   // Career
   promotions: '/ess/about',
@@ -57,3 +62,37 @@ export function resolveMenuHref(menuUrl: string | null | undefined): string | nu
   if (!menuUrl) return null;
   return ESS_MENU_LINK_MAP[menuUrl.trim().toLowerCase()] ?? null;
 }
+
+// Which optional ESS navbar tabs show, driven by the employee's real menu-allocation grants
+// (see /api/ess/menu-access) instead of every employee always seeing every tab. Home / About Me /
+// My Team are not gated — every user-group-2 login gets those three regardless of allocation.
+// Each key lists the real emp_menu.menu_url values (lowercased) that unlock that tab; a tab shows
+// if the employee has been granted ANY one of its listed urls.
+//
+// Two url spellings appear for the same report across companies/imports — an older
+// "empreport/..." form (seen in this machine's local mypayrol_mpm121 dump) and the canonical
+// "empreportNew/..." form from the real emp_menu seed data — so both are listed per item.
+export const TAB_MENU_GATES: Record<string, string[]> = {
+  // My Presence — the "Attendance Register" report (emp_menu id 93).
+  presence: ['employeeregister/index'],
+  // My Salary — the "Salary" report (emp_menu id 23).
+  salary: ['empreport/salarystructure', 'empreportnew/salarystructure'],
+  // My Requests — any one of: My Leave Requests (21), Attendance Regularisation (99/1108),
+  // Expense Requests (98), Resignation Request (43).
+  requests: ['leaverequest', 'regularisation', 'employeeexpenses/employeerequests', 'resignationrequest'],
+  // Approvals — Team Leave Requests (emp_menu id 22).
+  approvals: ['leaverequest/employeeleaves'],
+  // Reports — any one of: My Shift Timings (24), Leave Details Report (28), SalarySlip Reports
+  // (30), My Loans (40), Tracking Reports (1155), My Asset (1284).
+  reports: [
+    'empreport/shiftpolicyreport',
+    'empreportnew/shiftpolicyreport',
+    'empreport/leavedetailsreport',
+    'empreportnew/leavedetailsreport',
+    'salaryslipreports',
+    'employeeloan',
+    'employeeloan/myloan',
+    'trackingreports/hrreports',
+    'asset/empview',
+  ],
+};
