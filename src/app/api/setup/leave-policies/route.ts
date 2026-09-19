@@ -49,13 +49,13 @@ export async function POST(request: NextRequest) {
   const [result] = await pool.execute<ResultSetHeader>(
     `INSERT INTO leavepolicy
       (LEAVEPOLICY_GROUP_ID, salary_head_item_fkey, leave_policy_type, leave_cycle_start_date, leave_cycle_end_date,
-       alloted_leave_forthe_year, alloted_leave_forthe_month, CARRY_FORWARD_LIMIT, sanction_by, REMARKS,
+       dynamic_period, alloted_leave_forthe_year, alloted_leave_forthe_month, CARRY_FORWARD_LIMIT, sanction_by, REMARKS,
        leave_encash_limit, minimum_leave, maximum_leave, min_day_before_apply, minimum_service,
        IS_SANDWICH, is_leave_encash, ALLOW_NEGETIVE, exceptions, allow_all_leaves, document_mandatory, status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
     [
       data.LEAVEPOLICY_GROUP_ID, data.salary_head_item_fkey, data.leave_policy_type,
-      data.leave_cycle_start_date, data.leave_cycle_end_date,
+      data.leave_cycle_start_date, data.leave_cycle_end_date, data.dynamic_period,
       data.alloted_leave_forthe_year, data.alloted_leave_forthe_month, data.CARRY_FORWARD_LIMIT,
       data.sanction_by, data.REMARKS, data.leave_encash_limit,
       data.minimum_leave, data.maximum_leave, data.min_day_before_apply, data.minimum_service,

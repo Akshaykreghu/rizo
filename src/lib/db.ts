@@ -10,6 +10,7 @@ function getControlPool(): mysql.Pool {
   if (!globalForPools._controlPool) {
     globalForPools._controlPool = mysql.createPool({
       host: process.env.CONTROL_DB_HOST || 'localhost',
+      port: process.env.CONTROL_DB_PORT ? Number(process.env.CONTROL_DB_PORT) : 3306,
       user: process.env.CONTROL_DB_USER || 'root',
       password: process.env.CONTROL_DB_PASSWORD || '',
       database: process.env.CONTROL_DB_NAME || 'mypayrol_control_db',
@@ -53,6 +54,7 @@ export async function getCompanyPool(companyCode: string): Promise<mysql.Pool> {
   const isDev = process.env.NODE_ENV === 'development';
   const pool = mysql.createPool({
     host: process.env.COMPANY_DB_HOST || process.env.CONTROL_DB_HOST || 'localhost',
+    port: process.env.CONTROL_DB_PORT ? Number(process.env.CONTROL_DB_PORT) : 3306,
     user: isDev ? (process.env.CONTROL_DB_USER || 'root') : Admin_name,
     password: isDev ? (process.env.CONTROL_DB_PASSWORD || '') : user_pwd,
     database: user_db,

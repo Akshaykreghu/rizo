@@ -18,6 +18,8 @@ export function normalizeLeavePolicyBody(body: Record<string, unknown>) {
     leave_policy_type: (body.leave_policy_type as string) || 'M',
     leave_cycle_start_date: (body.leave_cycle_start_date as string) || null,
     leave_cycle_end_date: (body.leave_cycle_end_date as string) || null,
+    dynamic_period:
+      body.dynamic_period === '' || body.dynamic_period == null ? null : Number(body.dynamic_period),
     alloted_leave_forthe_year:
       body.alloted_leave_forthe_year === '' || body.alloted_leave_forthe_year == null
         ? 0

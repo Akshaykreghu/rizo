@@ -75,6 +75,24 @@ function LeaveRequestsContent() {
   });
   const leaveTypes = leaveTypesData?.data ?? [];
 
+  // Ported from addeditleave_new.ctp's getLeaveBalance(): re-fetched whenever employee, leave type,
+  // or From Date changes, so the balance shown reflects the date being applied for.
+  const { data: balancePreview } = useQuery<{
+    balance: number;
+    allowNegative: boolean;
+    minServiceOk: boolean;
+    minServiceMessage: string | null;
+    advanceNoticeOk: boolean;
+    advanceNoticeMessage: string | null;
+  }>({
+    queryKey: ['leave', 'balance-preview', form.empFkey, form.salaryHeadItemFkey, form.fromDate],
+    queryFn: () =>
+      fetch(
+        `/api/leave/balance-preview?employee=${form.empFkey}&leaveType=${form.salaryHeadItemFkey}&fromDate=${form.fromDate}`
+      ).then((r) => r.json()),
+    enabled: !!form.empFkey && !!form.salaryHeadItemFkey && !!form.fromDate,
+  });
+
   const { data, isLoading, refetch } = useQuery<{ data: LeaveRow[] }>({
     queryKey: ['leave', 'requests', employee, status],
     queryFn: () => fetch(`/api/leave/requests?employee=${employee}&status=${status}`).then((r) => r.json()),
@@ -260,6 +278,22 @@ function LeaveRequestsContent() {
                   ))}
                 </select>
               </div>
+              {balancePreview && (
+                <div className="rounded-[9px] bg-slate-50 border border-slate-200 px-3 py-2 text-[12.5px] space-y-1">
+                  <div className="font-medium text-[#0F172A]">
+                    Available Leave Balance: {balancePreview.balance}
+                  </div>
+                  {!balancePreview.minServiceOk && (
+                    <div className="text-[color:var(--color-danger-dark)]">{balancePreview.minServiceMessage}</div>
+                  )}
+                  {!balancePreview.advanceNoticeOk && (
+                    <div className="text-[color:var(--color-danger-dark)]">{balancePreview.advanceNoticeMessage}</div>
+                  )}
+                  {balancePreview.balance === 0 && !balancePreview.allowNegative && (
+                    <div className="text-[color:var(--color-danger-dark)]">You have no leave balance!</div>
+                  )}
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-[12px] font-medium text-slate-600 mb-1.5">From Date</label>

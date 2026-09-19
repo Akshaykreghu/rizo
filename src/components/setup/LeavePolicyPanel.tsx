@@ -1,10 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Pencil, Trash2, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { DataTable } from '@/components/data-table/DataTable';
+import { SearchableSelect } from '@/components/ui/SearchableSelect';
 import type { ColumnDef } from '@tanstack/react-table';
 
 interface LeavePolicyGroup {
@@ -32,6 +33,7 @@ interface LeavePolicyRow {
   leave_policy_type: string;
   leave_cycle_start_date: string | null;
   leave_cycle_end_date: string | null;
+  dynamic_period: number | null;
   alloted_leave_forthe_year: number;
   alloted_leave_forthe_month: number;
   CARRY_FORWARD_LIMIT: number;
@@ -56,7 +58,75 @@ const DURATION_TYPES = [
   { value: 'H', label: 'Half Yearly' },
   { value: 'Y', label: 'Yearly' },
   { value: 'P', label: 'Present Days' },
+  { value: 'D', label: 'Running Days [Back Dated]' },
 ];
+
+function pad2(n: number): string {
+  return String(n).padStart(2, '0');
+}
+
+function toISO(d: Date): string {
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+
+// Fixed calendar quarter containing today: Jan-Mar, Apr-Jun, Jul-Sep, Oct-Dec.
+function currentQuarter(): { start: string; end: string } {
+  const now = new Date();
+  const q = Math.floor(now.getMonth() / 3);
+  const start = new Date(now.getFullYear(), q * 3, 1);
+  const end = new Date(now.getFullYear(), q * 3 + 3, 0);
+  return { start: toISO(start), end: toISO(end) };
+}
+
+// Fixed half-year containing today: Jan-Jun or Jul-Dec.
+function currentHalfYear(): { start: string; end: string } {
+  const now = new Date();
+  const isFirstHalf = now.getMonth() < 6;
+  const start = new Date(now.getFullYear(), isFirstHalf ? 0 : 6, 1);
+  const end = new Date(now.getFullYear(), isFirstHalf ? 6 : 12, 0);
+  return { start: toISO(start), end: toISO(end) };
+}
+
+// Yearly: end date = start date + 1 year - 1 day.
+function yearlyEnd(startISO: string): string {
+  const start = new Date(startISO);
+  if (Number.isNaN(start.getTime())) return '';
+  const end = new Date(start);
+  end.setFullYear(end.getFullYear() + 1);
+  end.setDate(end.getDate() - 1);
+  return toISO(end);
+}
+
+// Present Days: start is forced to the 1st of its month; end = Dec 31 of the following year-span.
+function presentDaysEnd(startISO: string): string {
+  const start = new Date(startISO);
+  if (Number.isNaN(start.getTime())) return '';
+  const end = new Date(start);
+  end.setFullYear(end.getFullYear() + 1);
+  end.setDate(0);
+  return toISO(end);
+}
+
+function presentDaysStart(rawISO: string): string {
+  const d = new Date(rawISO);
+  if (Number.isNaN(d.getTime())) return rawISO;
+  d.setDate(1);
+  return toISO(d);
+}
+
+// Clamps a numeric text-input value to be non-negative, preserving '' (empty) as-is.
+function clampNonNegative(raw: string): string {
+  return raw === '' ? '' : String(Math.max(0, Number(raw)));
+}
+
+// Running Days: start = end date - no of days.
+function runningDaysStart(endISO: string, days: number): string {
+  const end = new Date(endISO);
+  if (Number.isNaN(end.getTime()) || !days) return '';
+  const start = new Date(end);
+  start.setDate(start.getDate() - days);
+  return toISO(start);
+}
 
 type FormState = Record<string, string>;
 
@@ -67,6 +137,7 @@ function emptyForm(groupId: number): FormState {
     leave_policy_type: 'M',
     leave_cycle_start_date: '',
     leave_cycle_end_date: '',
+    dynamic_period: '',
     alloted_leave_forthe_year: '',
     alloted_leave_forthe_month: '',
     CARRY_FORWARD_LIMIT: '0',
@@ -93,6 +164,7 @@ function rowToForm(row: LeavePolicyRow): FormState {
     leave_policy_type: row.leave_policy_type,
     leave_cycle_start_date: row.leave_cycle_start_date?.slice(0, 10) ?? '',
     leave_cycle_end_date: row.leave_cycle_end_date?.slice(0, 10) ?? '',
+    dynamic_period: row.dynamic_period != null ? String(row.dynamic_period) : '',
     alloted_leave_forthe_year: String(row.alloted_leave_forthe_year ?? ''),
     alloted_leave_forthe_month: String(row.alloted_leave_forthe_month ?? ''),
     CARRY_FORWARD_LIMIT: String(row.CARRY_FORWARD_LIMIT ?? '0'),
@@ -182,15 +254,30 @@ export function LeavePolicyPanel() {
     },
   });
 
+  // Snapshot of the duration type + dates the modal was opened with, so switching the
+  // "Available Duration" dropdown back to that original type restores its original dates
+  // instead of leaving behind whatever another type had computed.
+  const originalDatesRef = useRef<{ type: string; start: string; end: string; dynamicPeriod: string } | null>(null);
+
   function openNew() {
     if (!activeGroupId) return;
     setForm(emptyForm(activeGroupId));
+    // No original dates to restore for a brand-new policy — leave this null so the duration-type
+    // effect always (re)computes fresh dates, including for the default Monthly type.
+    originalDatesRef.current = null;
     setEditing(null);
     setIsNew(true);
   }
 
   function openEdit(row: LeavePolicyRow) {
-    setForm(rowToForm(row));
+    const initial = rowToForm(row);
+    setForm(initial);
+    originalDatesRef.current = {
+      type: initial.leave_policy_type,
+      start: initial.leave_cycle_start_date,
+      end: initial.leave_cycle_end_date,
+      dynamicPeriod: initial.dynamic_period,
+    };
     setEditing(row);
     setIsNew(false);
   }
@@ -199,10 +286,65 @@ export function LeavePolicyPanel() {
     setEditing(null);
     setIsNew(false);
     setForm({});
+    originalDatesRef.current = null;
   }
 
   const showModal = isNew || editing !== null;
   const isPresentDays = form.leave_policy_type === 'P';
+  const durationType = form.leave_policy_type ?? 'M';
+  const isMonthly = durationType === 'M';
+  const isQuarterly = durationType === 'Q';
+  const isHalfYearly = durationType === 'H';
+  const isYearly = durationType === 'Y';
+  const isRunningDays = durationType === 'D';
+  // Monthly maps to the company's attendance cycle (e.g. 26th-25th), not the calendar month —
+  // fetched from the server since it depends on db_config.attendance_format/attendance_date.
+  const currentMonthKey = new Date().toISOString().slice(0, 7);
+  const { data: attPeriod } = useQuery<{ start: string; end: string }>({
+    queryKey: ['attendance/period', currentMonthKey],
+    queryFn: () => fetch(`/api/attendance/period?month=${currentMonthKey}`).then((r) => r.json()),
+    enabled: showModal && isMonthly,
+  });
+
+  // Duration-type-driven date fields: Monthly/Quarterly/Half-Yearly/Running-Days are fully derived
+  // (read-only); Yearly/Present-Days derive only the end date from a user-editable start date.
+  // Switching back to the type the modal was opened with restores its original dates verbatim,
+  // rather than leaving behind whatever another type had computed.
+  useEffect(() => {
+    if (!showModal) return;
+    const original = originalDatesRef.current;
+    if (original && durationType === original.type) {
+      setForm((f) => ({
+        ...f,
+        leave_cycle_start_date: original.start,
+        leave_cycle_end_date: original.end,
+        dynamic_period: original.dynamicPeriod,
+      }));
+      return;
+    }
+    if (durationType === 'M') {
+      if (attPeriod) {
+        setForm((f) => ({ ...f, leave_cycle_start_date: attPeriod.start, leave_cycle_end_date: attPeriod.end }));
+      }
+    } else if (durationType === 'Q') {
+      const { start, end } = currentQuarter();
+      setForm((f) => ({ ...f, leave_cycle_start_date: start, leave_cycle_end_date: end }));
+    } else if (durationType === 'H') {
+      const { start, end } = currentHalfYear();
+      setForm((f) => ({ ...f, leave_cycle_start_date: start, leave_cycle_end_date: end }));
+    } else if (durationType === 'Y' || durationType === 'P') {
+      // Fresh selection of Yearly/Present Days (not the original type): clear stale dates
+      // rather than keeping whatever the previous type left behind.
+      setForm((f) => ({ ...f, leave_cycle_start_date: '', leave_cycle_end_date: '' }));
+    } else if (durationType === 'D') {
+      setForm((f) => {
+        const end = f.leave_cycle_end_date || toISO(new Date());
+        const days = parseInt(f.dynamic_period ?? '', 10);
+        return { ...f, leave_cycle_end_date: end, leave_cycle_start_date: runningDaysStart(end, days) };
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showModal, durationType, attPeriod]);
 
   const policyColumns: ColumnDef<LeavePolicyRow, unknown>[] = [
     { accessorKey: 'leave_type_name', header: 'Leave Type', cell: ({ getValue }) => <span className="text-[#0F172A]">{String(getValue() ?? '').trim()}</span> },
@@ -331,7 +473,7 @@ export function LeavePolicyPanel() {
                     onChange={(e) => setForm((f) => ({ ...f, salary_head_item_fkey: e.target.value }))}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-100"
                   >
-                    <option value="">[--Select--]</option>
+                    <option value="">Select Leave Type</option>
                     {!isNew && editing && (
                       <option value={editing.salary_head_item_fkey}>{editing.leave_type_name?.trim()}</option>
                     )}
@@ -356,28 +498,67 @@ export function LeavePolicyPanel() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-3 gap-4">
+                {isRunningDays && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      No of Days <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      required
+                      value={form.dynamic_period ?? ''}
+                      onChange={(e) => {
+                        const days = parseInt(e.target.value, 10);
+                        setForm((f) => ({
+                          ...f,
+                          dynamic_period: e.target.value,
+                          leave_cycle_start_date: runningDaysStart(f.leave_cycle_end_date || toISO(new Date()), days),
+                        }));
+                      }}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                  </div>
+                )}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Start Date</label>
                   <input
                     type="date"
+                    readOnly={isMonthly || isQuarterly || isHalfYearly || isRunningDays}
                     value={form.leave_cycle_start_date ?? ''}
-                    onChange={(e) => setForm((f) => ({ ...f, leave_cycle_start_date: e.target.value }))}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      if (isYearly) {
+                        setForm((f) => ({ ...f, leave_cycle_start_date: raw, leave_cycle_end_date: yearlyEnd(raw) }));
+                      } else if (isPresentDays) {
+                        const start = presentDaysStart(raw);
+                        setForm((f) => ({ ...f, leave_cycle_start_date: start, leave_cycle_end_date: presentDaysEnd(start) }));
+                      } else {
+                        setForm((f) => ({ ...f, leave_cycle_start_date: raw }));
+                      }
+                    }}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 read-only:bg-gray-100"
                   />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">End Date</label>
                   <input
                     type="date"
+                    readOnly={isMonthly || isQuarterly || isHalfYearly || isYearly || isPresentDays || isRunningDays}
                     value={form.leave_cycle_end_date ?? ''}
-                    onChange={(e) => setForm((f) => ({ ...f, leave_cycle_end_date: e.target.value }))}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      if (isRunningDays) {
+                        const days = parseInt(form.dynamic_period ?? '', 10);
+                        setForm((f) => ({ ...f, leave_cycle_end_date: raw, leave_cycle_start_date: runningDaysStart(raw, days) }));
+                      } else {
+                        setForm((f) => ({ ...f, leave_cycle_end_date: raw }));
+                      }
+                    }}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 read-only:bg-gray-100"
                   />
                 </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     {isPresentDays ? 'Present days for one leave' : 'Limit'}
@@ -385,13 +566,17 @@ export function LeavePolicyPanel() {
                   <input
                     type="number"
                     step="any"
+                    min={0}
                     value={isPresentDays ? form.alloted_leave_forthe_month ?? '' : form.alloted_leave_forthe_year ?? ''}
-                    onChange={(e) =>
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      const val = raw === '' ? '' : String(Math.max(0, Number(raw)));
                       setForm((f) => ({
                         ...f,
-                        [isPresentDays ? 'alloted_leave_forthe_month' : 'alloted_leave_forthe_year']: e.target.value,
-                      }))
-                    }
+                        [isPresentDays ? 'alloted_leave_forthe_month' : 'alloted_leave_forthe_year']: val,
+                      }));
+                    }}
+                    onKeyDown={(e) => { if (e.key === '-') e.preventDefault(); }}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   />
                 </div>
@@ -401,24 +586,24 @@ export function LeavePolicyPanel() {
                     type="number"
                     min={0}
                     value={form.CARRY_FORWARD_LIMIT ?? '0'}
-                    onChange={(e) => setForm((f) => ({ ...f, CARRY_FORWARD_LIMIT: e.target.value }))}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      const val = raw === '' ? '' : String(Math.max(0, Number(raw)));
+                      setForm((f) => ({ ...f, CARRY_FORWARD_LIMIT: val }));
+                    }}
+                    onKeyDown={(e) => { if (e.key === '-') e.preventDefault(); }}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   />
                 </div>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Sanction By</label>
-                <select
-                  value={form.sanction_by ?? ''}
-                  onChange={(e) => setForm((f) => ({ ...f, sanction_by: e.target.value }))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                >
-                  <option value="">[--Select--]</option>
-                  {employees.map((e) => (
-                    <option key={e.value} value={e.value}>{e.label}</option>
-                  ))}
-                </select>
+                <div className="min-w-0">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Sanction By</label>
+                  <SearchableSelect
+                    value={form.sanction_by ?? ''}
+                    onChange={(v) => setForm((f) => ({ ...f, sanction_by: v }))}
+                    options={employees.map((e) => ({ value: String(e.value), label: e.label }))}
+                    placeholder="Select User"
+                  />
+                </div>
               </div>
 
               <div>
@@ -473,8 +658,10 @@ export function LeavePolicyPanel() {
                     <label className="block text-sm font-medium text-gray-700 mb-1">Min. Leave</label>
                     <input
                       type="number"
+                      min={0}
                       value={form.minimum_leave ?? ''}
-                      onChange={(e) => setForm((f) => ({ ...f, minimum_leave: e.target.value }))}
+                      onChange={(e) => setForm((f) => ({ ...f, minimum_leave: clampNonNegative(e.target.value) }))}
+                      onKeyDown={(e) => { if (e.key === '-') e.preventDefault(); }}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
                     />
                   </div>
@@ -482,8 +669,10 @@ export function LeavePolicyPanel() {
                     <label className="block text-sm font-medium text-gray-700 mb-1">Max. Leave</label>
                     <input
                       type="number"
+                      min={0}
                       value={form.maximum_leave ?? ''}
-                      onChange={(e) => setForm((f) => ({ ...f, maximum_leave: e.target.value }))}
+                      onChange={(e) => setForm((f) => ({ ...f, maximum_leave: clampNonNegative(e.target.value) }))}
+                      onKeyDown={(e) => { if (e.key === '-') e.preventDefault(); }}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
                     />
                   </div>
@@ -491,8 +680,10 @@ export function LeavePolicyPanel() {
                     <label className="block text-sm font-medium text-gray-700 mb-1">Advance Notice Days</label>
                     <input
                       type="number"
+                      min={0}
                       value={form.min_day_before_apply ?? ''}
-                      onChange={(e) => setForm((f) => ({ ...f, min_day_before_apply: e.target.value }))}
+                      onChange={(e) => setForm((f) => ({ ...f, min_day_before_apply: clampNonNegative(e.target.value) }))}
+                      onKeyDown={(e) => { if (e.key === '-') e.preventDefault(); }}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
                     />
                   </div>
@@ -500,8 +691,10 @@ export function LeavePolicyPanel() {
                     <label className="block text-sm font-medium text-gray-700 mb-1">Min. Service (Month)</label>
                     <input
                       type="number"
+                      min={0}
                       value={form.minimum_service ?? ''}
-                      onChange={(e) => setForm((f) => ({ ...f, minimum_service: e.target.value }))}
+                      onChange={(e) => setForm((f) => ({ ...f, minimum_service: clampNonNegative(e.target.value) }))}
+                      onKeyDown={(e) => { if (e.key === '-') e.preventDefault(); }}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
                     />
                   </div>
