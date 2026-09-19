@@ -2,17 +2,21 @@
 
 import { useEffect, useState } from 'react';
 import { useSession } from 'next-auth/react';
+import { Phone, Mail, Clock, MapPin } from 'lucide-react';
 
-// Port of New Rizo's pages/ESS/ESSDashboard.jsx. The CEO-message and Company-Updates
-// (announcements) panels are dropped — rizo-revamp has no announcements feature at all yet
-// (no table, no admin UI), and fabricating a permanently-empty panel for it isn't "the design,"
-// it's a placeholder for a feature that doesn't exist. Everything else here is real data.
+// Port of New Rizo's pages/ESS/ESSDashboard.jsx, a `1fr 1fr 300px` 3-panel top row (Leadership
+// Message | Company Updates | Profile sidebar). rizo-revamp has no announcements/leadership-
+// message feature yet (no table, no admin UI to author one), so Panels 1 & 2 always render New
+// Rizo's own empty-state fallback rather than fabricated data — same as how New Rizo itself
+// renders them for a company with nothing posted yet. Dropping the panels entirely (the previous
+// version of this file) left the grid as a single narrow column with a large empty void beside
+// it, which is the actual bug being fixed here — not a missing feature, a wrong layout.
+const ANNOUNCEMENT_TABS = ['all', 'urgent', 'important', 'pinned'] as const;
 
 type Employee = Record<string, string | number | null | undefined>;
-interface CompanyInfo { business_name?: string; address?: string; city?: string; state?: string; pincode?: string; phone?: string; email?: string; logo?: string }
+interface CompanyInfo { business_name?: string; business_nature?: string; address?: string; city?: string; state?: string; pincode?: string; phone?: string; email?: string; logo?: string }
 // Some legacy-imported company rows have literal "0" placeholders instead of empty strings.
 const realVal = (v?: string | null) => (v && v !== '0' ? v : null);
-interface Branch { id: number; branch_name: string; city?: string | null }
 interface Holiday { HOLIDAYID: number; HOLIDAYNAME: string; HOLIDAYDATE: string }
 interface FamilyMember { is_emergency_contact?: string | null; emergency_contact?: string | null }
 interface EducationRow { education_pkey: number }
@@ -30,6 +34,16 @@ function daysUntil(dateStr: string) {
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const target = new Date(dateStr); target.setHours(0, 0, 0, 0);
   return Math.round((target.getTime() - today.getTime()) / 86400000);
+}
+function fmtTime(t?: string | null) {
+  if (!t) return null;
+  const parts = String(t).split(':');
+  const h = Number(parts[0]);
+  if (Number.isNaN(h)) return null;
+  const mn = parts[1] || '00';
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  const h12 = h % 12 || 12;
+  return `${h12}:${mn} ${ampm}`;
 }
 function tenureStr(from: string) {
   const joined = new Date(from);
@@ -75,11 +89,12 @@ export default function EssHomePage() {
   const [family, setFamily] = useState<FamilyMember[]>([]);
   const [education, setEducation] = useState<EducationRow[]>([]);
   const [companyInfo, setCompanyInfo] = useState<CompanyInfo | null>(null);
-  const [branches, setBranches] = useState<Branch[]>([]);
   const [holidays, setHolidays] = useState<Holiday[]>([]);
   const [birthdays, setBirthdays] = useState<EventPerson[]>([]);
   const [anniversaries, setAnniversaries] = useState<EventPerson[]>([]);
   const [newJoiners, setNewJoiners] = useState<EventPerson[]>([]);
+  const [announcementTab, setAnnouncementTab] = useState<(typeof ANNOUNCEMENT_TABS)[number]>('all');
+  const [shiftInfo, setShiftInfo] = useState<{ shiftName: string | null; startTime: string | null; endTime: string | null }>({ shiftName: null, startTime: null, endTime: null });
 
   useEffect(() => {
     if (!empId) return;
@@ -89,19 +104,23 @@ export default function EssHomePage() {
       fetch(`/api/employees/${empId}/family`).then((r) => (r.ok ? r.json() : [])).catch(() => []),
       fetch(`/api/employees/${empId}/education`).then((r) => (r.ok ? r.json() : [])).catch(() => []),
       fetch('/api/company').then((r) => (r.ok ? r.json() : null)).catch(() => null),
-      fetch('/api/setup/branches').then((r) => (r.ok ? r.json() : [])).catch(() => []),
       fetch('/api/ess/home').then((r) => (r.ok ? r.json() : { birthdays: [], anniversaries: [], newJoiners: [] })).catch(() => ({ birthdays: [], anniversaries: [], newJoiners: [] })),
-    ]).then(([e, docR, famR, eduR, compR, branchR, homeR]) => {
+      fetch(`/api/employees/${empId}/presence-summary`).then((r) => (r.ok ? r.json() : null)).catch(() => null),
+    ]).then(([e, docR, famR, eduR, compR, homeR, presenceR]) => {
       const professional = e?.professional ?? null;
       setEmp(e?.employee ? { ...e.employee, ...professional } : null);
       setDocs(docR || []);
       setFamily(famR || []);
       setEducation(eduR || []);
       setCompanyInfo(compR);
-      setBranches(branchR || []);
       setBirthdays(homeR.birthdays || []);
       setAnniversaries(homeR.anniversaries || []);
       setNewJoiners(homeR.newJoiners || []);
+      setShiftInfo({
+        shiftName: presenceR?.employee?.shift_name ?? null,
+        startTime: presenceR?.shiftInfo?.startTime ?? null,
+        endTime: presenceR?.shiftInfo?.endTime ?? null,
+      });
 
       const groupId = professional?.HOLIDAY_GROUP_ID;
       if (groupId) {
@@ -159,82 +178,192 @@ export default function EssHomePage() {
     : '';
   const phone = realVal(companyInfo?.phone);
   const email = realVal(companyInfo?.email);
+  const businessNature = realVal(companyInfo?.business_nature);
+  const empFirstName = emp?.first_name != null ? String(emp.first_name) : null;
+  const empMobile = emp?.mobile_no != null ? String(emp.mobile_no) : null;
+  const empEmail = emp?.email != null ? String(emp.email) : null;
 
   return (
     <div style={{ background: 'var(--bg-page)', minHeight: '100%' }}>
-      {/* Company hero banner */}
-      <div style={{ background: 'linear-gradient(135deg, #071520 0%, #0d2c40 30%, #1E516E 65%, #2772a0 100%)', position: 'relative', overflow: 'hidden' }}>
+      {/* Company hero banner
+          NOTE: ess-legacy.css has `.ess-legacy * { margin: 0; padding: 0; }` — a universal reset
+          with the exact same specificity as any single Tailwind utility class, and it loads after
+          the Tailwind bundle, so it wins every padding/margin utility class below (they'd silently
+          resolve to 0, though colors/flex/gap/border-radius are untouched since the reset doesn't
+          set those). Padding and margin are therefore set inline here instead, which always wins
+          regardless of stylesheet order — Tailwind classes are kept for everything the reset
+          doesn't reach. */}
+      <div style={{ background: 'linear-gradient(135deg, #071520 0%, #0d2c40 30%, #1E516E 65%, #2772a0 100%)', position: 'relative', overflow: 'hidden', padding: 0 }}>
+        {/* New Rizo's own decorative blobs (ESSDashboard.jsx) — direct children of the full-bleed
+            gradient div (not nested inside a padded header/wrapper), so they sit behind/around the
+            glass card's edges exactly like the reference instead of being inset along with it. */}
         <div style={{ position: 'absolute', top: -60, right: -60, width: 280, height: 280, borderRadius: '50%', background: 'rgba(255,255,255,0.04)', pointerEvents: 'none' }} />
         <div style={{ position: 'absolute', bottom: -40, left: '30%', width: 200, height: 200, borderRadius: '50%', background: 'rgba(255,255,255,0.03)', pointerEvents: 'none' }} />
+        <div style={{ position: 'absolute', top: '20%', left: -30, width: 120, height: 120, borderRadius: '50%', background: 'rgba(39,114,160,0.3)', pointerEvents: 'none' }} />
+        <div style={{ position: 'absolute', bottom: -20, right: '20%', width: 150, height: 150, borderRadius: '50%', background: 'rgba(30,81,110,0.4)', pointerEvents: 'none' }} />
 
-        <div style={{ margin: '20px 28px', borderRadius: 18, backdropFilter: 'blur(14px)', background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.12)', boxShadow: '0 8px 32px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.1)', padding: '22px 28px', display: 'flex', alignItems: 'center', gap: 28, flexWrap: 'wrap', position: 'relative', zIndex: 1 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 20, flex: '1 1 320px', minWidth: 0 }}>
-            <div style={{ width: 64, height: 64, borderRadius: 16, flexShrink: 0, background: 'rgba(255,255,255,0.12)', border: '1.5px solid rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 16px rgba(0,0,0,0.2)', overflow: 'hidden' }}>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={companyInfo?.logo ? `/${companyInfo.logo.replace(/^\/+/, '')}` : '/branding/rizo-logo.jpg'}
-                alt="Company logo"
-                style={{ width: 44, height: 44, objectFit: 'contain', borderRadius: 6 }}
-                onError={(e) => { (e.currentTarget as HTMLImageElement).src = '/branding/rizo-logo.jpg'; }}
-              />
-            </div>
-            <div style={{ width: 1, height: 52, background: 'rgba(255,255,255,0.18)', flexShrink: 0 }} />
-            <div style={{ minWidth: 0 }}>
-              <div style={{ fontSize: 18, fontWeight: 800, color: '#fff', lineHeight: 1.2, letterSpacing: '-0.3px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {companyInfo?.business_name || 'Your Company'}
-              </div>
-              {addressLine && (
-                <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.6)', marginTop: 5, lineHeight: 1.4, display: 'flex', alignItems: 'flex-start', gap: 5 }}>
-                  <span style={{ fontSize: 11, marginTop: 1, flexShrink: 0 }}>📍</span>
-                  <span>{addressLine}</span>
-                </div>
-              )}
-              {(phone || email) && (
-                <div style={{ display: 'flex', gap: 12, marginTop: 5, flexWrap: 'wrap' }}>
-                  {phone && <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)' }}>📞 {phone}</span>}
-                  {email && <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)' }}>✉️ {email}</span>}
-                </div>
-              )}
-            </div>
-          </div>
+        <div
+          style={{
+            // New Rizo's own card (ESSDashboard.jsx) — inset via margin on the card itself (not a
+            // padded parent wrapper), so the blobs above can peek out around its edges.
+            margin: '20px 28px',
+            borderRadius: 18,
+            backdropFilter: 'blur(14px)',
+            WebkitBackdropFilter: 'blur(14px)',
+            background: 'rgba(255,255,255,0.07)',
+            border: '1px solid rgba(255,255,255,0.12)',
+            boxShadow: '0 8px 32px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.1)',
+            padding: '22px 28px',
+            position: 'relative',
+            zIndex: 1,
+          }}
+        >
+          <div className="flex flex-row items-center gap-8 flex-wrap">
 
-          {branches.length > 0 && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, flex: '0 0 auto' }}>
-              <div style={{ fontSize: 9, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '1px', color: 'rgba(255,255,255,0.4)' }}>Branches</div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
-                {branches.map((b) => (
-                  <div key={b.id} style={{ background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 10, padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#4dd9ac', flexShrink: 0, boxShadow: '0 0 6px #4dd9ac88' }} />
-                    <span style={{ fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,0.9)', whiteSpace: 'nowrap' }}>{b.branch_name}</span>
-                    {b.city && <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.45)', whiteSpace: 'nowrap' }}>· {b.city}</span>}
+            {/* Left: employee avatar, greeting, shift/contact pills */}
+              <div className="flex items-center gap-5 min-w-0">
+                <div className="relative shrink-0">
+                  <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl bg-gradient-to-br from-slate-800 via-indigo-950/80 to-slate-900 border border-slate-600/50 shadow-lg shadow-indigo-950/40 flex items-center justify-center ring-1 ring-white/10">
+                    <span className="text-white text-lg sm:text-xl font-bold tracking-wider bg-gradient-to-b from-white to-slate-300 bg-clip-text text-transparent">
+                      {getInitials(emp?.first_name as string, emp?.last_name as string)}
+                    </span>
                   </div>
-                ))}
+                  <span className="absolute -bottom-1 -right-1 flex h-4 w-4">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                    <span className="relative inline-flex rounded-full h-4 w-4 bg-emerald-500 border-2 border-[#0c1626]" />
+                  </span>
+                </div>
+
+                <div className="flex flex-col justify-center min-w-0 flex-1" style={{ gap: 10 }}>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-bold text-slate-400" style={{ fontSize: 18 }}>Welcome,</span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-lg sm:text-xl font-bold text-white tracking-tight">{empFirstName || session?.user.loginUserId}!</span>
+                      <span aria-label="waving hand" className="inline-flex items-center justify-center text-sm">👋</span>
+                    </div>
+                    <span className="inline-flex items-center rounded-full text-[11px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" style={{ padding: '2px 8px' }}>
+                      Active
+                    </span>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2 sm:gap-2.5 text-xs">
+                    {empMobile && (
+                      <a href={`tel:${empMobile}`} className="inline-flex items-center gap-1.5 rounded-lg bg-slate-800/70 hover:bg-slate-800 border border-slate-700/60 text-slate-200 hover:text-white transition-all duration-150 group shadow-sm" style={{ padding: '6px 12px' }}>
+                        <Phone className="w-3.5 h-3.5 text-sky-400 group-hover:text-sky-300 transition-colors" strokeWidth={2} />
+                        <span className="font-medium tracking-wide">{empMobile}</span>
+                      </a>
+                    )}
+                    {empEmail && (
+                      <a href={`mailto:${empEmail}`} className="inline-flex items-center gap-1.5 rounded-lg bg-slate-800/70 hover:bg-slate-800 border border-slate-700/60 text-slate-200 hover:text-white transition-all duration-150 group shadow-sm truncate max-w-xs" style={{ padding: '6px 12px' }}>
+                        <Mail className="w-3.5 h-3.5 text-indigo-400 group-hover:text-indigo-300 transition-colors shrink-0" strokeWidth={2} />
+                        <span className="font-medium truncate">{empEmail}</span>
+                      </a>
+                    )}
+                  </div>
+
+                  {shiftInfo.shiftName && (
+                    <div className="flex items-center text-xs">
+                      <div className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500/10 border border-amber-500/25 text-amber-200 shadow-sm" style={{ padding: '6px 12px' }}>
+                        <Clock className="w-3.5 h-3.5 text-amber-400 shrink-0" strokeWidth={2} />
+                        <span className="font-semibold text-amber-300">{shiftInfo.shiftName}:</span>
+                        {shiftInfo.startTime && shiftInfo.endTime && (
+                          <span className="font-medium text-slate-200">{fmtTime(shiftInfo.startTime)} – {fmtTime(shiftInfo.endTime)}</span>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Right: company name, nature, address, contact pills */}
+              <div className="flex flex-col items-end justify-center shrink-0" style={{ gap: 8, marginLeft: 'auto' }}>
+                <div className="flex items-center justify-end gap-2.5 flex-wrap">
+                  <span className="text-base sm:text-lg font-extrabold tracking-wide uppercase text-white drop-shadow-sm">
+                    {companyInfo?.business_name || 'Your Company'}
+                  </span>
+                  {businessNature && (
+                    <span className="inline-flex items-center rounded-md text-[11px] font-semibold bg-cyan-500/15 text-cyan-300 border border-cyan-500/30" style={{ padding: '2px 8px' }}>
+                      {businessNature}
+                    </span>
+                  )}
+                </div>
+
+                {addressLine && (
+                  <div className="flex items-center justify-end gap-1.5 text-xs text-slate-300">
+                    <MapPin className="w-3.5 h-3.5 text-rose-400 shrink-0" strokeWidth={2} />
+                    <span className="text-right font-normal text-slate-300" style={{ maxWidth: 320 }}>{addressLine}</span>
+                  </div>
+                )}
+
+                {(phone || email) && (
+                  <div className="flex flex-wrap items-center justify-end gap-2 text-xs">
+                    {phone && (
+                      <a href={`tel:${phone.replace(/\s+/g, '')}`} className="inline-flex items-center gap-1.5 rounded-md bg-slate-800/50 hover:bg-slate-800 border border-slate-700/50 text-slate-300 hover:text-white transition-colors group" style={{ padding: '4px 10px' }}>
+                        <Phone className="w-3 h-3 text-sky-400 group-hover:text-sky-300 transition-colors shrink-0" strokeWidth={2} />
+                        <span className="font-medium">{phone}</span>
+                      </a>
+                    )}
+                    {email && (
+                      <a href={`mailto:${email}`} className="inline-flex items-center gap-1.5 rounded-md bg-slate-800/50 hover:bg-slate-800 border border-slate-700/50 text-slate-300 hover:text-white transition-colors group" style={{ padding: '4px 10px' }}>
+                        <Mail className="w-3 h-3 text-indigo-400 group-hover:text-indigo-300 transition-colors shrink-0" strokeWidth={2} />
+                        <span className="font-medium">{email}</span>
+                      </a>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
-          )}
-
-          <div style={{ display: 'flex', gap: 1, flexShrink: 0, background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 14, overflow: 'hidden' }}>
-            {[
-              { label: 'Branches', value: branches.length || '—' },
-              { label: 'Events', value: allEvents.length || '—' },
-              { label: 'Holidays', value: holidays.length || '—' },
-            ].map((s, i, a) => (
-              <div key={s.label} style={{ padding: '10px 18px', textAlign: 'center', borderRight: i < a.length - 1 ? '1px solid rgba(255,255,255,0.08)' : 'none' }}>
-                <div style={{ fontSize: 18, fontWeight: 900, color: '#fff', lineHeight: 1 }}>{s.value}</div>
-                <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.45)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px', marginTop: 3 }}>{s.label}</div>
-              </div>
-            ))}
-          </div>
         </div>
+
         <div style={{ height: 20, background: 'linear-gradient(to bottom, transparent, var(--bg-page))', position: 'relative', zIndex: 1 }} />
       </div>
 
       <div style={{ maxWidth: 1400, margin: '0 auto', padding: '8px 28px 48px' }}>
-        {/* Profile + side cards — one unified sidebar stack, same grouping as New Rizo's
-            Panel 3 (this app has no CEO-message/Announcements panels to fill the rest of the
-            row, so this stays a single narrow column rather than stretching to fake a second
-            column of content that doesn't exist). */}
-        <div style={{ maxWidth: 340, display: 'flex', flexDirection: 'column', gap: 14 }}>
+        {/* TOP ROW — 3 panels, matching New Rizo's `1fr 1fr 300px` grid */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 300px', gap: 20, alignItems: 'start' }}>
+
+          {/* Panel 1: Leadership Message — no backend feature for this yet, always empty state */}
+          <div style={{ height: 440, display: 'flex', flexDirection: 'column' }}>
+            <div style={{ flex: 1, background: 'var(--bg-card)', border: '1.5px solid var(--border)', borderRadius: 16, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
+              <div style={{ fontSize: 42, opacity: 0.25 }}>💬</div>
+              <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-muted)' }}>No leadership message yet</div>
+            </div>
+          </div>
+
+          {/* Panel 2: Company Updates — no announcements feature/table yet, always empty state */}
+          <div style={{ height: 440, display: 'flex', flexDirection: 'column', background: 'var(--bg-card)', border: '1.5px solid var(--border)', borderRadius: 16, overflow: 'hidden' }}>
+            <div style={{ padding: '14px 16px 0', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--text-primary)' }}>📢 Company Updates</div>
+              </div>
+              <div style={{ display: 'flex', gap: 4 }}>
+                {ANNOUNCEMENT_TABS.map((t) => (
+                  <button
+                    key={t}
+                    onClick={() => setAnnouncementTab(t)}
+                    style={{
+                      padding: '5px 10px', border: 'none', borderRadius: '6px 6px 0 0', cursor: 'pointer',
+                      fontSize: 11, fontWeight: 700, textTransform: 'capitalize',
+                      background: announcementTab === t ? '#1E516E' : 'transparent',
+                      color: announcementTab === t ? '#fff' : 'var(--text-muted)',
+                      transition: 'all 0.12s',
+                    }}
+                  >
+                    {t === 'all' ? 'All' : t === 'urgent' ? '🔴 Urgent' : t === 'important' ? '🟡 Important' : '📌 Pinned'}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, padding: 24 }}>
+              <div style={{ fontSize: 32, opacity: 0.2 }}>📢</div>
+              <div style={{ fontSize: 13, color: 'var(--text-muted)', textAlign: 'center' }}>
+                {announcementTab === 'all' ? 'No announcements yet' : `No ${announcementTab} announcements`}
+              </div>
+            </div>
+          </div>
+
+          {/* Panel 3: profile + side cards */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <div style={{ background: 'var(--bg-card)', border: '1.5px solid var(--border)', borderRadius: 16, overflow: 'hidden' }}>
             <div style={{ background: 'linear-gradient(135deg, #0c1f2c 0%, #1E516E 55%, #2d7fb8 100%)', padding: '28px 16px 20px', display: 'flex', flexDirection: 'column', alignItems: 'center', position: 'relative', overflow: 'hidden' }}>
               <div style={{ position: 'absolute', top: -20, right: -20, width: 90, height: 90, borderRadius: '50%', background: 'rgba(255,255,255,0.05)', pointerEvents: 'none' }} />
@@ -346,6 +475,7 @@ export default function EssHomePage() {
                 ))}
               </div>
             )}
+          </div>
         </div>
 
         {/* Celebrations & People */}

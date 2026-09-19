@@ -106,6 +106,7 @@ export function EssLegacyShell({ children }: { children: React.ReactNode }) {
 
   const [moreOpen, setMoreOpen] = useState(false);
   const [avatarOpen, setAvatarOpen] = useState(false);
+  const [companyName, setCompanyName] = useState<string | null>(null);
 
   const moreRef = useRef<HTMLDivElement>(null);
   const avatarRef = useRef<HTMLDivElement>(null);
@@ -117,6 +118,16 @@ export function EssLegacyShell({ children }: { children: React.ReactNode }) {
     }
     document.addEventListener('mousedown', handle);
     return () => document.removeEventListener('mousedown', handle);
+  }, []);
+
+  // New Rizo shows activeCompany.name here (see ESSLayout.jsx) — this session doesn't carry the
+  // company's display name, only its short internal code, so it's fetched once from the same
+  // /api/company the admin's own Company Setup page reads from.
+  useEffect(() => {
+    fetch('/api/company')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setCompanyName(d?.business_name || null))
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -163,12 +174,12 @@ export function EssLegacyShell({ children }: { children: React.ReactNode }) {
           {/* Logo */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginRight: 32, flexShrink: 0 }}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/branding/rizo-logo.jpg" alt="Rizo" style={{ height: 36, width: 'auto', flexShrink: 0, borderRadius: 6 }} />
-            {session?.user.companyCode && (
+            <img src="/branding/rizo-logo-full.png" alt="Rizo" style={{ height: 36, width: 'auto', flexShrink: 0 }} />
+            {(companyName || session?.user.companyCode) && (
               <>
                 <div style={{ width: 1, height: 28, background: 'var(--border)', flexShrink: 0 }} />
                 <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>
-                  {session.user.companyCode}
+                  {companyName || session?.user.companyCode}
                 </span>
               </>
             )}

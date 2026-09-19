@@ -62,11 +62,16 @@ export async function GET(request: NextRequest) {
   const [rows] = await pool.execute<RowDataPacket[]>(
     `SELECT le.LEAVEENTRYID, le.EMP_fkey, le.salary_head_item_fkey, shi.item AS leave_type,
             le.FROMDATE, le.FROMHALF, le.TODATE, le.TOHALF, le.leave_days, le.LEAVESTATUS,
-            le.ISAutherizedby, le.ISAutherized, le.APPROVEDBY, le.ISAPPROVED, le.Reason, le.applied_date,
-            ed.first_name, ed.last_name, ed.emp_id
+            le.ISAutherizedby, le.ISAutherized, le.Autherized_date, le.APPROVEDBY, le.ISAPPROVED, le.APPROVED_date,
+            le.Reason, le.contact_No, le.contact_person, le.REMARKS, le.applied_date,
+            ed.first_name, ed.last_name, ed.emp_id,
+            auth.first_name AS authorized_by_first_name, auth.last_name AS authorized_by_last_name,
+            appr.first_name AS approved_by_first_name, appr.last_name AS approved_by_last_name
      FROM leaveentries le
      JOIN salary_head_items shi ON shi.salary_head_item_pkey = le.salary_head_item_fkey
      JOIN emp_details ed ON ed.emp_pkey = le.EMP_fkey
+     LEFT JOIN emp_details auth ON auth.emp_pkey = le.ISAutherizedby
+     LEFT JOIN emp_details appr ON appr.emp_pkey = le.APPROVEDBY
      ${where}
      ORDER BY le.LEAVEENTRYID DESC
      LIMIT 200`,

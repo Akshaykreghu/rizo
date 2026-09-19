@@ -32,7 +32,7 @@ function BrandPanel() {
     <div className={styles.loginBrand}>
       <div className={styles.loginBrandLogo}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/branding/rizo-logo.jpg" alt="Rizo" />
+        <img src="/branding/rizo-logo-full.png" alt="Rizo" />
         <span className={styles.loginBrandLogoText}>HRMS</span>
       </div>
       <h1 className={styles.loginBrandHeadline}>
