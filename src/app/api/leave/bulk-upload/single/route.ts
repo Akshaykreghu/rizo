@@ -25,6 +25,8 @@ export async function POST(request: NextRequest) {
   const toDate: string = body.toDate;
   const toHalf = Number(body.toHalf) || 2;
   const reason: string | null = body.reason || null;
+  const contactNo: string | null = body.contactNo || null;
+  const contactPerson: string | null = body.contactPerson || null;
 
   if (!empFkey || !salaryHeadItemFkey || !fromDate || !toDate) {
     return NextResponse.json({ error: 'empFkey, salaryHeadItemFkey, fromDate and toDate are required' }, { status: 400 });
@@ -97,10 +99,10 @@ export async function POST(request: NextRequest) {
   const [entryResult] = await pool.execute<ResultSetHeader>(
     `INSERT INTO leaveentries
        (salary_head_item_fkey, applied_date, LEAVESTATUS, EMP_fkey, FROMDATE, FROMHALF, TODATE, TOHALF,
-        Reason, leave_days, Autherized_date, REMARKS, APPROVED_date, AuthoriseRemarks, ApproveRemarks)
-     VALUES (?, CURDATE(), 'Applied', ?, ?, ?, ?, ?, ?, ?, CURDATE(), ?, CURDATE(), ?, ?)`,
+        Reason, contact_No, contact_person, leave_days, Autherized_date, REMARKS, APPROVED_date, AuthoriseRemarks, ApproveRemarks)
+     VALUES (?, CURDATE(), 'Applied', ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE(), ?, CURDATE(), ?, ?)`,
     [
-      salaryHeadItemFkey, empFkey, fromDate, fromHalf, toDate, toHalf, reason, leaveDays,
+      salaryHeadItemFkey, empFkey, fromDate, fromHalf, toDate, toHalf, reason, contactNo, contactPerson, leaveDays,
       'Leave approved from Leave Upload', 'Leave authorised from Leave Upload', 'Leave approved from Leave Upload',
     ]
   );

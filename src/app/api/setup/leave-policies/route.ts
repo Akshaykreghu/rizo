@@ -2,6 +2,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
 import { normalizeLeavePolicyBody } from '@/lib/leavePolicies';
+import { toISODate } from '@/lib/leave';
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket, ResultSetHeader } from 'mysql2';
 
@@ -21,7 +22,14 @@ export async function GET(request: NextRequest) {
      ORDER BY shi.item`,
     [groupId]
   );
-  return NextResponse.json(rows);
+  // mysql2 returns DATE columns as JS Date objects, which JSON.stringify serializes with a
+  // T00:00:00.000Z time/timezone component — these are date-only fields.
+  const data = rows.map((r) => ({
+    ...r,
+    leave_cycle_start_date: r.leave_cycle_start_date != null ? toISODate(r.leave_cycle_start_date) : null,
+    leave_cycle_end_date: r.leave_cycle_end_date != null ? toISODate(r.leave_cycle_end_date) : null,
+  }));
+  return NextResponse.json(data);
 }
 
 export async function POST(request: NextRequest) {

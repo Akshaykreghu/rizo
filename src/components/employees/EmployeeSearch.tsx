@@ -19,10 +19,17 @@ interface EmployeeSearchProps {
   value: string;
   onChange: (empPkey: string) => void;
   placeholder?: string;
+  /** Shown as the closed-state label when value is empty, styled as a real selection (not the
+   * muted placeholder hint) — e.g. "All employees" for a filter where empty means "no filter",
+   * as opposed to other callers (e.g. Apply Leave) where empty means "nothing chosen yet". */
+  emptyLabel?: string;
+  /** Scopes search results to a branch (e.g. when paired with a Branch filter) — matches
+   * /api/employees' own `branch` param. Omitted entirely, callers get all branches. */
+  branch?: string;
   className?: string;
 }
 
-export function EmployeeSearch({ value, onChange, placeholder, className }: EmployeeSearchProps) {
+export function EmployeeSearch({ value, onChange, placeholder, emptyLabel, branch, className }: EmployeeSearchProps) {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
   const [selectedLabel, setSelectedLabel] = useState('');
@@ -33,9 +40,10 @@ export function EmployeeSearch({ value, onChange, placeholder, className }: Empl
   const [resolvedFor, setResolvedFor] = useState<string | null>(null);
 
   const { data } = useQuery<{ data: EmployeeOption[] }>({
-    queryKey: ['employees', 'search', query],
-    queryFn: () => fetch(`/api/employees?search=${encodeURIComponent(query)}&pageSize=10`).then((r) => r.json()),
-    enabled: query.length > 1,
+    queryKey: ['employees', 'search', query, branch],
+    queryFn: () =>
+      fetch(`/api/employees?search=${encodeURIComponent(query)}&pageSize=10&branch=${encodeURIComponent(branch ?? '')}`).then((r) => r.json()),
+    enabled: query.length > 0,
   });
 
   const { data: resolvedEmp } = useQuery<{ employee: { first_name: string; last_name: string; emp_id: string } }>({
@@ -62,7 +70,7 @@ export function EmployeeSearch({ value, onChange, placeholder, className }: Empl
       <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
       <input
         type="text"
-        value={open ? query : selectedLabel}
+        value={open ? query : (selectedLabel || (emptyLabel ?? ''))}
         onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
         onFocus={() => setOpen(true)}
         onBlur={() => setTimeout(() => setOpen(false), 150)}
@@ -73,7 +81,7 @@ export function EmployeeSearch({ value, onChange, placeholder, className }: Empl
         )}
       />
       {open && options.length > 0 && (
-        <div className="absolute z-10 mt-1.5 w-full bg-white border border-slate-200 rounded-lg shadow-lg max-h-64 overflow-y-auto scroll-fade">
+        <div className="absolute z-20 mt-1.5 w-full bg-white border border-slate-200 rounded-lg shadow-lg max-h-64 overflow-y-auto scroll-fade">
           {options.map((emp) => (
             <button
               key={emp.emp_pkey}

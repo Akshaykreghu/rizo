@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -10,6 +10,8 @@ import { cn } from '@/lib/utils';
 import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
 import { DataTable } from '@/components/data-table/DataTable';
 import { EmployeeSearch } from '@/components/employees/EmployeeSearch';
+import { BranchSearch } from '@/components/employees/BranchSearch';
+import { useSetupOptions, type SetupOption } from '@/lib/setupOptions';
 
 const BTN_BASE =
   'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[9px] text-[12.5px] font-semibold shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
@@ -20,6 +22,11 @@ const INPUT_CLASS =
 interface UploadResult { imported: number; errors: { row: number; message: string }[] }
 
 interface LeaveType { salaryHeadItemFkey: number; name: string }
+
+function currentMonth(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+}
 
 interface LeaveUploadRow {
   emp_leave_upload_pkey: number;
@@ -34,10 +41,31 @@ interface LeaveUploadRow {
   created_date: string;
 }
 
-function BulkUploadCard() {
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const [result, setResult] = useState<UploadResult | null>(null);
+const emptyForm = { empFkey: '', salaryHeadItemFkey: '', fromDate: '', fromHalf: '1', toDate: '', toHalf: '2', reason: '', contactNo: '', contactPerson: '' };
+
+function ManualGrid({
+  branch, setBranch, employee, setEmployee, branches,
+}: {
+  branch: string;
+  setBranch: (v: string) => void;
+  employee: string;
+  setEmployee: (v: string) => void;
+  branches: SetupOption[];
+}) {
   const queryClient = useQueryClient();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  // Starts empty so server and first client render match exactly (avoiding a hydration
+  // mismatch from computing "now" during render), then fills in the current month client-side.
+  const [month, setMonth] = useState('');
+  useEffect(() => { setMonth(currentMonth()); }, []);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const [showAdd, setShowAdd] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [form, setForm] = useState(emptyForm);
+  const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
+
+  const templateHref = `/api/leave/bulk-upload/template?branch=${encodeURIComponent(branch)}&employee=${encodeURIComponent(employee)}`;
 
   const upload = useMutation({
     mutationFn: (file: File) => {
@@ -49,7 +77,7 @@ function BulkUploadCard() {
       });
     },
     onSuccess: (data: UploadResult) => {
-      setResult(data);
+      setUploadResult(data);
       queryClient.invalidateQueries({ queryKey: ['leave', 'bulk-upload', 'list'] });
     },
   });
@@ -60,66 +88,10 @@ function BulkUploadCard() {
     e.target.value = '';
   }
 
-  return (
-    <div className="surface-card rounded-xl px-4 py-4 max-w-xl space-y-3">
-      <div className="flex items-center gap-2">
-        <a
-          href="/api/leave/bulk-upload/template"
-          className={cn(BTN_BASE, 'bg-white border border-slate-200 hover:bg-slate-50 text-slate-600')}
-        >
-          <Download className="w-3.5 h-3.5" /> Download Template
-        </a>
-        <button
-          onClick={() => fileInputRef.current?.click()}
-          disabled={upload.isPending}
-          className={cn(BTN_BASE, 'bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)] text-white')}
-        >
-          <Upload className="w-3.5 h-3.5" /> {upload.isPending ? 'Uploading…' : 'Upload File'}
-        </button>
-        <input ref={fileInputRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleFileSelected} />
-      </div>
-      {upload.isError && <p className="text-[12.5px] text-[color:var(--color-danger)]">{String(upload.error)}</p>}
-
-      {result && (
-        <div className="mt-1 text-[12.5px]">
-          <div className="flex items-center justify-between">
-            <span>
-              <span className="font-medium text-[color:var(--color-success-dark)]">{result.imported} leave request{result.imported === 1 ? '' : 's'} applied &amp; approved</span>
-              {result.errors.length > 0 && (
-                <span className="text-[color:var(--color-danger)] ml-2">{result.errors.length} row(s) skipped</span>
-              )}
-            </span>
-            <button onClick={() => setResult(null)} className="text-slate-400 hover:text-slate-600 text-[11.5px]">Dismiss</button>
-          </div>
-          {result.errors.length > 0 && (
-            <ul className="mt-2 space-y-0.5 text-[11.5px] text-[color:var(--color-danger)]">
-              {result.errors.map((err, i) => (
-                <li key={i}>Row {err.row}: {err.message}</li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-const emptyForm = { empFkey: '', salaryHeadItemFkey: '', fromDate: '', fromHalf: '1', toDate: '', toHalf: '2', reason: '' };
-
-function ManualGrid() {
-  const queryClient = useQueryClient();
-  const [month, setMonth] = useState('');
-  const [employee, setEmployee] = useState('');
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
-  const [showAdd, setShowAdd] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
-  const [form, setForm] = useState(emptyForm);
-
   const { data, isLoading } = useQuery<{ data: LeaveUploadRow[]; total: number }>({
-    queryKey: ['leave', 'bulk-upload', 'list', month, employee, page, pageSize],
+    queryKey: ['leave', 'bulk-upload', 'list', month, employee, branch, page, pageSize],
     queryFn: () =>
-      fetch(`/api/leave/bulk-upload/list?rows=${pageSize}&page=${page}&month=${month}&employee=${employee}`).then((r) => r.json()),
+      fetch(`/api/leave/bulk-upload/list?rows=${pageSize}&page=${page}&month=${month}&employee=${employee}&branch=${branch}`).then((r) => r.json()),
   });
   const rows = data?.data ?? [];
 
@@ -129,6 +101,26 @@ function ManualGrid() {
     enabled: !!form.empFkey,
   });
   const leaveTypes = leaveTypesData?.data ?? [];
+
+  // Ported from addeditleave_new.ctp's getLeaveBalance(): re-fetched whenever employee, leave
+  // type, or From Date changes, so the balance shown reflects the date being applied for.
+  const { data: balancePreview } = useQuery<{
+    balance: number;
+    allowNegative: boolean;
+    minLeaveLimit: number;
+    maxLeaveLimit: number;
+    minServiceOk: boolean;
+    minServiceMessage: string | null;
+    advanceNoticeOk: boolean;
+    advanceNoticeMessage: string | null;
+  }>({
+    queryKey: ['leave', 'balance-preview', form.empFkey, form.salaryHeadItemFkey, form.fromDate],
+    queryFn: () =>
+      fetch(
+        `/api/leave/balance-preview?employee=${form.empFkey}&leaveType=${form.salaryHeadItemFkey}&fromDate=${form.fromDate}`
+      ).then((r) => r.json()),
+    enabled: !!form.empFkey && !!form.salaryHeadItemFkey && !!form.fromDate,
+  });
 
   const add = useMutation({
     mutationFn: () =>
@@ -197,21 +189,64 @@ function ManualGrid() {
           onClick={() => setShowAdd(true)}
           className={cn(BTN_BASE, 'bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)] text-white')}
         >
-          <Plus className="w-3.5 h-3.5" /> New
+          <Plus className="w-3.5 h-3.5" /> Apply Leave
         </button>
       </div>
 
       <div className="surface-card rounded-xl px-4 py-2.5 mb-4 flex flex-wrap items-end gap-3">
         <div className="w-64">
+          <label className="block text-[11.5px] font-medium text-slate-500 mb-1">Branch</label>
+          <BranchSearch value={branch} onChange={(v) => { setBranch(v); setEmployee(''); setPage(1); }} branches={branches} />
+        </div>
+        <div className="w-[28rem]">
           <label className="block text-[11.5px] font-medium text-slate-500 mb-1">Employee</label>
-          <EmployeeSearch value={employee} onChange={(v) => { setEmployee(v); setPage(1); }} />
+          <EmployeeSearch value={employee} onChange={(v) => { setEmployee(v); setPage(1); }} emptyLabel="All employees" branch={branch} />
         </div>
         <div>
           <label className="block text-[11.5px] font-medium text-slate-500 mb-1">Month</label>
           <input type="month" value={month} onChange={(e) => { setMonth(e.target.value); setPage(1); }} className={INPUT_CLASS} />
         </div>
+        <div className="flex items-center gap-2">
+          <a
+            href={templateHref}
+            className={cn(BTN_BASE, 'bg-white border border-slate-200 hover:bg-slate-50 text-slate-600')}
+          >
+            <Download className="w-3.5 h-3.5" /> Download Template
+          </a>
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={upload.isPending}
+            className={cn(BTN_BASE, 'bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)] text-white')}
+          >
+            <Upload className="w-3.5 h-3.5" /> {upload.isPending ? 'Uploading…' : 'Upload File'}
+          </button>
+          <input ref={fileInputRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleFileSelected} />
+        </div>
         {message && <span className="text-[12.5px] text-slate-500">{message}</span>}
       </div>
+
+      {upload.isError && <p className="text-[12.5px] text-[color:var(--color-danger)] mb-3">{String(upload.error)}</p>}
+
+      {uploadResult && (
+        <div className="surface-card rounded-xl px-4 py-2.5 mb-4 text-[12.5px]">
+          <div className="flex items-center justify-between">
+            <span>
+              <span className="font-medium text-[color:var(--color-success-dark)]">{uploadResult.imported} leave request{uploadResult.imported === 1 ? '' : 's'} applied &amp; approved</span>
+              {uploadResult.errors.length > 0 && (
+                <span className="text-[color:var(--color-danger)] ml-2">{uploadResult.errors.length} row(s) skipped</span>
+              )}
+            </span>
+            <button onClick={() => setUploadResult(null)} className="text-slate-400 hover:text-slate-600 text-[11.5px]">Dismiss</button>
+          </div>
+          {uploadResult.errors.length > 0 && (
+            <ul className="mt-2 space-y-0.5 text-[11.5px] text-[color:var(--color-danger)]">
+              {uploadResult.errors.map((err, i) => (
+                <li key={i}>Row {err.row}: {err.message}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
 
       <DataTable
         data={rows}
@@ -230,7 +265,7 @@ function ManualGrid() {
             className="relative bg-white rounded-[20px] border border-black/[0.06] shadow-[0_25px_70px_-15px_rgba(0,0,0,0.25)] p-6 w-full max-w-md animate-modal-in"
           >
             <div className="flex items-center justify-between mb-5">
-              <h2 className="text-[19px] font-semibold text-[#0F172A] tracking-tight">Add Leave</h2>
+              <h2 className="text-[19px] font-semibold text-[#0F172A] tracking-tight">Apply Leave</h2>
               <button onClick={() => setShowAdd(false)} aria-label="Close" className="p-1 rounded-full hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors duration-150">
                 <X className="w-4.5 h-4.5" />
               </button>
@@ -254,6 +289,22 @@ function ManualGrid() {
                   ))}
                 </select>
               </div>
+              {balancePreview && (
+                <div className="rounded-[9px] bg-slate-50 border border-slate-200 px-3 py-2 text-[12.5px] space-y-1">
+                  <div className="font-medium text-[#0F172A]">
+                    Available Leave Balance: {balancePreview.balance}
+                  </div>
+                  {!balancePreview.minServiceOk && (
+                    <div className="text-[color:var(--color-danger-dark)]">{balancePreview.minServiceMessage}</div>
+                  )}
+                  {!balancePreview.advanceNoticeOk && (
+                    <div className="text-[color:var(--color-danger-dark)]">{balancePreview.advanceNoticeMessage}</div>
+                  )}
+                  {balancePreview.balance === 0 && !balancePreview.allowNegative && (
+                    <div className="text-[color:var(--color-danger-dark)]">You have no leave balance!</div>
+                  )}
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-[12px] font-medium text-slate-600 mb-1.5">From Date</label>
@@ -282,6 +333,16 @@ function ManualGrid() {
                 <label className="block text-[12px] font-medium text-slate-600 mb-1.5">Reason</label>
                 <input type="text" value={form.reason} onChange={(e) => setForm((f) => ({ ...f, reason: e.target.value }))} className={cn(INPUT_CLASS, 'w-full')} />
               </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[12px] font-medium text-slate-600 mb-1.5">Contact No.</label>
+                  <input type="text" value={form.contactNo} onChange={(e) => setForm((f) => ({ ...f, contactNo: e.target.value }))} className={cn(INPUT_CLASS, 'w-full')} />
+                </div>
+                <div>
+                  <label className="block text-[12px] font-medium text-slate-600 mb-1.5">Contact Person</label>
+                  <input type="text" value={form.contactPerson} onChange={(e) => setForm((f) => ({ ...f, contactPerson: e.target.value }))} className={cn(INPUT_CLASS, 'w-full')} />
+                </div>
+              </div>
             </div>
             {add.isError && <p className="text-[12.5px] text-[color:var(--color-danger)] mt-3">{(add.error as Error).message}</p>}
             <button
@@ -301,6 +362,9 @@ function ManualGrid() {
 export default function BulkLeaveUploadPage() {
   const { slotEl } = useHeaderSlot();
   const router = useRouter();
+  const [branch, setBranch] = useState('');
+  const [employee, setEmployee] = useState('');
+  const { data: branches = [] } = useSetupOptions('setup/branches', 'branch_code', (r) => String(r.branch_name));
 
   return (
     <div>
@@ -331,8 +395,7 @@ export default function BulkLeaveUploadPage() {
         code (see the template).
       </p>
 
-      <BulkUploadCard />
-      <ManualGrid />
+      <ManualGrid branch={branch} setBranch={setBranch} employee={employee} setEmployee={setEmployee} branches={branches} />
     </div>
   );
 }

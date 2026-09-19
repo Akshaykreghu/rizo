@@ -1,11 +1,11 @@
 'use client';
 
-import { Suspense, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useSearchParams } from 'next/navigation';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { EmployeeSearch } from '@/components/employees/EmployeeSearch';
-import { Plus, Check, X, ThumbsUp, Ban } from 'lucide-react';
+import { Plus, Check, X, Eye, CalendarCheck } from 'lucide-react';
 import type { ColumnDef } from '@tanstack/react-table';
 import { cn } from '@/lib/utils';
 import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
@@ -31,6 +31,7 @@ interface LeaveRow {
   first_name: string;
   last_name: string;
   emp_id: string;
+  isAttendanceVerified: boolean;
 }
 
 const STATUS_STYLE: Record<string, string> = {
@@ -39,13 +40,15 @@ const STATUS_STYLE: Record<string, string> = {
   Approved: 'bg-[color:var(--color-success-soft)] text-[color:var(--color-success-dark)]',
   Rejected: 'bg-[color:var(--color-danger-soft)] text-[color:var(--color-danger-dark)]',
   Cancelled: 'bg-slate-100 text-slate-600',
+  CancelledByAdmin: 'bg-slate-100 text-slate-600',
   CancellationOfAuthorized: 'bg-[color:var(--color-accent-soft)] text-[color:var(--color-accent-dark)]',
   CancellationOfApproved: 'bg-[color:var(--color-accent-soft)] text-[color:var(--color-accent-dark)]',
 };
 
 const STATUS_LABEL: Record<string, string> = {
-  CancellationOfAuthorized: 'Cancellation Requested',
-  CancellationOfApproved: 'Cancellation Requested',
+  CancellationOfAuthorized: 'Cancellation of Authorized',
+  CancellationOfApproved: 'Cancellation of Approved',
+  CancelledByAdmin: 'Cancelled by Admin',
 };
 
 const INPUT_CLASS =
@@ -62,7 +65,15 @@ function LeaveRequestsContent() {
   // filtered, matching the click-through it replaces.
   const [status, setStatus] = useState(() => searchParams.get('status') ?? '');
   const [showApply, setShowApply] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
+  const [viewingId, setViewingId] = useState<number | null>(null);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 4000);
+    return () => clearTimeout(t);
+  }, [toast]);
   const [form, setForm] = useState({
     empFkey: '', salaryHeadItemFkey: '', fromDate: '', fromHalf: '1', toDate: '', toHalf: '2',
     reason: '', contactNo: '', contactPerson: '',
@@ -80,6 +91,8 @@ function LeaveRequestsContent() {
   const { data: balancePreview } = useQuery<{
     balance: number;
     allowNegative: boolean;
+    minLeaveLimit: number;
+    maxLeaveLimit: number;
     minServiceOk: boolean;
     minServiceMessage: string | null;
     advanceNoticeOk: boolean;
@@ -91,6 +104,23 @@ function LeaveRequestsContent() {
         `/api/leave/balance-preview?employee=${form.empFkey}&leaveType=${form.salaryHeadItemFkey}&fromDate=${form.fromDate}`
       ).then((r) => r.json()),
     enabled: !!form.empFkey && !!form.salaryHeadItemFkey && !!form.fromDate,
+  });
+
+  // Ported from EmployeeLeavesController::showleavedays() / showleavedays.ctp — the "Leave Details"
+  // modal, shown via the row's View action.
+  const { data: details, isLoading: detailsLoading } = useQuery<{
+    leaveType: string;
+    leaveBalance: number;
+    allowNegative: boolean;
+    isSandwich: boolean;
+    reason: string | null;
+    status: string;
+    transactions: { leaveDate: string; status: string; remarks: string }[];
+    documents: { name: string; type: string }[];
+  }>({
+    queryKey: ['leave', 'requests', 'details', viewingId],
+    queryFn: () => fetch(`/api/leave/requests/${viewingId}/details`).then((r) => r.json()),
+    enabled: viewingId !== null,
   });
 
   const { data, isLoading, refetch } = useQuery<{ data: LeaveRow[] }>({
@@ -117,13 +147,22 @@ function LeaveRequestsContent() {
         return b;
       }),
     onSuccess: (b) => {
-      setMessage(`Leave applied (${b.leaveDays} day(s))`);
       setShowApply(false);
       setForm({ empFkey: '', salaryHeadItemFkey: '', fromDate: '', fromHalf: '1', toDate: '', toHalf: '2', reason: '', contactNo: '', contactPerson: '' });
+      setToast({ message: `Leave applied successfully (${b.leaveDays} day(s))`, type: 'success' });
       refetch();
     },
-    onError: (err: Error) => setMessage(err.message),
+    onError: (err: Error) => setToast({ message: err.message, type: 'error' }),
   });
+
+  const ACTION_LABEL: Record<string, string> = {
+    authorize: 'authorized',
+    approve: 'approved',
+    reject: 'rejected',
+    cancel: 'cancelled',
+    'cancellation/approve': 'cancellation confirmed',
+    'cancellation/reject': 'cancellation rejected',
+  };
 
   const act = useMutation({
     mutationFn: (vars: { id: number; action: 'authorize' | 'approve' | 'reject' | 'cancel' | 'cancellation/approve' | 'cancellation/reject' }) =>
@@ -136,15 +175,156 @@ function LeaveRequestsContent() {
         if (!r.ok) throw new Error(b.error ?? 'Action failed');
         return b;
       }),
-    onSuccess: (b) => {
-      setMessage(b.autoApproved ? 'Authorized and auto-approved (same authorizer/approver)' : `Status updated to ${b.status}`);
+    onSuccess: (_b, vars) => {
+      setToast({ message: `Leave ${ACTION_LABEL[vars.action]} successfully`, type: 'success' });
       refetch();
     },
-    onError: (err: Error) => setMessage(err.message),
+    onError: (err: Error) => setToast({ message: err.message, type: 'error' }),
   });
 
+  type SkippedRow = { id: number; employeeName: string; reason: string };
+
+  // Names the employees skipped specifically for verified attendance (the reason
+  // checkAttendanceRegisterRangeVerified returns), separately from other skip reasons (e.g. an
+  // already-processed row), so the toast reads "attendance already verified for Jane, John" rather
+  // than a vague count.
+  function formatBulkResult(actionVerb: string, processedCount: number, skipped: SkippedRow[]): string {
+    if (skipped.length === 0) return `${processedCount} leave(s) ${actionVerb} successfully`;
+
+    const attendanceNames = skipped
+      .filter((s) => s.reason.toLowerCase().includes('attendance'))
+      .map((s) => s.employeeName)
+      .filter(Boolean);
+    const otherCount = skipped.length - attendanceNames.length;
+
+    const parts: string[] = [];
+    if (processedCount > 0) parts.push(`${processedCount} ${actionVerb}`);
+    if (attendanceNames.length > 0) parts.push(`attendance already verified for ${attendanceNames.join(', ')}`);
+    if (otherCount > 0) parts.push(`${otherCount} skipped`);
+    return parts.join(' — ');
+  }
+
+  // Bulk selection flow: mirrors EmployeeLeavesController's checkbox-grid approveleave()/deleteleave(),
+  // and adds an attendance-verified guard those legacy endpoints never had — a row whose month is
+  // already verified is skipped (not approved/cancelled) and reported back rather than silently
+  // dropped or blocking the whole batch.
+  const bulkApprove = useMutation({
+    mutationFn: (ids: number[]) =>
+      fetch('/api/leave/requests/bulk-approve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids }),
+      }).then(async (r) => {
+        const b = await r.json();
+        if (!r.ok) throw new Error(b.error ?? 'Bulk approve failed');
+        return b as { approved: number[]; skipped: SkippedRow[] };
+      }),
+    onSuccess: (b) => {
+      setSelected(new Set());
+      setToast({
+        message: formatBulkResult('approved', b.approved.length, b.skipped),
+        type: b.approved.length > 0 || b.skipped.length === 0 ? 'success' : 'error',
+      });
+      refetch();
+    },
+    onError: (err: Error) => setToast({ message: err.message, type: 'error' }),
+  });
+
+  const bulkCancel = useMutation({
+    mutationFn: (ids: number[]) =>
+      fetch('/api/leave/requests/bulk-cancel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids }),
+      }).then(async (r) => {
+        const b = await r.json();
+        if (!r.ok) throw new Error(b.error ?? 'Bulk cancel failed');
+        return b as { cancelled: number[]; skipped: SkippedRow[] };
+      }),
+    onSuccess: (b) => {
+      setSelected(new Set());
+      setToast({
+        message: formatBulkResult('cancelled', b.cancelled.length, b.skipped),
+        type: b.cancelled.length > 0 || b.skipped.length === 0 ? 'success' : 'error',
+      });
+      refetch();
+    },
+    onError: (err: Error) => setToast({ message: err.message, type: 'error' }),
+  });
+
+  function toggleSelect(id: number) {
+    setSelected((s) => {
+      const next = new Set(s);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  // Attendance-verified rows are excluded: bulk-approve/bulk-cancel would just skip them anyway
+  // (checkAttendanceRegisterRangeVerified blocks them server-side), so there's nothing a checkbox
+  // here could actually do for them.
+  const isSelectable = (r: LeaveRow) =>
+    !r.isAttendanceVerified && (r.LEAVESTATUS === 'Applied' || r.LEAVESTATUS === 'Authorized' || r.LEAVESTATUS === 'Approved');
+
   const columns: ColumnDef<LeaveRow, unknown>[] = [
-    { id: 'employee', header: 'Employee', cell: ({ row }) => <>{row.original.first_name} {row.original.last_name} <span className="text-slate-400 text-[11px]">({row.original.emp_id})</span></> },
+    {
+      id: 'select',
+      // Scoped to the current page only: `table.getRowModel()` here is the *paginated* model
+      // (DataTable builds the table with getPaginationRowModel()), so "select all" only ever
+      // touches the rows actually rendered on this page, not every filtered row across all pages.
+      header: ({ table }) => {
+        const pageRows = table.getRowModel().rows.map((r) => r.original).filter(isSelectable);
+        const allOnPageSelected = pageRows.length > 0 && pageRows.every((r) => selected.has(r.LEAVEENTRYID));
+        return (
+          <input
+            type="checkbox"
+            checked={allOnPageSelected}
+            onChange={() => {
+              setSelected((s) => {
+                const next = new Set(s);
+                if (allOnPageSelected) {
+                  pageRows.forEach((r) => next.delete(r.LEAVEENTRYID));
+                } else {
+                  pageRows.forEach((r) => next.add(r.LEAVEENTRYID));
+                }
+                return next;
+              });
+            }}
+            className="w-3.5 h-3.5 rounded border-slate-300"
+          />
+        );
+      },
+      meta: { className: 'w-10' },
+      cell: ({ row }) =>
+        isSelectable(row.original) ? (
+          <input
+            type="checkbox"
+            checked={selected.has(row.original.LEAVEENTRYID)}
+            onChange={() => toggleSelect(row.original.LEAVEENTRYID)}
+            onClick={(e) => e.stopPropagation()}
+            className="w-3.5 h-3.5 rounded border-slate-300"
+          />
+        ) : null,
+    },
+    {
+      id: 'employee',
+      header: 'Employee',
+      cell: ({ row }) => (
+        <span className="inline-flex items-center gap-1.5">
+          {row.original.first_name} {row.original.last_name}
+          <span className="text-slate-400 text-[11px]">({row.original.emp_id})</span>
+          {row.original.isAttendanceVerified && (
+            <CalendarCheck
+              className="w-3.5 h-3.5 text-[color:var(--color-success-dark)] shrink-0"
+              aria-label="Attendance verified for this month"
+            >
+              <title>Attendance already verified for this month</title>
+            </CalendarCheck>
+          )}
+        </span>
+      ),
+    },
     { accessorKey: 'leave_type', header: 'Leave Type' },
     { accessorKey: 'FROMDATE', header: 'From' },
     { accessorKey: 'TODATE', header: 'To' },
@@ -161,30 +341,17 @@ function LeaveRequestsContent() {
     },
     {
       id: 'actions',
-      header: '',
-      meta: { className: 'w-28' },
+      header: 'Action',
+      meta: { className: 'w-32' },
       cell: ({ row }) => (
-        <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-          {row.original.LEAVESTATUS === 'Applied' && (
-            <button onClick={() => act.mutate({ id: row.original.LEAVEENTRYID, action: 'authorize' })} title="Authorize" className="p-1.5 rounded-lg text-slate-400 hover:text-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-light)] transition-colors duration-150">
-              <ThumbsUp className="w-3.5 h-3.5" />
-            </button>
-          )}
-          {row.original.LEAVESTATUS === 'Authorized' && (
-            <button onClick={() => act.mutate({ id: row.original.LEAVEENTRYID, action: 'approve' })} title="Approve" className="p-1.5 rounded-lg text-slate-400 hover:text-[color:var(--color-success-dark)] hover:bg-[color:var(--color-success-soft)] transition-colors duration-150">
-              <Check className="w-3.5 h-3.5" />
-            </button>
-          )}
-          {(row.original.LEAVESTATUS === 'Applied' || row.original.LEAVESTATUS === 'Authorized') && (
-            <button onClick={() => act.mutate({ id: row.original.LEAVEENTRYID, action: 'reject' })} title="Reject" className="p-1.5 rounded-lg text-slate-400 hover:text-[color:var(--color-danger)] hover:bg-[color:var(--color-danger)]/10 transition-colors duration-150">
-              <X className="w-3.5 h-3.5" />
-            </button>
-          )}
-          {(row.original.LEAVESTATUS === 'Applied' || row.original.LEAVESTATUS === 'Authorized' || row.original.LEAVESTATUS === 'Approved') && (
-            <button onClick={() => act.mutate({ id: row.original.LEAVEENTRYID, action: 'cancel' })} title="Cancel" className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors duration-150">
-              <Ban className="w-3.5 h-3.5" />
-            </button>
-          )}
+        <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+          <button
+            onClick={() => setViewingId(row.original.LEAVEENTRYID)}
+            title="View Details"
+            className="p-1.5 rounded-lg text-slate-400 hover:text-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-light)] transition-colors duration-150"
+          >
+            <Eye className="w-3.5 h-3.5" />
+          </button>
           {(row.original.LEAVESTATUS === 'CancellationOfAuthorized' || row.original.LEAVESTATUS === 'CancellationOfApproved') && (
             <>
               <button onClick={() => act.mutate({ id: row.original.LEAVEENTRYID, action: 'cancellation/approve' })} title="Confirm Cancellation" className="p-1.5 rounded-lg text-slate-400 hover:text-[color:var(--color-success-dark)] hover:bg-[color:var(--color-success-soft)] transition-colors duration-150">
@@ -225,7 +392,7 @@ function LeaveRequestsContent() {
       </div>
 
       <div className="surface-card rounded-xl px-4 py-2.5 mb-4 flex flex-wrap items-end gap-3">
-        <div className="w-64">
+        <div className="w-[28rem]">
           <label className="block text-[11.5px] font-medium text-slate-500 mb-1">Employee</label>
           <EmployeeSearch value={employee} onChange={setEmployee} />
         </div>
@@ -238,12 +405,34 @@ function LeaveRequestsContent() {
             <option value="Approved">Approved</option>
             <option value="Rejected">Rejected</option>
             <option value="Cancelled">Cancelled</option>
-            <option value="CancellationOfAuthorized">Cancellation Requested</option>
-            <option value="CancellationOfApproved">Cancellation Requested</option>
+            <option value="CancelledByAdmin">Cancelled by Admin</option>
+            <option value="CancellationOfAuthorized">Cancellation of Authorized</option>
+            <option value="CancellationOfApproved">Cancellation of Approved</option>
           </select>
         </div>
-        {message && <span className="text-[12.5px] text-slate-500">{message}</span>}
       </div>
+
+      {selected.size > 0 && (
+        <div className="surface-card rounded-xl px-4 py-2.5 mb-4 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => bulkApprove.mutate([...selected])}
+              disabled={bulkApprove.isPending || bulkCancel.isPending}
+              className={cn(BTN_BASE, 'bg-[color:var(--color-success-soft)] text-[color:var(--color-success-dark)] hover:opacity-80')}
+            >
+              Approve
+            </button>
+            <button
+              onClick={() => bulkCancel.mutate([...selected])}
+              disabled={bulkApprove.isPending || bulkCancel.isPending}
+              className={cn(BTN_BASE, 'bg-slate-100 text-slate-600 hover:bg-slate-200')}
+            >
+              Cancel
+            </button>
+          </div>
+          <span className="text-[12.5px] text-slate-500">{selected.size} selected</span>
+        </div>
+      )}
 
       <DataTable data={rows} columns={columns} pageSize={10} pageSizeOptions={[10, 20, 30, 50]} isLoading={isLoading} />
 
@@ -341,6 +530,97 @@ function LeaveRequestsContent() {
               {apply.isPending ? 'Submitting…' : 'Submit'}
             </button>
           </div>
+        </div>
+      )}
+
+      {viewingId !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/25 backdrop-blur-[2px] p-4 animate-fade-in" onClick={() => setViewingId(null)}>
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="relative bg-white rounded-[20px] border border-black/[0.06] shadow-[0_25px_70px_-15px_rgba(0,0,0,0.25)] p-6 w-full max-w-lg animate-modal-in"
+          >
+            <div className="flex items-center justify-between mb-5">
+              <h2 className="text-[19px] font-semibold text-[#0F172A] tracking-tight">Leave Details</h2>
+              <button onClick={() => setViewingId(null)} aria-label="Close" className="p-1 rounded-full hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors duration-150">
+                <X className="w-4.5 h-4.5" />
+              </button>
+            </div>
+
+            {detailsLoading || !details ? (
+              <p className="text-sm text-slate-500">Loading…</p>
+            ) : (
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-x-4 gap-y-3">
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-[11px] font-medium text-slate-500">Leave Type</span>
+                    <span className="text-[13px] font-semibold text-[#0F172A]">{details.leaveType}</span>
+                  </div>
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-[11px] font-medium text-slate-500">Leave Balance</span>
+                    <span className="text-[13px] font-semibold text-[#0F172A]">{details.leaveBalance}</span>
+                  </div>
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-[11px] font-medium text-slate-500">Negative</span>
+                    <span className="text-[13px] font-semibold text-[#0F172A]">{details.allowNegative ? 'Yes' : 'No'}</span>
+                  </div>
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-[11px] font-medium text-slate-500">Sandwich</span>
+                    <span className="text-[13px] font-semibold text-[#0F172A]">{details.isSandwich ? 'Yes' : 'No'}</span>
+                  </div>
+                  <div className="col-span-2 flex flex-col gap-0.5">
+                    <span className="text-[11px] font-medium text-slate-500">Reason</span>
+                    <span className="text-[13px] font-semibold text-[#0F172A]">{details.reason ?? '—'}</span>
+                  </div>
+                </div>
+
+                <div className="border-t border-slate-100 pt-4">
+                  <div className="border border-slate-200 rounded-[9px] overflow-hidden">
+                    <table className="w-full text-[12.5px]">
+                      <thead>
+                        <tr className="bg-[color:var(--color-danger-soft)] text-left">
+                          <th className="px-3 py-1.5 font-medium text-slate-600">Leave Days</th>
+                          <th className="px-3 py-1.5 font-medium text-slate-600">Leave Status</th>
+                          <th className="px-3 py-1.5 font-medium text-slate-600">Remarks</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {details.transactions.map((t, i) => (
+                          <tr key={i} className="border-t border-slate-100">
+                            <td className="px-3 py-1.5">{t.leaveDate}</td>
+                            <td className="px-3 py-1.5">{t.status}</td>
+                            <td className="px-3 py-1.5 text-slate-500">{t.remarks}</td>
+                          </tr>
+                        ))}
+                        {details.transactions.length === 0 && (
+                          <tr><td colSpan={3} className="px-3 py-2 text-slate-400">No transactions</td></tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between border-t border-slate-100 pt-3">
+                  <span className="text-[11px] font-medium text-slate-500">Documents</span>
+                  {details.documents.length === 0 ? (
+                    <span className="text-[12.5px] text-slate-400">None</span>
+                  ) : (
+                    <span className="text-[12.5px] font-medium text-[#0F172A]">{details.documents.map((d) => d.name).join(', ')}</span>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {toast && (
+        <div
+          className={cn(
+            'fixed bottom-10 right-4 z-[60] min-w-[20rem] max-w-md px-5 py-3.5 rounded-xl shadow-lg text-sm font-medium text-white',
+            toast.type === 'success' ? 'bg-[color:var(--color-success)]' : 'bg-[color:var(--color-danger)]'
+          )}
+        >
+          {toast.message}
         </div>
       )}
     </div>

@@ -2,6 +2,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
 import { getAttPeriod } from '@/lib/attendance';
+import { toISODate } from '@/lib/leave';
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket } from 'mysql2';
 
@@ -66,5 +67,13 @@ export async function GET(request: NextRequest) {
     values
   );
 
-  return NextResponse.json({ data: dataRows, total: Number(countRow?.cnt ?? 0) });
+  // mysql2 returns DATE columns as JS Date objects, which JSON.stringify serializes with a
+  // T00:00:00.000Z time/timezone component — strip that down to a plain YYYY-MM-DD string.
+  const data = dataRows.map((r) => ({
+    ...r,
+    leave_start_date: toISODate(r.leave_start_date),
+    leave_end_date: toISODate(r.leave_end_date),
+  }));
+
+  return NextResponse.json({ data, total: Number(countRow?.cnt ?? 0) });
 }

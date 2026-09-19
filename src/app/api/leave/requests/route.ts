@@ -1,7 +1,7 @@
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
-import { checkAttendanceConflict, getEmployeeLeaveTypes, runLeaveTransaction } from '@/lib/leave';
+import { checkAttendanceConflict, getEmployeeLeaveTypes, runLeaveTransaction, toISODate } from '@/lib/leave';
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket, ResultSetHeader } from 'mysql2';
 
@@ -59,6 +59,10 @@ export async function GET(request: NextRequest) {
   if (status) { conditions.push('le.LEAVESTATUS = ?'); values.push(status); }
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
+  // isAttendanceVerified: whether attendance_register already has a verified (isdelete='N') row
+  // for this employee's FROMDATE month — the same signal checkAttendanceRegisterRangeVerified
+  // uses to block approve/cancel, surfaced here as a per-row indicator instead of N separate
+  // per-row lookups.
   const [rows] = await pool.execute<RowDataPacket[]>(
     `SELECT le.LEAVEENTRYID, le.EMP_fkey, le.salary_head_item_fkey, shi.item AS leave_type,
             le.FROMDATE, le.FROMHALF, le.TODATE, le.TOHALF, le.leave_days, le.LEAVESTATUS,
@@ -66,7 +70,12 @@ export async function GET(request: NextRequest) {
             le.Reason, le.contact_No, le.contact_person, le.REMARKS, le.applied_date,
             ed.first_name, ed.last_name, ed.emp_id,
             auth.first_name AS authorized_by_first_name, auth.last_name AS authorized_by_last_name,
-            appr.first_name AS approved_by_first_name, appr.last_name AS approved_by_last_name
+            appr.first_name AS approved_by_first_name, appr.last_name AS approved_by_last_name,
+            EXISTS(
+              SELECT 1 FROM attendance_register ar
+              WHERE ar.emp_fkey = le.EMP_fkey AND ar.isdelete = 'N'
+                AND ar.month_year = DATE_FORMAT(le.FROMDATE, '%Y-%m')
+            ) AS isAttendanceVerified
      FROM leaveentries le
      JOIN salary_head_items shi ON shi.salary_head_item_pkey = le.salary_head_item_fkey
      JOIN emp_details ed ON ed.emp_pkey = le.EMP_fkey
@@ -78,7 +87,18 @@ export async function GET(request: NextRequest) {
     values
   );
 
-  return NextResponse.json({ data: rows });
+  // mysql2 returns DATE columns as JS Date objects, which JSON.stringify serializes with a
+  // T00:00:00.000Z time/timezone component — these are date-only fields, so strip that down to
+  // a plain YYYY-MM-DD string before it reaches the client.
+  const data = rows.map((r) => ({
+    ...r,
+    FROMDATE: toISODate(r.FROMDATE),
+    TODATE: toISODate(r.TODATE),
+    applied_date: r.applied_date != null ? toISODate(r.applied_date) : null,
+    isAttendanceVerified: Boolean(r.isAttendanceVerified),
+  }));
+
+  return NextResponse.json({ data });
 }
 
 export async function POST(request: NextRequest) {
@@ -128,21 +148,30 @@ export async function POST(request: NextRequest) {
   const approvedBy = approverFkey ?? null;
   const leaveDays = calcLeaveDays(fromDate, Number(fromHalf), toDate, Number(toHalf));
 
+  // Admin applying leave on an employee's behalf skips the Applied/Authorized queue entirely —
+  // it lands already Approved, same end state the authorize/approve routes reach for a normal
+  // employee-initiated request, just without the extra clicks.
+  const isAdmin = session.user.userGroup === 1;
+  const initialStatus = isAdmin ? 'Approved' : 'Applied';
+
   const [result] = await pool.execute<ResultSetHeader>(
     `INSERT INTO leaveentries
        (salary_head_item_fkey, applied_date, LEAVESTATUS, EMP_fkey, FROMDATE, FROMHALF, TODATE, TOHALF,
-        ISAutherizedby, APPROVEDBY, Reason, contact_No, contact_person, leave_days)
-     VALUES (?, CURDATE(), 'Applied', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ISAutherizedby, APPROVEDBY, ISAutherized, Autherized_date, ISAPPROVED, APPROVED_date,
+        Reason, contact_No, contact_person, leave_days)
+     VALUES (?, CURDATE(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ${isAdmin ? 'CURDATE()' : 'NULL'}, ?, ${isAdmin ? 'CURDATE()' : 'NULL'}, ?, ?, ?, ?)`,
     [
-      salaryHeadItemFkey, empFkey, fromDate, fromHalf, toDate, toHalf,
-      isAutherizedby, approvedBy, reason ?? null, contactNo ?? null, contactPerson ?? null, leaveDays,
+      salaryHeadItemFkey, initialStatus, empFkey, fromDate, fromHalf, toDate, toHalf,
+      isAutherizedby, approvedBy,
+      isAdmin ? 1 : 0, isAdmin ? 1 : 0,
+      reason ?? null, contactNo ?? null, contactPerson ?? null, leaveDays,
     ]
   );
   const leaveEntryId = result.insertId;
 
   const { finalStatus, errorMessage } = await runLeaveTransaction(pool, {
     leaveEntryId, empFkey, fromDate, fromHalf: Number(fromHalf), toDate, toHalf: Number(toHalf),
-    leaveDays, status: 'Applied',
+    leaveDays, status: initialStatus,
   });
 
   return NextResponse.json({ success: true, id: leaveEntryId, leaveDays, status: finalStatus, procMessage: errorMessage });

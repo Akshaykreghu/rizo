@@ -15,9 +15,12 @@ import type { RowDataPacket } from 'mysql2';
 // 'CancellationOfAuthorized'/'CancellationOfApproved'/'Cancelled') — a deliberate simplification
 // of a confusing legacy state machine, not a literal port of both parallel paths.
 //
-// - From 'Applied' (never authorized yet): cancels immediately, no review needed.
-// - From 'Authorized' or 'Approved': raises a cancellation request pending review
-//   (see .../cancellation/approve and .../cancellation/reject).
+// - Employee cancelling their own 'Authorized'/'Approved' leave still raises a pending-review
+//   cancellation (see .../cancellation/approve and .../cancellation/reject) since someone else
+//   already signed off on it.
+// - Admin never goes through that review step at all, regardless of the leave's current status —
+//   an admin cancellation is a final decision by definition, so it always lands directly on
+//   'CancelledByAdmin' by project decision.
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -42,13 +45,19 @@ export async function POST(
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
+  const isAdmin = session.user.userGroup === 1;
+  // Admin cancellation is always a direct, final decision — no pending-review step, regardless of
+  // whether the leave is Applied, Authorized, or Approved. Only a non-admin (employee) cancelling
+  // their own already-authorized/approved leave goes through the review flow.
+  const isAdminDirectCancel = isAdmin;
+
   let newStatus: string;
   if (entry.LEAVESTATUS === 'Applied') {
     newStatus = 'Cancelled';
   } else if (entry.LEAVESTATUS === 'Authorized') {
-    newStatus = 'CancellationOfAuthorized';
+    newStatus = isAdmin ? 'Cancelled' : 'CancellationOfAuthorized';
   } else if (entry.LEAVESTATUS === 'Approved') {
-    newStatus = 'CancellationOfApproved';
+    newStatus = isAdmin ? 'Cancelled' : 'CancellationOfApproved';
   } else {
     return NextResponse.json({ error: `Cannot cancel a request in status '${entry.LEAVESTATUS}'` }, { status: 409 });
   }
@@ -58,11 +67,20 @@ export async function POST(
     [newStatus, reason, id]
   );
 
-  const { finalStatus, errorMessage } = await runLeaveTransaction(pool, {
+  const { finalStatus: procFinalStatus, errorMessage } = await runLeaveTransaction(pool, {
     leaveEntryId: entry.LEAVEENTRYID, empFkey: entry.EMP_fkey, fromDate: toISODate(entry.FROMDATE),
     fromHalf: entry.FROMHALF, toDate: toISODate(entry.TODATE), toHalf: entry.TOHALF,
     leaveDays: Number(entry.leave_days), status: newStatus,
   });
+
+  // leave_transaction_prc only recognizes legacy's real status names (no 'CancelledByAdmin'
+  // branch exists in it) — run the transaction as 'Cancelled' so its balance-restoration/cleanup
+  // logic actually executes, then relabel the row afterwards for admin-initiated cancellations.
+  let finalStatus = procFinalStatus;
+  if (isAdminDirectCancel) {
+    finalStatus = 'CancelledByAdmin';
+    await pool.execute(`UPDATE leaveentries SET LEAVESTATUS = 'CancelledByAdmin' WHERE LEAVEENTRYID = ?`, [id]);
+  }
 
   return NextResponse.json({
     success: true,
