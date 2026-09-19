@@ -369,8 +369,8 @@ export interface PayrollReportParams {
   monthYear: string; // 'YYYY-MM' — used by all subtypes except GrossPeriod
   toMonthYear?: string; // 'YYYY-MM' — GrossPeriod only, range end (monthYear is the range start)
   criteria: CriteriaSelections;
-  includeResigned?: boolean; // SummaryPayroll/salary/Grosssalary/BankTranfer/GrosssalaryNew/GrosssalarySummary — "Include Resigned" checkbox
-  includeNegative?: boolean; // SummaryPayroll/Grosssalary/BankTranfer/GrosssalaryNew/GrosssalarySummary — "Include Negative Salary" checkbox
+  includeResigned?: boolean; // SummaryPayroll/salary/Grosssalary/BankTranfer/GrosssalaryNew/GrosssalarySummary/GrossPeriod — "Include Resigned" checkbox
+  includeNegative?: boolean; // SummaryPayroll/Grosssalary/BankTranfer/GrosssalaryNew/GrosssalarySummary/GrossPeriod — "Include Negative Salary" checkbox
 }
 
 function prevMonth(monthYear: string): string {
@@ -624,6 +624,92 @@ function buildGrossNewPivotRow(
     variableAddition, variableTotal,
     actualAddition, actualGross, actualDeduction, totalDeduction, netSalary,
   };
+}
+
+// Gross Salary Period Wise's column list (SalaryReportsController.php:7577-7581) has NO date filter
+// at all in legacy — it scans every emp_salary_slip row ever recorded for distinct head items.
+// Scoped here to the requested date range instead: a disclosed, more useful/performant deviation
+// (avoids permanently-zero columns for heads that predate or postdate the selected range), not a
+// literal replication.
+async function getSalaryHeadKeysRange(pool: Pool, fromMonth: string, toMonth: string): Promise<{ additionLabels: string[]; deductionLabels: string[] }> {
+  const [rows] = await pool.execute<RowDataPacket[]>(
+    `SELECT TRIM(ess.salary_head_item_desc) AS label, ess.head_operator
+     FROM emp_salary_slip ess
+     LEFT JOIN salary_head_items shi ON shi.salary_head_item_pkey = ess.salary_head_item_fkey
+     WHERE ess.item_part = 'Direct' AND ess.end_date_effective IS NULL AND ess.month_year BETWEEN ? AND ?
+     GROUP BY ess.salary_head_item_desc, ess.head_operator, shi.salary_head_item_order1
+     ORDER BY shi.salary_head_item_order1`,
+    [fromMonth, toMonth]
+  );
+  const additionLabels: string[] = [];
+  const deductionLabels: string[] = [];
+  for (const r of rows as RowDataPacket[]) {
+    (r.head_operator === 'Addition' ? additionLabels : deductionLabels).push(String(r.label));
+  }
+  return { additionLabels, deductionLabels };
+}
+
+interface GrossPeriodPivotEntry { addition: Map<string, number>; deduction: Map<string, number> }
+
+// Per-employee sums of salary_amount across every Direct emp_salary_slip row in the selected date
+// range (SalaryReportsController.php:7753-7853/8175-8196 accumulate the same sums in a PHP loop
+// keyed by employee, `+=` per matching month) — one SQL GROUP BY replaces that loop. Legacy's
+// per-row negative-salary filter (`$conditions1`, applied to which emp_salary_slip rows even
+// qualify, not to the employee's total) is replicated via the same payroll_master_fkey subquery.
+async function getGrossPeriodPivot(
+  pool: Pool, empFkeys: number[], fromMonth: string, toMonth: string, includeNegative: boolean | undefined
+): Promise<Map<number, GrossPeriodPivotEntry>> {
+  const map = new Map<number, GrossPeriodPivotEntry>();
+  if (empFkeys.length === 0) return map;
+  const negativeSubquery = includeNegative
+    ? 'SELECT payroll_master_pkey FROM payroll_master WHERE net_salary IS NOT NULL'
+    : 'SELECT payroll_master_pkey FROM payroll_master WHERE net_salary >= 0';
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT ess.emp_fkey, TRIM(ess.salary_head_item_desc) AS label, ess.head_operator, SUM(ess.salary_amount) AS amount
+     FROM emp_salary_slip ess
+     WHERE ess.emp_fkey IN (?) AND ess.month_year BETWEEN ? AND ? AND ess.item_part = 'Direct'
+       AND ess.salary_amount <> 0 AND ess.end_date_effective IS NULL
+       AND ess.payroll_master_fkey IN (${negativeSubquery})
+     GROUP BY ess.emp_fkey, ess.salary_head_item_desc, ess.head_operator`,
+    [empFkeys, fromMonth, toMonth]
+  );
+  for (const r of rows as RowDataPacket[]) {
+    let entry = map.get(r.emp_fkey);
+    if (!entry) { entry = { addition: new Map(), deduction: new Map() }; map.set(r.emp_fkey, entry); }
+    const bucket = r.head_operator === 'Addition' ? entry.addition : entry.deduction;
+    bucket.set(String(r.label), Number(r.amount));
+  }
+  return map;
+}
+
+// Builds one employee's zero-filled Addition/Deduction column set plus Gross/Deduction/Net
+// (SalaryReportsController.php:8175-8203) — a single pivot, unlike Grosssalary's Standard-vs-Actual
+// split (this report's own 'actual'/structure_det_value accumulator is set but never read by either
+// the view or the Excel export — confirmed dead by its absence from report_period.ctp/the Excel
+// branch, so it's not ported). Addition items round to the nearest rupee per item (no
+// rounding-remainder reconciliation — absent from this report's legacy code, unlike Grosssalary's
+// detailed report); Deduction items round to 2 decimal places per item — both exactly as legacy
+// displays them.
+function buildGrossPeriodPivotRow(
+  entry: GrossPeriodPivotEntry | undefined,
+  additionLabels: string[],
+  deductionLabels: string[],
+  settlementAmount: number
+) {
+  const addition = entry?.addition ?? new Map<string, number>();
+  const deduction = entry?.deduction ?? new Map<string, number>();
+
+  const additionItems: GrossPivotItem[] = additionLabels.map((label) => ({
+    label, amount: Math.round(addition.get(label) ?? 0),
+  }));
+  const grossSalary = additionItems.reduce((s, i) => s + i.amount, 0);
+  const deductionItems: GrossPivotItem[] = deductionLabels.map((label) => ({
+    label, amount: -Math.round(Math.abs(deduction.get(label) ?? 0) * 100) / 100,
+  }));
+  const totalDeduction = -deductionItems.reduce((s, i) => s + Math.abs(i.amount), 0);
+  const netSalary = Math.round(grossSalary + totalDeduction + settlementAmount);
+
+  return { additionItems, grossSalary, deductionItems, totalDeduction, netSalary };
 }
 
 // Mirrors SalaryReportsController::GenerateSummaryPayrolreport and sibling generate<X>report
@@ -904,29 +990,67 @@ export async function generatePayrollReport(pool: Pool, params: PayrollReportPar
   }
 
   if (params.subtype === 'GrossPeriod') {
-    // Mirrors GenerateSalaryGrossPeriod() — the only true date-range (not single-month) variant
-    // on this screen. payroll_master.month_year is 'YYYY-MM', which sorts correctly lexically.
+    // Mirrors GenerateSalaryGrossPeriod() (SalaryReportsController.php:7568-7935) — a genuinely
+    // different shape from every other report on this screen: not a per-month listing, but ONE row
+    // per employee summing every Direct emp_salary_slip item across the WHOLE selected date range
+    // (Present Days, Settlement, and the per-salary-head Addition/Deduction pivot are all summed
+    // across months — see getSalaryHeadKeysRange/getGrossPeriodPivot/buildGrossPeriodPivotRow — not
+    // shown month-by-month). Gross/Total Deduction/Net Salary are re-derived from that summed pivot
+    // (same family as Grosssalary/GrosssalarySummary), never trusted from payroll_master. Legacy's
+    // "Employee ID" column here is actually employee_info.emp_id (not emp_proff.emp_company_id, the
+    // usual source elsewhere on this screen) and its "Company ID" column is employee_info.
+    // employee_id — replicated as-is even though the two names read swapped.
     const toMonth = params.toMonthYear ?? params.monthYear;
+    const statusCondition = params.includeResigned ? 'ed.status IN (1,2)' : 'ed.status = 1';
+    const negativeSubquery = params.includeNegative
+      ? 'SELECT payroll_master_pkey FROM payroll_master WHERE net_salary IS NOT NULL'
+      : 'SELECT payroll_master_pkey FROM payroll_master WHERE net_salary >= 0';
     const { conditions, args } = buildCriteriaConditions(params.criteria, {
-      Units: 'pm.branch_code', EmployeeDetails: 'pm.emp_fkey',
+      Units: 'ed.branch_code', EmployeeDetails: 'ess.emp_fkey',
     });
     const [rows] = await pool.execute<RowDataPacket[]>(
-      `SELECT pm.emp_fkey, pm.emp_name, ep.emp_company_id AS employee_id, pm.branch_name,
-              pm.departments, pm.desig, pm.month_year,
+      `SELECT ess.emp_fkey,
+              CASE WHEN ed.status = 2 THEN CONCAT(i.EmpName, ' (Resigned)') ELSE i.EmpName END AS emp_name,
+              i.emp_id AS employee_id, i.employee_id AS company_id, uc.user_id AS login_user_id,
+              i.branch AS branch_name, i.department AS departments, i.designation AS desig,
+              ed.classification AS gender,
               DATE_FORMAT(i.joining_date, '%Y-%m-%d') AS joining_date,
               DATE_FORMAT(tm.last_approved_working_date, '%Y-%m-%d') AS termination_date,
-              ed.classification AS gender, pm.days_presant,
-              pm.gross_salary, pm.total_deduction, pm.net_salary
-       FROM payroll_master pm
-       LEFT JOIN emp_proff ep ON ep.emp_fkey = pm.emp_fkey
-       LEFT JOIN emp_details ed ON ed.emp_pkey = pm.emp_fkey
-       LEFT JOIN employee_info i ON i.emp_pkey = pm.emp_fkey
-       LEFT JOIN termination tm ON tm.emp_fkey = pm.emp_fkey AND tm.status = 1
-       WHERE pm.month_year BETWEEN ? AND ? AND pm.action IN ('Approved','Processed') AND ${conditions.join(' AND ')}
-       ORDER BY pm.emp_name, pm.month_year`,
-      [params.monthYear, toMonth, ...args]
+              COALESCE((SELECT SUM(pm.days_presant) FROM payroll_master pm
+                        WHERE pm.emp_fkey = ess.emp_fkey AND pm.month_year BETWEEN ? AND ?
+                          AND pm.action IN ('Approved','Processed')), 0) AS days_presant,
+              COALESCE((SELECT SUM(es2.salary_amount) FROM emp_settle_slip es2
+                        WHERE es2.emp_fkey = ess.emp_fkey AND es2.status = 'Y' AND es2.approved = 'Y' AND es2.type <> 'SALARY'
+                          AND DATE_FORMAT(tm.last_approved_working_date, '%Y-%m') BETWEEN ? AND ?), 0) AS settlement_amount
+       FROM emp_salary_slip ess
+       JOIN employee_info i ON i.emp_pkey = ess.emp_fkey
+       JOIN emp_details ed ON ed.emp_pkey = ess.emp_fkey
+       LEFT JOIN user_credentials uc ON uc.emp_fkey = ess.emp_fkey
+       LEFT JOIN termination tm ON tm.emp_fkey = ess.emp_fkey AND tm.status = 1
+       WHERE ess.month_year BETWEEN ? AND ? AND ess.item_part = 'Direct' AND ess.salary_amount <> 0
+         AND ess.end_date_effective IS NULL AND ${statusCondition}
+         AND ess.payroll_master_fkey IN (${negativeSubquery})
+         AND ${conditions.join(' AND ')}
+       GROUP BY ess.emp_fkey
+       ORDER BY i.EmpName`,
+      [params.monthYear, toMonth, params.monthYear, toMonth, params.monthYear, toMonth, ...args]
     );
-    return rows;
+    const empFkeys = rows.map((r) => r.emp_fkey);
+    const [{ additionLabels, deductionLabels }, pivotMap] = await Promise.all([
+      getSalaryHeadKeysRange(pool, params.monthYear, toMonth),
+      getGrossPeriodPivot(pool, empFkeys, params.monthYear, toMonth, params.includeNegative),
+    ]);
+    return rows.map((row) => {
+      const pivot = buildGrossPeriodPivotRow(pivotMap.get(row.emp_fkey), additionLabels, deductionLabels, Number(row.settlement_amount));
+      return {
+        ...row,
+        additionItems: pivot.additionItems,
+        deductionItems: pivot.deductionItems,
+        gross_salary: pivot.grossSalary,
+        total_deduction: pivot.totalDeduction,
+        net_salary: pivot.netSalary,
+      };
+    });
   }
 
   if (params.subtype === 'Comparison') {

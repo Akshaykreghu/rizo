@@ -179,7 +179,7 @@ interface SubtypeMeta {
   // {label,current,previous,change} (Comparison compares two months' worth per head). Flattened
   // into synthetic per-label columns client-side (buildItemColumns() below) so the rest of the
   // page (grouping, totals, export) can treat them like any other column.
-  itemPivot?: 'plain' | 'comparison' | 'grossDetailed' | 'grossNew';
+  itemPivot?: 'plain' | 'comparison' | 'grossDetailed' | 'grossNew' | 'grossPeriod';
 }
 
 const SUBTYPE_META: Record<Subtype, SubtypeMeta> = {
@@ -337,15 +337,31 @@ const SUBTYPE_META: Record<Subtype, SubtypeMeta> = {
     ],
   },
   GrossPeriod: {
+    // Real legacy report is ONE row per employee summing the whole selected date range (Present
+    // Days, per-head Addition/Deduction items, Settlement) — not a per-month listing. See
+    // getGrossPeriodPivot/buildGrossPeriodPivotRow in reports.ts and grossPeriodGroupBy below (Units
+    // criteria groups by branch, matching legacy's report_period.ctp; EmployeeDetails is flat).
     label: 'Gross Salary Period Wise',
     dateRange: true,
-    groupBy: (r) => String(r.branch_name ?? ''),
+    itemPivot: 'grossPeriod',
+    slNo: true,
+    // View has a "Company ID" column (report_period.ctp:76) that legacy's Excel export omits
+    // entirely (SalaryReportsController.php:8006-8035) — genuinely different column sets, not an
+    // oversight, so Excel uses its own column list below rather than reusing the View's.
     columns: [
-      { key: 'employee_id', label: 'Employee ID' }, { key: 'emp_name', label: 'Employee' }, { key: 'branch_name', label: 'Branch' },
-      { key: 'departments', label: 'Department' }, { key: 'desig', label: 'Designation' }, { key: 'gender', label: 'Gender' },
-      { key: 'joining_date', label: 'Joining Date' }, { key: 'termination_date', label: 'Termination Date' },
-      { key: 'days_presant', label: 'Present Days' }, { key: 'month_year', label: 'Month' },
-      { key: 'gross_salary', label: 'Gross Salary' }, { key: 'total_deduction', label: 'Deductions' }, { key: 'net_salary', label: 'Net Salary' },
+      { key: 'employee_id', label: 'Employee ID' }, { key: 'company_id', label: 'Company ID' },
+      { key: 'emp_name', label: 'Employee' }, { key: 'gender', label: 'Gender' },
+      { key: 'joining_date', label: 'Joining Date' }, { key: 'branch_name', label: 'Branch' },
+      { key: 'departments', label: 'Department' }, { key: 'desig', label: 'Designation' },
+      { key: 'termination_date', label: 'Termination Date' }, { key: 'days_presant', label: 'Present Day Count' },
+    ],
+    excelSlNo: true,
+    excelColumns: [
+      { key: 'employee_id', label: 'Employee ID' }, { key: 'login_user_id', label: 'User ID' },
+      { key: 'emp_name', label: 'Employee Name' }, { key: 'gender', label: 'Gender' },
+      { key: 'joining_date', label: 'Joining Date' }, { key: 'branch_name', label: 'Branch' },
+      { key: 'departments', label: 'Department' }, { key: 'desig', label: 'Designation' },
+      { key: 'termination_date', label: 'Termination Date' }, { key: 'days_presant', label: 'Present Day Count' },
     ],
   },
   Comparison: {
@@ -465,6 +481,13 @@ function grosssalarySummaryGroupBy(criteria: Record<string, string[]>): ((row: R
   return undefined;
 }
 
+// Gross Salary Period Wise's grouping is the same on View and Excel (report_period.ctp is grouped
+// identically to its Excel branch): Units criteria sections by branch, EmployeeDetails is flat.
+function grossPeriodGroupBy(criteria: Record<string, string[]>): ((row: Record<string, unknown>) => string) | undefined {
+  if (criteria.Units?.length) return (r) => String(r.branch_name ?? '');
+  return undefined;
+}
+
 interface PlainItem { label: string; amount: number }
 interface ComparisonItem { label: string; current: number; previous: number; change: number }
 interface GrossItem { label: string; amount: number }
@@ -485,9 +508,34 @@ interface GrossItem { label: string; amount: number }
 // the two sections' identically-named columns in this page's single flat header row (legacy uses a
 // two-row merged super-header instead; the Excel export reproduces that merge, see exportReport).
 function flattenItemColumns(
-  rows: Record<string, unknown>[], itemPivot: 'plain' | 'comparison' | 'grossDetailed' | 'grossNew' | undefined
+  rows: Record<string, unknown>[], itemPivot: 'plain' | 'comparison' | 'grossDetailed' | 'grossNew' | 'grossPeriod' | undefined
 ): { rows: Record<string, unknown>[]; columns: ReportColumn[] } {
   if (!itemPivot) return { rows, columns: [] };
+
+  // Gross Salary Period Wise's single Addition/Deduction pivot (no Standard-vs-Actual split, unlike
+  // Grosssalary/GrosssalaryNew — see buildGrossPeriodPivotRow in reports.ts for why).
+  if (itemPivot === 'grossPeriod') {
+    const labelsOf = (key: string) => (rows[0]?.[key] as GrossItem[] | undefined)?.map((i) => i.label) ?? [];
+    const additionLabels = labelsOf('additionItems');
+    const deductionLabels = labelsOf('deductionItems');
+
+    const flatRows = rows.map((row) => {
+      const flat: Record<string, unknown> = { ...row };
+      ((row.additionItems as GrossItem[] | undefined) ?? []).forEach((i) => { flat[`gp_a__${i.label}`] = i.amount; });
+      ((row.deductionItems as GrossItem[] | undefined) ?? []).forEach((i) => { flat[`gp_d__${i.label}`] = i.amount; });
+      return flat;
+    });
+
+    const columns: ReportColumn[] = [
+      ...additionLabels.map((label) => ({ key: `gp_a__${label}`, label })),
+      { key: 'gross_salary', label: 'Gross Salary' },
+      ...deductionLabels.map((label) => ({ key: `gp_d__${label}`, label })),
+      { key: 'total_deduction', label: 'Total Deduction' },
+      { key: 'settlement_amount', label: 'Settlement Amount' },
+      { key: 'net_salary', label: 'Net Salary' },
+    ];
+    return { rows: flatRows, columns };
+  }
 
   // 'grossNew' (Gross Salary Detail New) extends 'grossDetailed' with a third "Other Salary"
   // (Variable) Addition-only column group between Standard and Actual — see buildGrossNewPivotRow
@@ -657,6 +705,7 @@ export default function PayrollReportPage() {
     : subtype === 'BankTranfer' ? bankTranferGroupBy(criteria)
     : subtype === 'GrosssalaryNew' ? grosssalaryNewViewGroupBy(criteria)
     : subtype === 'GrosssalarySummary' ? grosssalarySummaryGroupBy(criteria)
+    : subtype === 'GrossPeriod' ? grossPeriodGroupBy(criteria)
     : meta.groupBy;
   // Legacy's Excel export for BankTranfer is flat-stacked for EmployeeDetails/Units/LeavePolicyGroup
   // criteria and grouped-per-bank only for the Banks criteria (SalaryReportsController.php:
@@ -668,14 +717,15 @@ export default function PayrollReportPage() {
   const excelGroupBy = subtype === 'BankTranfer' ? (isBankStatementMode ? bankTranferGroupBy(criteria) : undefined)
     : subtype === 'GrosssalaryNew' ? undefined
     : subtype === 'GrosssalarySummary' ? grosssalarySummaryGroupBy(criteria)
+    : subtype === 'GrossPeriod' ? grossPeriodGroupBy(criteria)
     : meta.groupBy;
   // Which subtypes have a real, wired-up "Include Resigned" / "Include Negative Salary" filter —
   // legacy's checkboxes only affect the report data itself for these subtypes; other subtypes render
   // the shared employee-picker's own resigned toggle (via EmployeeChecklist) but nothing report-level.
   // BankTranfer's Banks criteria hides both (legacy: loadcriteriaitems.ctp:88, `criteria !== 'Banks'`).
-  const hasResignedFilter = subtype === 'SummaryPayroll' || subtype === 'salary' || subtype === 'Grosssalary' || subtype === 'GrosssalaryNew' || subtype === 'GrosssalarySummary'
+  const hasResignedFilter = subtype === 'SummaryPayroll' || subtype === 'salary' || subtype === 'Grosssalary' || subtype === 'GrosssalaryNew' || subtype === 'GrosssalarySummary' || subtype === 'GrossPeriod'
     || (subtype === 'BankTranfer' && !isBankStatementMode);
-  const hasNegativeFilter = subtype === 'SummaryPayroll' || subtype === 'Grosssalary' || subtype === 'GrosssalaryNew' || subtype === 'GrosssalarySummary'
+  const hasNegativeFilter = subtype === 'SummaryPayroll' || subtype === 'Grosssalary' || subtype === 'GrosssalaryNew' || subtype === 'GrosssalarySummary' || subtype === 'GrossPeriod'
     || (subtype === 'BankTranfer' && !isBankStatementMode);
   // These subtypes' Excel filename/title mirror legacy's PHPExcel output exactly — every other
   // subtype keeps the existing generic pattern.
@@ -691,6 +741,8 @@ export default function PayrollReportPage() {
         : `${session?.user?.companyCode ?? ''}_SalaryBankTransfer - ${monthYear}`)
     : subtype === 'GrosssalarySummary'
     ? `${session?.user?.companyCode ?? ''}_GrossSalarySummaryReport${monthYear}`
+    : subtype === 'GrossPeriod'
+    ? `${session?.user?.companyCode ?? ''}_GrossSalaryPeriodWiseReport${monthYear} - ${toMonthYear}`
     : `payroll_report_${monthYear}`;
   const excelTitle = subtype === 'SummaryPayroll'
     ? `Payroll Summary Report - ${monthYear}`
@@ -700,6 +752,8 @@ export default function PayrollReportPage() {
     ? `Gross Salary Detailed Report for ${monthYear}`
     : subtype === 'GrosssalarySummary'
     ? `Gross Salary Summary Reports for ${monthYear}`
+    : subtype === 'GrossPeriod'
+    ? `Gross Salary Period Wise - ${monthLabel(monthYear)} - ${monthLabel(toMonthYear)}`
     : undefined;
 
   // Shared by the View action and by Excel/PDF export — legacy's Excel/PDF buttons are independent
@@ -738,6 +792,11 @@ export default function PayrollReportPage() {
       }
       const { rows: expRows, columns: itemCols } = flattenItemColumns(r, meta.itemPivot);
       const screenColumns = [...meta.columns, ...itemCols];
+      // meta.excelColumns overrides the *fixed* column set only (e.g. GrossPeriod/GrosssalarySummary
+      // dropping/adding a column vs the View) — the dynamic item-pivot columns (itemCols) always
+      // still belong on the end of whichever fixed set is used, so they're appended here rather
+      // than being part of screenColumns getting silently dropped when excelColumns is set.
+      const excelColumns = meta.excelColumns ? [...meta.excelColumns, ...itemCols] : screenColumns;
       const curKeys = new Set([...CURRENCY_KEYS, ...itemCols.map((c) => c.key)]);
       // Gross Salary Detailed's Excel export reproduces legacy's merged two-row super-header
       // (Employee Details / Standard Salary / Actual Salary) — the flat HTML view instead
@@ -751,8 +810,8 @@ export default function PayrollReportPage() {
           ]
         : undefined;
       if (kind === 'excel') {
-        if (excelGroupBy) exportGroupedReportToExcel(meta.excelColumns ?? screenColumns, groupRows(expRows, excelGroupBy), curKeys, excelFilename, { title: excelTitle, slNo: meta.excelSlNo, groupTotals: subtype !== 'GrosssalarySummary' });
-        else exportReportToExcel(meta.excelColumns ?? screenColumns, expRows, excelFilename, { title: excelTitle, slNo: meta.slNo, totalKeys: meta.showTotal ? curKeys : undefined, superHeaders });
+        if (excelGroupBy) exportGroupedReportToExcel(excelColumns, groupRows(expRows, excelGroupBy), curKeys, excelFilename, { title: excelTitle, slNo: meta.excelSlNo, groupTotals: subtype !== 'GrosssalarySummary' });
+        else exportReportToExcel(excelColumns, expRows, excelFilename, { title: excelTitle, slNo: meta.slNo, totalKeys: meta.showTotal ? curKeys : undefined, superHeaders });
       } else {
         if (meta.groupBy) exportGroupedReportToPdf(screenColumns, groupRows(expRows, meta.groupBy), curKeys, `${meta.label} — ${monthYear}`, `payroll_report_${monthYear}`);
         else exportReportToPdf(screenColumns, expRows, `${meta.label} — ${monthYear}`, `payroll_report_${monthYear}`, { slNo: meta.slNo, totalKeys: meta.showTotal ? curKeys : undefined });
