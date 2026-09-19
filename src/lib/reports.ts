@@ -369,8 +369,8 @@ export interface PayrollReportParams {
   monthYear: string; // 'YYYY-MM' — used by all subtypes except GrossPeriod
   toMonthYear?: string; // 'YYYY-MM' — GrossPeriod only, range end (monthYear is the range start)
   criteria: CriteriaSelections;
-  includeResigned?: boolean; // SummaryPayroll/salary/Grosssalary/BankTranfer — "Include Resigned" checkbox
-  includeNegative?: boolean; // SummaryPayroll/Grosssalary/BankTranfer — "Include Negative Salary" checkbox
+  includeResigned?: boolean; // SummaryPayroll/salary/Grosssalary/BankTranfer/GrosssalaryNew/GrosssalarySummary — "Include Resigned" checkbox
+  includeNegative?: boolean; // SummaryPayroll/Grosssalary/BankTranfer/GrosssalaryNew/GrosssalarySummary — "Include Negative Salary" checkbox
 }
 
 function prevMonth(monthYear: string): string {
@@ -462,6 +462,29 @@ async function getGrossPivot(pool: Pool, payrollMasterPkeys: number[]): Promise<
     if (!entry) { entry = { addition: new Map(), deduction: new Map() }; map.set(r.payroll_master_fkey, entry); }
     const bucket = r.head_operator === 'Addition' ? entry.addition : entry.deduction;
     bucket.set(String(r.label), { standard: Number(r.standard_amount), actual: Number(r.actual_amount) });
+  }
+  return map;
+}
+
+// GrosssalarySummary's Present/Leave/LOP Days come from emp_salary_slip's own duplicated-per-row
+// presant_total/leave_total/lop_total columns (SalaryReportsController.php:11576-11578), not
+// payroll_master/attendance_register like the other reports on this screen — every Direct row for
+// the same employee+month carries the same value, so MAX() picks it once per employee.
+async function getSalarySlipTotals(pool: Pool, payrollMasterPkeys: number[]): Promise<Map<number, { presentDays: number; leaveDays: number; lopDays: number }>> {
+  const map = new Map<number, { presentDays: number; leaveDays: number; lopDays: number }>();
+  if (payrollMasterPkeys.length === 0) return map;
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT ess.payroll_master_fkey, MAX(ess.presant_total) AS present_days,
+            MAX(ess.leave_total) AS leave_days, MAX(ess.lop_total) AS lop_days
+     FROM emp_salary_slip ess
+     WHERE ess.payroll_master_fkey IN (?) AND ess.item_part = 'Direct' AND ess.end_date_effective IS NULL
+     GROUP BY ess.payroll_master_fkey`,
+    [payrollMasterPkeys]
+  );
+  for (const r of rows as RowDataPacket[]) {
+    map.set(r.payroll_master_fkey, {
+      presentDays: Number(r.present_days ?? 0), leaveDays: Number(r.leave_days ?? 0), lopDays: Number(r.lop_days ?? 0),
+    });
   }
   return map;
 }
@@ -816,27 +839,68 @@ export async function generatePayrollReport(pool: Pool, params: PayrollReportPar
   }
 
   if (params.subtype === 'GrosssalarySummary') {
-    // Mirrors GenerateSalaryGrossSummary() — a branch-level aggregation rather than a per-employee
-    // row (the "Summary" distinction from Grosssalary's per-employee detail) — this was WRONG.
-    // Read the real legacy view (grosssummaryreport.ctp) directly: despite the name, it's an
-    // employee-level detail list grouped by branch (same row granularity as Grosssalary), not a
-    // branch-totals aggregate. Confirmed via a dedicated column-audit pass and fixed per explicit
-    // user decision to match legacy exactly rather than keep the (arguably more useful, but not
-    // what this report actually is) aggregate version.
+    // Mirrors GenerateSalaryGrossSummary() (SalaryReportsController.php:11153-11460). Despite the
+    // name, it's an employee-level detail list grouped by branch (same row granularity as
+    // Grosssalary), not a branch-totals aggregate — confirmed via the real view (grosssummaryreport.
+    // ctp) and fixed once already. A second full trace against that same controller function turned
+    // up further gaps beyond the row-granularity fix: Gross Salary/Total Deduction/Net Salary are
+    // re-derived from emp_salary_slip (not trusted from payroll_master, same as Grosssalary — and
+    // reusing the exact same getSalaryHeadKeys/getGrossPivot/buildGrossPivotRow helpers, since it's
+    // literally the same underlying per-employee salary data just summarized instead of itemized);
+    // Settlement Amount is folded in and shown as its own column; Present/Leave/LOP Days come from
+    // emp_salary_slip's own duplicated columns, not payroll_master/attendance_register (see
+    // getSalarySlipTotals); an employee needs at least one Direct emp_salary_slip row for the month
+    // to appear at all (legacy's real base table); and Include Resigned/Include Negative Salary are
+    // now wired (legacy only filters status on its Units-branch-wise path and has no negative filter
+    // at all — both were applied here uniformly across criteria for consistency with how this screen
+    // treats these two checkboxes everywhere else, not a literal-line-for-line replication).
+    const statusCondition = params.includeResigned ? 'ed.status IN (1,2)' : 'ed.status = 1';
+    const negativeCondition = params.includeNegative ? '' : ' AND pm.net_salary >= 0';
     const { conditions, args } = buildCriteriaConditions(params.criteria, { Units: 'pm.branch_code', EmployeeDetails: 'pm.emp_fkey' });
     const [rows] = await pool.execute<RowDataPacket[]>(
-      `SELECT pm.emp_fkey, pm.emp_name, ep.emp_company_id AS employee_id, pm.branch_name,
+      `SELECT pm.payroll_master_pkey, pm.emp_fkey,
+              CASE WHEN ed.status = 2 THEN CONCAT(pm.emp_name, ' (Resigned)') ELSE pm.emp_name END AS emp_name,
+              ep.emp_company_id AS employee_id, uc.user_id AS login_user_id, pm.branch_name,
               pm.departments, pm.desig, pm.month_year,
-              pm.days_presant, pm.loss_of_pay, pm.days_leave, ar.weekoff_total, ar.holiday_total,
-              pm.gross_salary, pm.total_deduction, pm.net_salary
+              DATE_FORMAT(i.joining_date, '%Y-%m-%d') AS joining_date,
+              DATE_FORMAT(tm.last_approved_working_date, '%Y-%m-%d') AS termination_date,
+              ar.weekoff_total, ar.holiday_total,
+              COALESCE((SELECT SUM(ess.salary_amount) FROM emp_settle_slip ess
+                        WHERE ess.emp_fkey = pm.emp_fkey AND ess.status = 'Y' AND ess.approved = 'Y' AND ess.type <> 'SALARY'
+                          AND DATE_FORMAT(tm.last_approved_working_date, '%Y-%m') = pm.month_year), 0) AS settlement_amount
        FROM payroll_master pm
        JOIN emp_proff ep ON ep.emp_fkey = pm.emp_fkey
+       JOIN emp_details ed ON ed.emp_pkey = pm.emp_fkey
+       LEFT JOIN user_credentials uc ON uc.emp_fkey = pm.emp_fkey
+       LEFT JOIN employee_info i ON i.emp_pkey = pm.emp_fkey
+       LEFT JOIN termination tm ON tm.emp_fkey = pm.emp_fkey AND tm.status = 1
        LEFT JOIN attendance_register ar ON ar.emp_fkey = pm.emp_fkey AND ar.month_year = pm.month_year
-       WHERE pm.month_year = ? AND pm.action IN ('Approved','Processed') AND ${conditions.join(' AND ')}
+       WHERE pm.month_year = ? AND pm.action IN ('Approved','Processed') AND ${statusCondition}${negativeCondition}
+         AND EXISTS (SELECT 1 FROM emp_salary_slip ess WHERE ess.payroll_master_fkey = pm.payroll_master_pkey
+                       AND ess.item_part = 'Direct' AND ess.end_date_effective IS NULL)
+         AND ${conditions.join(' AND ')}
        ORDER BY pm.branch_name, pm.emp_name`,
       [params.monthYear, ...args]
     );
-    return rows;
+    const pkeys = rows.map((r) => r.payroll_master_pkey);
+    const [{ additionLabels, deductionLabels }, pivotMap, totalsMap] = await Promise.all([
+      getSalaryHeadKeys(pool, params.monthYear),
+      getGrossPivot(pool, pkeys),
+      getSalarySlipTotals(pool, pkeys),
+    ]);
+    return rows.map((row) => {
+      const pivot = buildGrossPivotRow(pivotMap.get(row.payroll_master_pkey), additionLabels, deductionLabels, Number(row.settlement_amount));
+      const totals = totalsMap.get(row.payroll_master_pkey);
+      return {
+        ...row,
+        days_presant: totals?.presentDays ?? 0,
+        days_leave: totals?.leaveDays ?? 0,
+        lop_days: totals?.lopDays ?? 0,
+        gross_salary: pivot.actualGross,
+        total_deduction: pivot.totalDeduction,
+        net_salary: pivot.netSalary,
+      };
+    });
   }
 
   if (params.subtype === 'GrossPeriod') {

@@ -308,17 +308,32 @@ const SUBTYPE_META: Record<Subtype, SubtypeMeta> = {
     ],
   },
   GrosssalarySummary: {
-    // Real legacy report is employee-level detail grouped by branch, not branch totals — see
-    // generateSalarySlips-adjacent comment in reports.ts for the correction and why.
+    // Real legacy report is employee-level detail grouped by branch (only for the Units criteria —
+    // flat otherwise, see grosssalarySummaryGroupBy), not branch totals. View and Excel column sets
+    // genuinely differ in legacy (grosssummaryreport.ctp vs the report's PHPExcel branch): the View
+    // omits User ID/Joining Date/Termination Date, Excel includes them — see excelColumns below.
+    // Gross Salary/Total Deduction/Net Salary are re-derived from emp_salary_slip (see reports.ts),
+    // not trusted from payroll_master.
     label: 'Gross Salary Summary',
     pdfAllowed: true,
-    groupBy: (r) => String(r.branch_name ?? ''),
+    slNo: true,
     columns: [
       { key: 'employee_id', label: 'Employee ID' }, { key: 'emp_name', label: 'Employee' }, { key: 'branch_name', label: 'Branch' },
       { key: 'departments', label: 'Department' }, { key: 'desig', label: 'Designation' },
       { key: 'days_presant', label: 'Present Days' }, { key: 'days_leave', label: 'Leave Days' },
-      { key: 'loss_of_pay', label: 'LOP Days' }, { key: 'weekoff_total', label: 'Week Off' }, { key: 'holiday_total', label: 'Holiday' },
-      { key: 'gross_salary', label: 'Gross Salary' }, { key: 'total_deduction', label: 'Deductions' }, { key: 'net_salary', label: 'Net Salary' },
+      { key: 'lop_days', label: 'LOP Days' }, { key: 'weekoff_total', label: 'Week Off' }, { key: 'holiday_total', label: 'Holiday' },
+      { key: 'gross_salary', label: 'Gross Salary' }, { key: 'total_deduction', label: 'Total Deduction' },
+      { key: 'settlement_amount', label: 'Settlement Amount' }, { key: 'net_salary', label: 'Net Salary' },
+    ],
+    excelSlNo: true,
+    excelColumns: [
+      { key: 'employee_id', label: 'Employee ID' }, { key: 'login_user_id', label: 'User ID' }, { key: 'emp_name', label: 'Employee Name' },
+      { key: 'desig', label: 'Designation' }, { key: 'departments', label: 'Department' }, { key: 'branch_name', label: 'Branch' },
+      { key: 'joining_date', label: 'Date of Joining' }, { key: 'termination_date', label: 'Date Of Termination' },
+      { key: 'days_presant', label: 'Present Days' }, { key: 'days_leave', label: 'Leave Days' },
+      { key: 'lop_days', label: 'LOP Days' }, { key: 'weekoff_total', label: 'Week Off' }, { key: 'holiday_total', label: 'Holiday' },
+      { key: 'gross_salary', label: 'Gross Salary' }, { key: 'total_deduction', label: 'Total Deduction' },
+      { key: 'settlement_amount', label: 'Settlement Amount' }, { key: 'net_salary', label: 'Net Salary' },
     ],
   },
   GrossPeriod: {
@@ -437,6 +452,15 @@ function grosssalaryViewGroupBy(criteria: Record<string, string[]>): (row: Recor
 // un-sectioned table (lines 267-488) — not a per-employee fieldset like Grosssalary. `undefined`
 // here means flat, matching the existing `meta.groupBy` convention used elsewhere on this page.
 function grosssalaryNewViewGroupBy(criteria: Record<string, string[]>): ((row: Record<string, unknown>) => string) | undefined {
+  if (criteria.Units?.length) return (r) => String(r.branch_name ?? '');
+  return undefined;
+}
+
+// Gross Salary Summary's grouping rule is the same on View and Excel (unlike BankTranfer/
+// GrosssalaryNew, which diverge between the two): Units criteria sections by branch (with a
+// per-branch header row, grosssummaryreport.ctp:38-175), EmployeeDetails renders one flat table
+// (grosssummaryreport.ctp:176-311). `undefined` means flat, matching the existing convention.
+function grosssalarySummaryGroupBy(criteria: Record<string, string[]>): ((row: Record<string, unknown>) => string) | undefined {
   if (criteria.Units?.length) return (r) => String(r.branch_name ?? '');
   return undefined;
 }
@@ -632,6 +656,7 @@ export default function PayrollReportPage() {
   const viewGroupBy = subtype === 'Grosssalary' ? grosssalaryViewGroupBy(criteria)
     : subtype === 'BankTranfer' ? bankTranferGroupBy(criteria)
     : subtype === 'GrosssalaryNew' ? grosssalaryNewViewGroupBy(criteria)
+    : subtype === 'GrosssalarySummary' ? grosssalarySummaryGroupBy(criteria)
     : meta.groupBy;
   // Legacy's Excel export for BankTranfer is flat-stacked for EmployeeDetails/Units/LeavePolicyGroup
   // criteria and grouped-per-bank only for the Banks criteria (SalaryReportsController.php:
@@ -642,14 +667,15 @@ export default function PayrollReportPage() {
   // product decision) — unlike the View, which still sections by branch for Units criteria.
   const excelGroupBy = subtype === 'BankTranfer' ? (isBankStatementMode ? bankTranferGroupBy(criteria) : undefined)
     : subtype === 'GrosssalaryNew' ? undefined
+    : subtype === 'GrosssalarySummary' ? grosssalarySummaryGroupBy(criteria)
     : meta.groupBy;
   // Which subtypes have a real, wired-up "Include Resigned" / "Include Negative Salary" filter —
   // legacy's checkboxes only affect the report data itself for these subtypes; other subtypes render
   // the shared employee-picker's own resigned toggle (via EmployeeChecklist) but nothing report-level.
   // BankTranfer's Banks criteria hides both (legacy: loadcriteriaitems.ctp:88, `criteria !== 'Banks'`).
-  const hasResignedFilter = subtype === 'SummaryPayroll' || subtype === 'salary' || subtype === 'Grosssalary' || subtype === 'GrosssalaryNew'
+  const hasResignedFilter = subtype === 'SummaryPayroll' || subtype === 'salary' || subtype === 'Grosssalary' || subtype === 'GrosssalaryNew' || subtype === 'GrosssalarySummary'
     || (subtype === 'BankTranfer' && !isBankStatementMode);
-  const hasNegativeFilter = subtype === 'SummaryPayroll' || subtype === 'Grosssalary' || subtype === 'GrosssalaryNew'
+  const hasNegativeFilter = subtype === 'SummaryPayroll' || subtype === 'Grosssalary' || subtype === 'GrosssalaryNew' || subtype === 'GrosssalarySummary'
     || (subtype === 'BankTranfer' && !isBankStatementMode);
   // These subtypes' Excel filename/title mirror legacy's PHPExcel output exactly — every other
   // subtype keeps the existing generic pattern.
@@ -663,6 +689,8 @@ export default function PayrollReportPage() {
     ? (isBankStatementMode
         ? `${session?.user?.companyCode ?? ''}_BankStatement - ${monthYear}`
         : `${session?.user?.companyCode ?? ''}_SalaryBankTransfer - ${monthYear}`)
+    : subtype === 'GrosssalarySummary'
+    ? `${session?.user?.companyCode ?? ''}_GrossSalarySummaryReport${monthYear}`
     : `payroll_report_${monthYear}`;
   const excelTitle = subtype === 'SummaryPayroll'
     ? `Payroll Summary Report - ${monthYear}`
@@ -670,6 +698,8 @@ export default function PayrollReportPage() {
     ? 'Cost To Company(CTC) Summary'
     : subtype === 'Grosssalary'
     ? `Gross Salary Detailed Report for ${monthYear}`
+    : subtype === 'GrosssalarySummary'
+    ? `Gross Salary Summary Reports for ${monthYear}`
     : undefined;
 
   // Shared by the View action and by Excel/PDF export — legacy's Excel/PDF buttons are independent
