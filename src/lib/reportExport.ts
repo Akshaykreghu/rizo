@@ -161,8 +161,13 @@ function sumGroupColumn(rows: Record<string, unknown>[], key: string): number {
 
 export function exportGroupedReportToExcel(
   columns: ReportColumn[], groups: ReportGroup[], currencyKeys: Set<string>, filename: string,
-  options?: { title?: string; slNo?: boolean }
+  // `groupTotals` defaults true (every other grouped report on this screen has a per-group Total
+  // row). GrosssalarySummary's real Excel (SalaryReportsController.php:11499-11637) has neither a
+  // Total row nor a blank spacer between branch sections — just the branch header row straight into
+  // the next branch's data — so it passes `groupTotals: false`.
+  options?: { title?: string; slNo?: boolean; groupTotals?: boolean }
 ) {
+  const groupTotals = options?.groupTotals ?? true;
   const cols = options?.slNo ? [{ key: SL_NO_KEY, label: 'Sl No' }, ...columns] : columns;
 
   const workbook = new ExcelJS.Workbook();
@@ -201,12 +206,14 @@ export function exportGroupedReportToExcel(
       rowNum++;
     });
 
-    cols.forEach((c, i) => {
-      const cell = sheet.getCell(rowNum, i + 1);
-      cell.font = { bold: true };
-      cell.value = i === 0 ? 'Total' : currencyKeys.has(c.key) ? sumGroupColumn(group.rows, c.key) : '';
-    });
-    rowNum += 2; // blank spacer row before next group
+    if (groupTotals) {
+      cols.forEach((c, i) => {
+        const cell = sheet.getCell(rowNum, i + 1);
+        cell.font = { bold: true };
+        cell.value = i === 0 ? 'Total' : currencyKeys.has(c.key) ? sumGroupColumn(group.rows, c.key) : '';
+      });
+      rowNum += 2; // blank spacer row before next group
+    }
   }
 
   workbook.xlsx.writeBuffer().then((buffer) => {

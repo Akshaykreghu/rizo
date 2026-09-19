@@ -315,7 +315,7 @@ const SUBTYPE_META: Record<Subtype, SubtypeMeta> = {
     // Gross Salary/Total Deduction/Net Salary are re-derived from emp_salary_slip (see reports.ts),
     // not trusted from payroll_master.
     label: 'Gross Salary Summary',
-    pdfAllowed: true,
+    pdfAllowed: false,
     slNo: true,
     columns: [
       { key: 'employee_id', label: 'Employee ID' }, { key: 'emp_name', label: 'Employee' }, { key: 'branch_name', label: 'Branch' },
@@ -751,7 +751,7 @@ export default function PayrollReportPage() {
           ]
         : undefined;
       if (kind === 'excel') {
-        if (excelGroupBy) exportGroupedReportToExcel(meta.excelColumns ?? screenColumns, groupRows(expRows, excelGroupBy), curKeys, excelFilename, { title: excelTitle, slNo: meta.excelSlNo });
+        if (excelGroupBy) exportGroupedReportToExcel(meta.excelColumns ?? screenColumns, groupRows(expRows, excelGroupBy), curKeys, excelFilename, { title: excelTitle, slNo: meta.excelSlNo, groupTotals: subtype !== 'GrosssalarySummary' });
         else exportReportToExcel(meta.excelColumns ?? screenColumns, expRows, excelFilename, { title: excelTitle, slNo: meta.slNo, totalKeys: meta.showTotal ? curKeys : undefined, superHeaders });
       } else {
         if (meta.groupBy) exportGroupedReportToPdf(screenColumns, groupRows(expRows, meta.groupBy), curKeys, `${meta.label} — ${monthYear}`, `payroll_report_${monthYear}`);
