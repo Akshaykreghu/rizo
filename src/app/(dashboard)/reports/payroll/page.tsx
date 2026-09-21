@@ -137,6 +137,11 @@ const CURRENCY_KEYS = new Set([
   'total_net', 'current_net', 'previous_net', 'net_change', 'salary_amount',
   'current_gross', 'previous_gross', 'gross_change', 'current_deduction', 'previous_deduction', 'deduction_change',
   'current_ctc', 'previous_ctc', 'ctc_change', 'standard_gross_salary', 'settlement_amount', 'annual_ctc',
+  'previous_ctc_standard', 'current_ctc_standard', 'ctc_standard_change',
+  'previous_ctc_actual', 'current_ctc_actual', 'ctc_actual_change',
+  'previous_gross_standard', 'current_gross_standard', 'gross_standard_change',
+  'previous_gross_actual', 'current_gross_actual', 'gross_actual_change',
+  'previous_net_actual', 'current_net_actual', 'net_actual_change',
 ]);
 
 // Legacy renders every one of these subtypes grouped by branch (a separate <table> per branch,
@@ -365,18 +370,33 @@ const SUBTYPE_META: Record<Subtype, SubtypeMeta> = {
     ],
   },
   Comparison: {
+    // Full rebuild across 5 phases (see reports.ts) — matches legacy's comparison_report.ctp: 5 real
+    // metric groups (Total Deduction/Total Salary are computed server-side but never shown as their
+    // own columns in legacy, only used internally for Net Salary, so they aren't exposed here
+    // either), the real per-item Standard-Addition pivot, the policy-dependent Pay Days formula, the
+    // three change-detection flag columns (Variable Additions/Deductions Count each show a count pair
+    // AND a same-row "No change"/"Change identified" flag — not a numeric diff; Bank Account is
+    // flag-only, no numeric values at all), and the row-level `status` column aggregating all of the
+    // above (comparison_report.ctp:334) — placed first, right after Sl No, matching legacy's layout.
+    // Grouping is dynamic (see comparisonGroupBy below, wired into viewGroupBy/excelGroupBy in the
+    // page component) — legacy branch-groups only for the Units criteria, identically on View and
+    // Excel; flat otherwise. meta.groupBy stays unset here for that reason.
     label: 'Salary Previous Month Comparison',
     itemPivot: 'comparison',
-    groupBy: (r) => String(r.branch_name ?? ''),
     columns: [
-      { key: 'employee_id', label: 'Employee ID' }, { key: 'emp_name', label: 'Employee' }, { key: 'branch_name', label: 'Branch' },
-      { key: 'departments', label: 'Department' }, { key: 'desig', label: 'Designation' },
+      { key: 'status', label: 'Status' },
+      { key: 'employee_id', label: 'Employee ID' }, { key: 'login_user_id', label: 'User ID' }, { key: 'emp_name', label: 'Employee' },
+      { key: 'branch_name', label: 'Branch' }, { key: 'departments', label: 'Department' }, { key: 'desig', label: 'Designation' },
       { key: 'joining_date', label: 'Joining Date' }, { key: 'termination_date', label: 'Termination Date' },
-      { key: 'previous_ctc', label: 'Previous CTC' }, { key: 'current_ctc', label: 'Current CTC' }, { key: 'ctc_change', label: 'CTC Change' },
-      { key: 'previous_gross', label: 'Previous Gross' }, { key: 'current_gross', label: 'Current Gross' }, { key: 'gross_change', label: 'Gross Change' },
-      { key: 'previous_deduction', label: 'Previous Deductions' }, { key: 'current_deduction', label: 'Current Deductions' }, { key: 'deduction_change', label: 'Deductions Change' },
-      { key: 'previous_net', label: 'Previous Net' }, { key: 'current_net', label: 'Current Net' }, { key: 'net_change', label: 'Net Change' },
+      { key: 'previous_ctc_standard', label: 'Previous CTC (Standard)' }, { key: 'current_ctc_standard', label: 'Current CTC (Standard)' }, { key: 'ctc_standard_change', label: 'CTC (Standard) Change' },
+      { key: 'previous_gross_standard', label: 'Previous Gross Salary (Standard)' }, { key: 'current_gross_standard', label: 'Current Gross Salary (Standard)' }, { key: 'gross_standard_change', label: 'Gross Salary (Standard) Change' },
+      { key: 'previous_gross_actual', label: 'Previous Gross Salary (Actual)' }, { key: 'current_gross_actual', label: 'Current Gross Salary (Actual)' }, { key: 'gross_actual_change', label: 'Gross Salary (Actual) Change' },
+      { key: 'previous_net_actual', label: 'Previous Net Salary (Actual)' }, { key: 'current_net_actual', label: 'Current Net Salary (Actual)' }, { key: 'net_actual_change', label: 'Net Salary (Actual) Change' },
+      { key: 'previous_ctc_actual', label: 'Previous CTC (Actual)' }, { key: 'current_ctc_actual', label: 'Current CTC (Actual)' }, { key: 'ctc_actual_change', label: 'CTC (Actual) Change' },
       { key: 'previous_pay_days', label: 'Previous Pay Days' }, { key: 'current_pay_days', label: 'Current Pay Days' }, { key: 'pay_days_change', label: 'Pay Days Change' },
+      { key: 'previous_var_add_count', label: 'Previous Variable Additions (Count)' }, { key: 'current_var_add_count', label: 'Current Variable Additions (Count)' }, { key: 'var_add_status', label: 'Variable Additions Status' },
+      { key: 'previous_var_ded_count', label: 'Previous Variable Deductions (Count)' }, { key: 'current_var_ded_count', label: 'Current Variable Deductions (Count)' }, { key: 'var_ded_status', label: 'Variable Deductions Status' },
+      { key: 'previous_bank_details', label: 'Previous Bank Account' }, { key: 'current_bank_details', label: 'Current Bank Account' }, { key: 'bank_status', label: 'Bank Account Status' },
     ],
   },
   MonthlyCTCReport: {
@@ -484,6 +504,14 @@ function grosssalarySummaryGroupBy(criteria: Record<string, string[]>): ((row: R
 // Gross Salary Period Wise's grouping is the same on View and Excel (report_period.ctp is grouped
 // identically to its Excel branch): Units criteria sections by branch, EmployeeDetails is flat.
 function grossPeriodGroupBy(criteria: Record<string, string[]>): ((row: Record<string, unknown>) => string) | undefined {
+  if (criteria.Units?.length) return (r) => String(r.branch_name ?? '');
+  return undefined;
+}
+
+// Salary Previous Month Comparison groups identically on View and Excel (needBranchWiseReport is
+// read the same way by both — comparison_report.ctp:79 and SalaryReportsController.php:19078):
+// Units criteria branch-groups, EmployeeDetails is flat.
+function comparisonGroupBy(criteria: Record<string, string[]>): ((row: Record<string, unknown>) => string) | undefined {
   if (criteria.Units?.length) return (r) => String(r.branch_name ?? '');
   return undefined;
 }
@@ -706,6 +734,7 @@ export default function PayrollReportPage() {
     : subtype === 'GrosssalaryNew' ? grosssalaryNewViewGroupBy(criteria)
     : subtype === 'GrosssalarySummary' ? grosssalarySummaryGroupBy(criteria)
     : subtype === 'GrossPeriod' ? grossPeriodGroupBy(criteria)
+    : subtype === 'Comparison' ? comparisonGroupBy(criteria)
     : meta.groupBy;
   // Legacy's Excel export for BankTranfer is flat-stacked for EmployeeDetails/Units/LeavePolicyGroup
   // criteria and grouped-per-bank only for the Banks criteria (SalaryReportsController.php:
@@ -718,14 +747,15 @@ export default function PayrollReportPage() {
     : subtype === 'GrosssalaryNew' ? undefined
     : subtype === 'GrosssalarySummary' ? grosssalarySummaryGroupBy(criteria)
     : subtype === 'GrossPeriod' ? grossPeriodGroupBy(criteria)
+    : subtype === 'Comparison' ? comparisonGroupBy(criteria)
     : meta.groupBy;
   // Which subtypes have a real, wired-up "Include Resigned" / "Include Negative Salary" filter —
   // legacy's checkboxes only affect the report data itself for these subtypes; other subtypes render
   // the shared employee-picker's own resigned toggle (via EmployeeChecklist) but nothing report-level.
   // BankTranfer's Banks criteria hides both (legacy: loadcriteriaitems.ctp:88, `criteria !== 'Banks'`).
-  const hasResignedFilter = subtype === 'SummaryPayroll' || subtype === 'salary' || subtype === 'Grosssalary' || subtype === 'GrosssalaryNew' || subtype === 'GrosssalarySummary' || subtype === 'GrossPeriod'
+  const hasResignedFilter = subtype === 'SummaryPayroll' || subtype === 'salary' || subtype === 'Grosssalary' || subtype === 'GrosssalaryNew' || subtype === 'GrosssalarySummary' || subtype === 'GrossPeriod' || subtype === 'Comparison'
     || (subtype === 'BankTranfer' && !isBankStatementMode);
-  const hasNegativeFilter = subtype === 'SummaryPayroll' || subtype === 'Grosssalary' || subtype === 'GrosssalaryNew' || subtype === 'GrosssalarySummary' || subtype === 'GrossPeriod'
+  const hasNegativeFilter = subtype === 'SummaryPayroll' || subtype === 'Grosssalary' || subtype === 'GrosssalaryNew' || subtype === 'GrosssalarySummary' || subtype === 'GrossPeriod' || subtype === 'Comparison'
     || (subtype === 'BankTranfer' && !isBankStatementMode);
   // These subtypes' Excel filename/title mirror legacy's PHPExcel output exactly — every other
   // subtype keeps the existing generic pattern.
