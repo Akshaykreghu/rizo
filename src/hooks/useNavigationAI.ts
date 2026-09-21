@@ -112,9 +112,9 @@ export const MODULES: ModuleMeta[] = [
     keywords: ['leave', 'vacation', 'holiday', 'time off', 'balance'],
     submenus: [
       { label: 'Leave Requests', href: '/leave/requests' },
-      { label: 'Leave Balances', href: '/leave/balances' },
       { label: 'Leave Encashment', href: '/leave/encashment' },
       { label: 'Bulk Leave Upload', href: '/leave/bulk-upload' },
+      { label: 'Leave Balance Upload', href: '/leave/balance-upload' },
     ],
   },
   {
