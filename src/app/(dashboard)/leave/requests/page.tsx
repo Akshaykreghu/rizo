@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom';
 import { useSearchParams } from 'next/navigation';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { EmployeeSearch } from '@/components/employees/EmployeeSearch';
-import { Plus, Check, X, Eye, CalendarCheck } from 'lucide-react';
+import { Plus, X, Eye, CalendarCheck } from 'lucide-react';
 import type { ColumnDef } from '@tanstack/react-table';
 import { cn } from '@/lib/utils';
 import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
@@ -356,11 +356,19 @@ function LeaveRequestsContent() {
           </button>
           {(row.original.LEAVESTATUS === 'CancellationOfAuthorized' || row.original.LEAVESTATUS === 'CancellationOfApproved') && (
             <>
-              <button onClick={() => act.mutate({ id: row.original.LEAVEENTRYID, action: 'cancellation/approve' })} title="Confirm Cancellation" className="p-1.5 rounded-lg text-slate-400 hover:text-[color:var(--color-success-dark)] hover:bg-[color:var(--color-success-soft)] transition-colors duration-150">
-                <Check className="w-3.5 h-3.5" />
+              <button
+                onClick={() => act.mutate({ id: row.original.LEAVEENTRYID, action: 'cancellation/approve' })}
+                title="Confirm the employee's cancellation request"
+                className="inline-flex items-center px-2 py-1 rounded-md text-[11px] font-semibold bg-[color:var(--color-success-soft)] text-[color:var(--color-success-dark)] hover:opacity-80 transition-opacity"
+              >
+                Approve
               </button>
-              <button onClick={() => act.mutate({ id: row.original.LEAVEENTRYID, action: 'cancellation/reject' })} title="Reject Cancellation (keep leave)" className="p-1.5 rounded-lg text-slate-400 hover:text-[color:var(--color-danger)] hover:bg-[color:var(--color-danger)]/10 transition-colors duration-150">
-                <X className="w-3.5 h-3.5" />
+              <button
+                onClick={() => act.mutate({ id: row.original.LEAVEENTRYID, action: 'cancellation/reject' })}
+                title="Reject the cancellation request and keep the leave"
+                className="inline-flex items-center px-2 py-1 rounded-md text-[11px] font-semibold bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors"
+              >
+                Cancel
               </button>
             </>
           )}

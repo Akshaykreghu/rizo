@@ -7,20 +7,20 @@ import type { RowDataPacket } from 'mysql2';
 
 // Rejects a pending cancellation request — reverts to the pre-cancellation status
 // (CancellationOfAuthorized -> Authorized, CancellationOfApproved -> Approved).
+// Same reviewer gate as .../cancellation/approve (see comment there): legacy's grandLeave() 'Reject'
+// branch has no admin-role check, only ISAutherizedby/APPROVEDBY == session emp_fkey.
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await getServerSession(authOptions);
-  if (!session || session.user.userGroup !== 1) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const { id } = await params;
   const pool = await getCompanyPool(session.user.companyCode);
 
   const [[entry]] = await pool.execute<RowDataPacket[]>(
-    `SELECT LEAVEENTRYID, EMP_fkey, FROMDATE, FROMHALF, TODATE, TOHALF, leave_days, LEAVESTATUS
+    `SELECT LEAVEENTRYID, EMP_fkey, FROMDATE, FROMHALF, TODATE, TOHALF, leave_days, LEAVESTATUS, ISAutherizedby, APPROVEDBY
      FROM leaveentries WHERE LEAVEENTRYID = ?`,
     [id]
   );
@@ -30,6 +30,14 @@ export async function POST(
     : entry.LEAVESTATUS === 'CancellationOfApproved' ? 'Approved' : null;
   if (!revertTo) {
     return NextResponse.json({ error: `No pending cancellation request for status '${entry.LEAVESTATUS}'` }, { status: 409 });
+  }
+
+  const isAdmin = session.user.userGroup === 1;
+  const isEntitledReviewer = entry.LEAVESTATUS === 'CancellationOfAuthorized'
+    ? session.user.empFkey === entry.ISAutherizedby
+    : session.user.empFkey === entry.APPROVEDBY;
+  if (!isAdmin && !isEntitledReviewer) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
   await pool.execute(`UPDATE leaveentries SET LEAVESTATUS = ? WHERE LEAVEENTRYID = ?`, [revertTo, id]);

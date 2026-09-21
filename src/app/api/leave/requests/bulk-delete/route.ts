@@ -8,13 +8,15 @@ import type { RowDataPacket } from 'mysql2';
 // grid only ever calls this with a single selected row (singleSelect: true, getSelected()), so
 // its handler string-concats `LEAVEENTRYID = '$ids'` and never actually needed to support a
 // comma-joined id list. This bulk version fixes that generalization (loop + real deletion per id)
-// while keeping legacy's own status gate verbatim, taken from index.ctp's "Remove" handler:
+// while keeping legacy's own status gate from index.ctp's "Remove" handler:
 //   - Approved/Authorized leaves cannot be removed ("You Cannot remove Approved/Authorized Leaves")
 //   - CancellationOfApproved cannot be removed either ("You Cannot remove the leave before Approval
 //     of Cancellation")
-// Everything else (Applied, Rejected, Cancelled, CancellationOfAuthorized, etc.) is a real hard
-// delete — legacy deletes emp_leave_transactions rows for the entry, then the leaveentries row
-// itself; no soft-delete flag exists for this action.
+// CancellationOfAuthorized is blocked too, by product decision (not in legacy's own list) — a leave
+// already pending cancellation review shouldn't be independently deletable either.
+// Everything else (Applied, Rejected, Cancelled, etc.) is a real hard delete — legacy deletes
+// emp_leave_transactions rows for the entry, then the leaveentries row itself; no soft-delete flag
+// exists for this action.
 //
 // Self-service scoped: an employee can only ever delete their OWN leave requests, never an
 // arbitrary LEAVEENTRYID — legacy's controller has no such check (any authenticated session could
@@ -24,6 +26,7 @@ const BLOCKED_STATUSES: Record<string, string> = {
   Approved: 'Cannot remove an Approved leave request',
   Authorized: 'Cannot remove an Authorized leave request',
   CancellationOfApproved: 'Cannot remove a leave pending approval of cancellation',
+  CancellationOfAuthorized: 'Cannot remove a leave pending approval of cancellation',
 };
 
 export async function POST(request: NextRequest) {

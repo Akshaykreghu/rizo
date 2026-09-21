@@ -6,26 +6,38 @@ import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket } from 'mysql2';
 
 // Confirms a pending cancellation request (CancellationOfAuthorized/CancellationOfApproved -> Cancelled).
+// Ported from grandLeave()'s 'Cancelled'/'Approve Cancellation' branches — legacy has NO admin-role
+// gate on this action at all; it's driven purely by whichever employee's session emp_fkey matches
+// the request's ISAutherizedby (for CancellationOfAuthorized) or APPROVEDBY (for CancellationOfApproved),
+// same as index()'s own queue query (`ISAutherizedby = $cur_emp_key AND LEAVESTATUS IN ('CancellationOfAuthorized', ...)`
+// / `APPROVEDBY = $cur_emp_key AND LEAVESTATUS IN ('CancellationOfApproved')`). Admin-only was a bug —
+// it silently blocked the actual hierarchy authorizer/approver, who is often not an admin user.
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await getServerSession(authOptions);
-  if (!session || session.user.userGroup !== 1) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const { id } = await params;
   const pool = await getCompanyPool(session.user.companyCode);
 
   const [[entry]] = await pool.execute<RowDataPacket[]>(
-    `SELECT LEAVEENTRYID, EMP_fkey, FROMDATE, FROMHALF, TODATE, TOHALF, leave_days, LEAVESTATUS
+    `SELECT LEAVEENTRYID, EMP_fkey, FROMDATE, FROMHALF, TODATE, TOHALF, leave_days, LEAVESTATUS, ISAutherizedby, APPROVEDBY
      FROM leaveentries WHERE LEAVEENTRYID = ?`,
     [id]
   );
   if (!entry) return NextResponse.json({ error: 'Leave request not found' }, { status: 404 });
   if (entry.LEAVESTATUS !== 'CancellationOfAuthorized' && entry.LEAVESTATUS !== 'CancellationOfApproved') {
     return NextResponse.json({ error: `No pending cancellation request for status '${entry.LEAVESTATUS}'` }, { status: 409 });
+  }
+
+  const isAdmin = session.user.userGroup === 1;
+  const isEntitledReviewer = entry.LEAVESTATUS === 'CancellationOfAuthorized'
+    ? session.user.empFkey === entry.ISAutherizedby
+    : session.user.empFkey === entry.APPROVEDBY;
+  if (!isAdmin && !isEntitledReviewer) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
   await pool.execute(`UPDATE leaveentries SET LEAVESTATUS = 'Cancelled' WHERE LEAVEENTRYID = ?`, [id]);

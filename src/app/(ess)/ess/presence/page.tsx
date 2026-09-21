@@ -279,6 +279,22 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
     });
   }, [empId]);
 
+  // Ported from addeditleave_new.ctp's validateLeave()'s day-count formula (first day + full middle
+  // days + last day, weighted by half-session) — used only to gate submit against balance, per
+  // legacy's own "leave_balance < diffDays" check, which fires regardless of ALLOW_NEGETIVE.
+  const requestedDays = (() => {
+    if (!form.from_date || !form.to_date) return 0;
+    const sdt = new Date(form.from_date), edt = new Date(form.to_date);
+    if (edt < sdt) return 0;
+    const startSess = form.from_half, endSess = form.to_half;
+    if (form.from_date === form.to_date) return startSess === '2' || endSess === '1' ? 0.5 : 1;
+    const daysBetween = Math.floor((edt.getTime() - sdt.getTime()) / 86400000) + 1;
+    let total = startSess === '1' ? 1 : 0.5;
+    if (daysBetween > 2) total += daysBetween - 2;
+    total += endSess === '2' ? 1 : 0.5;
+    return total;
+  })();
+
   // Ported from addeditleave_new.ctp's getLeaveBalance(): re-fetched whenever leave type or From
   // Date changes, so the balance shown reflects the date being applied for, before submitting.
   const [balancePreview, setBalancePreview] = useState<{
@@ -306,8 +322,8 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (balancePreview && balancePreview.balance <= 0 && !balancePreview.allowNegative) {
-      setError('You have no leave balance available for this leave type');
+    if (balancePreview && requestedDays > 0 && balancePreview.balance < requestedDays) {
+      setError('You do not have enough leave balance');
       return;
     }
     if (balancePreview?.documentMandatory && !file) {
@@ -397,7 +413,7 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
               <div style={{ fontWeight: 800, color: 'var(--text-primary)' }}>Available Leave Balance: {balancePreview.balance}</div>
               {!balancePreview.minServiceOk && <div style={{ color: '#dc2626', marginTop: 4 }}>{balancePreview.minServiceMessage}</div>}
               {!balancePreview.advanceNoticeOk && <div style={{ color: '#dc2626', marginTop: 4 }}>{balancePreview.advanceNoticeMessage}</div>}
-              {balancePreview.balance === 0 && !balancePreview.allowNegative && <div style={{ color: '#dc2626', marginTop: 4 }}>You have no leave balance!</div>}
+              {requestedDays > 0 && balancePreview.balance < requestedDays && <div style={{ color: '#dc2626', marginTop: 4 }}>You do not have enough leave balance</div>}
               {balancePreview.remarks && <div style={{ color: 'var(--text-muted)', marginTop: 4 }}>{balancePreview.remarks}</div>}
             </div>
           )}
@@ -451,7 +467,7 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
           {error && <div style={{ marginBottom: 12, fontSize: 12, color: '#dc2626' }}>{error}</div>}
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
             <button type="button" onClick={onClose} style={{ padding: '8px 18px', borderRadius: 8, border: '1.5px solid var(--border)', background: 'var(--bg-page)', color: 'var(--text-muted)', fontWeight: 700, cursor: 'pointer', fontSize: 13 }}>Cancel</button>
-            <button type="submit" disabled={saving || !form.leave_type_id || !form.from_date || !form.to_date || !form.reason || !authorizerFkey || !approverFkey || (!!balancePreview && balancePreview.balance <= 0 && !balancePreview.allowNegative)} style={{ padding: '8px 22px', borderRadius: 8, border: 'none', background: BRAND, color: '#fff', fontWeight: 800, cursor: 'pointer', fontSize: 13, opacity: saving ? 0.7 : 1 }}>
+            <button type="submit" disabled={saving || !form.leave_type_id || !form.from_date || !form.to_date || !form.reason || !authorizerFkey || !approverFkey || (!!balancePreview && requestedDays > 0 && balancePreview.balance < requestedDays)} style={{ padding: '8px 22px', borderRadius: 8, border: 'none', background: BRAND, color: '#fff', fontWeight: 800, cursor: 'pointer', fontSize: 13, opacity: saving ? 0.7 : 1 }}>
               {uploading ? 'Uploading…' : saving ? 'Submitting…' : 'Submit Leave'}
             </button>
           </div>
@@ -482,6 +498,17 @@ function PersonPicker({
   const filtered = query
     ? options.filter((o) => o.name.toLowerCase().includes(query.toLowerCase()))
     : options;
+
+  // The modal body scrolls independently of the page; a plain onBlur close doesn't fire when the
+  // user scrolls that body without moving focus away, leaving the dropdown floating over unrelated
+  // fields. Closing on any scroll within the modal (capture phase, since the scroll container itself
+  // doesn't bubble 'scroll') fixes that.
+  useEffect(() => {
+    if (!open) return;
+    const close = () => setOpen(false);
+    window.addEventListener('scroll', close, true);
+    return () => window.removeEventListener('scroll', close, true);
+  }, [open]);
 
   return (
     <div style={{ position: 'relative' }}>
@@ -786,10 +813,11 @@ export default function EssPresencePage() {
 
   useEffect(() => { load(); }, [load]);
 
-  // Same status gate as legacy's index.ctp "Remove" handler: Approved/Authorized/
-  // CancellationOfApproved can't be removed, everything else can.
+  // Status gate for the Remove option — extends legacy's index.ctp "Remove" handler
+  // (Approved/Authorized/CancellationOfApproved) with CancellationOfAuthorized by product decision,
+  // since a leave already pending cancellation review shouldn't be independently deletable either.
   const isLeaveDeletable = (r: LeaveRow) =>
-    !['Approved', 'Authorized', 'CancellationOfApproved'].includes(r.LEAVESTATUS);
+    !['Approved', 'Authorized', 'CancellationOfApproved', 'CancellationOfAuthorized'].includes(r.LEAVESTATUS);
 
   // Ported from addeditleave_new.ctp's cancelLeave() button visibility — Applied cancels
   // immediately, Authorized/Approved raise a pending-review cancellation instead.
