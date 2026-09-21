@@ -672,3 +672,240 @@ export function exportMonthlyCtcToExcel(
     URL.revokeObjectURL(url);
   });
 }
+
+export interface PayrollCtcExportItem { label: string; amount: number; rate: number }
+export interface PayrollCtcExportRow {
+  employee_id: string | null;
+  login_user_id: string | null;
+  emp_name: string;
+  gender: string | null;
+  month_year: string;
+  desig: string | null;
+  departments: string | null;
+  branch_name: string | null;
+  joining_date: string | null;
+  termination_date: string | null;
+  present_days: number | null;
+  overtime_hours: number | null;
+  lop_days: number | null;
+  leave_days: number | null;
+  weekoff_total: number | null;
+  holiday_total: number | null;
+  standard_additions: PayrollCtcExportItem[];
+  standard_deductions: PayrollCtcExportItem[];
+  variable_result: PayrollCtcExportItem[];
+  employer_result: PayrollCtcExportItem[];
+  actual_addition_result: PayrollCtcExportItem[];
+  actual_deduction_result: PayrollCtcExportItem[];
+}
+
+// Mirrors generatePayrollCTC()'s Excel branch (SalaryReportsController.php:23028-23320) — the ONLY
+// working output of this report; legacy's own View/PDF reference variables generatePayrollCTC()
+// never sets, so they're dead code (see reports.ts's PayrollCTC comment / viewAllowed:false in
+// page.tsx). Column layout is a literal port of the raw PHPExcel column-by-column writes: Employee
+// Details, then 3 "Rate" (structure_det_value) sections — Standard Salary, Other Salary (Variable),
+// Employer Contribution (legacy confusingly labels this section's own header 'CTC', not "Employer
+// Contribution" twice — kept as-is) — then the same 3 groupings again on the "Amount" (salary_amount)
+// side (the second Employer Contribution section is ALSO labeled 'CTC' in legacy), ending in one
+// final cell — vertically merged across both header rows, no subheader of its own — holding the true
+// CTC figure (Employer Contribution Amount total + Actual Salary Gross).
+export function exportPayrollCtcToExcel(rows: PayrollCtcExportRow[], from: string, filename: string, runBy: string) {
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet('Payroll CTC');
+
+  if (rows.length === 0) {
+    sheet.mergeCells('A1:J1');
+    const cell = sheet.getCell('A1');
+    cell.value = 'No data available under the selected criteria';
+    workbook.xlsx.writeBuffer().then((buffer) => {
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${filename}.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+    return;
+  }
+
+  const mainHeaderRow = 4;
+  const subHeaderRow = 5;
+  const setMain = (startCol: number, endCol: number, label: string) => {
+    if (endCol > startCol) sheet.mergeCells(mainHeaderRow, startCol, mainHeaderRow, endCol);
+    const cell = sheet.getCell(mainHeaderRow, startCol);
+    cell.value = label;
+    cell.font = { bold: true };
+    cell.alignment = { horizontal: 'center' };
+  };
+  const setSub = (c: number, label: string) => {
+    const cell = sheet.getCell(subHeaderRow, c);
+    cell.value = label;
+    cell.font = { bold: true };
+  };
+
+  // Every row carries the same zero-filled key set (see getPayrollCtcKeys in reports.ts) — the first
+  // row's labels define the dynamic column set for all of them.
+  const first = rows[0];
+  const standardAdditions = first.standard_additions.map((i) => i.label);
+  const standardDeductions = first.standard_deductions.map((i) => i.label);
+  const variableLabels = first.variable_result.map((i) => i.label);
+  const employerLabels = first.employer_result.map((i) => i.label);
+  const actualAdditionLabels = first.actual_addition_result.map((i) => i.label);
+  const actualDeductionLabels = first.actual_deduction_result.map((i) => i.label);
+
+  let col = 1;
+  const empHeaders = ['Sl No', 'Employee ID', 'User ID', 'Employee Name', 'Gender', 'Month', 'Designation', 'Department', 'Branch', 'Date of Joining', 'Date of Termination', 'Present Days', 'Overtime (In Hrs.)', 'LOP Days', 'Leave Days', 'Week Off', 'Holiday'];
+  const empStart = col;
+  empHeaders.forEach((h) => { setSub(col, h); col++; });
+  setMain(empStart, col - 1, 'Employee details');
+
+  const stdStart = col;
+  standardAdditions.forEach((l) => { setSub(col, `${l} (Rate)`); col++; });
+  setSub(col, 'Gross Salary'); col++;
+  standardDeductions.forEach((l) => { setSub(col, `${l} (Rate)`); col++; });
+  setSub(col, 'Total Deduction'); col++;
+  setSub(col, 'Net Salary'); col++;
+  setMain(stdStart, col - 1, 'Standard Salary');
+
+  const otherStart = col;
+  variableLabels.forEach((l) => { setSub(col, `${l} (Rate)`); col++; });
+  setSub(col, 'Total Variable Salary (Rate)'); col++;
+  setMain(otherStart, col - 1, 'Other Salary');
+
+  const employerRateStart = col;
+  employerLabels.forEach((l) => { setSub(col, `${l} (Rate)`); col++; });
+  setSub(col, 'Total Contribution'); col++;
+  setSub(col, 'CTC'); col++;
+  setMain(employerRateStart, col - 1, 'Employer Contribution');
+
+  const actualStart = col;
+  standardAdditions.forEach((l) => { setSub(col, `${l} (Amount)`); col++; });
+  variableLabels.forEach((l) => { setSub(col, `${l} (Amount)`); col++; });
+  actualAdditionLabels.forEach((l) => { setSub(col, `${l} (Amount)`); col++; });
+  setSub(col, 'Gross Salary'); col++;
+  standardDeductions.forEach((l) => { setSub(col, `${l} (Amount)`); col++; });
+  actualDeductionLabels.forEach((l) => { setSub(col, `${l} (Amount)`); col++; });
+  setSub(col, 'Total Deduction'); col++;
+  setSub(col, 'Net Salary'); col++;
+  setMain(actualStart, col - 1, 'Actual Salary');
+
+  const employerAmtStart = col;
+  employerLabels.forEach((l) => { setSub(col, `${l} (Amount)`); col++; });
+  setSub(col, 'Total Contribution'); col++;
+  setMain(employerAmtStart, col - 1, 'CTC');
+
+  const finalCtcCol = col;
+  sheet.mergeCells(mainHeaderRow, finalCtcCol, subHeaderRow, finalCtcCol);
+  const finalCtcCell = sheet.getCell(mainHeaderRow, finalCtcCol);
+  finalCtcCell.value = 'CTC';
+  finalCtcCell.font = { bold: true };
+  finalCtcCell.alignment = { horizontal: 'center', vertical: 'middle' };
+  col++;
+
+  const lastCol = col - 1;
+  for (let c = 1; c <= lastCol; c++) sheet.getColumn(c).width = 15;
+
+  sheet.mergeCells(1, 1, 1, lastCol);
+  const titleCell = sheet.getCell(1, 1);
+  titleCell.value = `Payroll CTC Report of ${from}`;
+  titleCell.font = { bold: true, size: 18 };
+  titleCell.alignment = { horizontal: 'center' };
+
+  sheet.mergeCells(2, 1, 2, lastCol);
+  const runByCell = sheet.getCell(2, 1);
+  runByCell.value = `Report Run by ${runBy} at ${new Date().toLocaleString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }).replace(',', '')}`;
+  runByCell.font = { bold: true };
+  runByCell.alignment = { horizontal: 'center' };
+
+  const sum = (items: PayrollCtcExportItem[], field: 'amount' | 'rate') => items.reduce((s, i) => s + Number(i[field] ?? 0), 0);
+
+  const firstDataRow = subHeaderRow + 1;
+  let dataRow = firstDataRow;
+  rows.forEach((row, i) => {
+    let c = 1;
+    const write = (v: string | number) => { sheet.getCell(dataRow, c).value = v; c++; };
+    write(i + 1);
+    write(row.employee_id ?? '');
+    write(row.login_user_id ?? '');
+    write(row.emp_name);
+    write(row.gender ?? '');
+    write(row.month_year);
+    write(row.desig ?? '');
+    write(row.departments ?? '');
+    write(row.branch_name ?? '');
+    write(row.joining_date ?? '');
+    write(row.termination_date ?? '');
+    write(row.present_days ?? 0);
+    write(row.overtime_hours ?? 0);
+    write(row.lop_days ?? 0);
+    write(row.leave_days ?? 0);
+    write(row.weekoff_total ?? 0);
+    write(row.holiday_total ?? 0);
+
+    row.standard_additions.forEach((it) => write(it.rate));
+    const grossRate = sum(row.standard_additions, 'rate');
+    write(grossRate);
+    row.standard_deductions.forEach((it) => write(it.rate));
+    const deductionsRate = sum(row.standard_deductions, 'rate');
+    write(deductionsRate);
+    write(Math.abs(grossRate) - Math.abs(deductionsRate));
+
+    row.variable_result.forEach((it) => write(it.rate));
+    const variableRateTotal = sum(row.variable_result, 'rate');
+    write(variableRateTotal);
+
+    row.employer_result.forEach((it) => write(it.rate));
+    const employerRateTotal = sum(row.employer_result, 'rate');
+    write(employerRateTotal);
+    write(employerRateTotal + grossRate);
+
+    row.standard_additions.forEach((it) => write(it.amount));
+    row.variable_result.forEach((it) => write(it.amount));
+    row.actual_addition_result.forEach((it) => write(it.amount));
+    const gross = sum(row.standard_additions, 'amount') + sum(row.variable_result, 'amount') + sum(row.actual_addition_result, 'amount');
+    write(gross);
+    row.standard_deductions.forEach((it) => write(it.amount));
+    row.actual_deduction_result.forEach((it) => write(it.amount));
+    const deductions = sum(row.standard_deductions, 'amount') + sum(row.actual_deduction_result, 'amount');
+    write(deductions);
+    write(Math.abs(gross) - Math.abs(deductions));
+
+    row.employer_result.forEach((it) => write(it.amount));
+    const employerAmtTotal = sum(row.employer_result, 'amount');
+    write(employerAmtTotal);
+    write(employerAmtTotal + gross);
+
+    dataRow++;
+  });
+
+  // Legacy merges Sl No..Date of Joining (cols 1-10) into one 'TOTAL' label, then sums every
+  // remaining column whose value is numeric — including the date-like Date of Termination column,
+  // whose total is silently 0 (is_numeric() on a formatted date string is false), a legacy quirk
+  // from summing indiscriminately rather than an intentional column selection; replicated as-is.
+  const totalRow = dataRow;
+  sheet.mergeCells(totalRow, 1, totalRow, 10);
+  const totalCell = sheet.getCell(totalRow, 1);
+  totalCell.value = 'TOTAL';
+  totalCell.font = { bold: true };
+  for (let c = 11; c <= lastCol; c++) {
+    let s = 0;
+    for (let r = firstDataRow; r < totalRow; r++) {
+      const v = sheet.getCell(r, c).value;
+      if (typeof v === 'number') s += v;
+    }
+    const cell = sheet.getCell(totalRow, c);
+    cell.value = s;
+    cell.font = { bold: true };
+  }
+
+  workbook.xlsx.writeBuffer().then((buffer) => {
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${filename}.xlsx`;
+    a.click();
+    URL.revokeObjectURL(url);
+  });
+}

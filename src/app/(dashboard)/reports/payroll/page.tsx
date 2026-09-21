@@ -8,8 +8,8 @@ import { Download, Eye, Loader2, Calendar } from 'lucide-react';
 import { CriteriaFilterPanel } from '@/components/reports/CriteriaFilterPanel';
 import {
   exportReportToExcel, exportReportToPdf, exportSalarySlipsToExcel, exportSalarySlipsToPdf,
-  exportGroupedReportToExcel, exportGroupedReportToPdf, exportMonthlyCtcToExcel,
-  type ReportColumn, type SalarySlipCompanyInfo,
+  exportGroupedReportToExcel, exportGroupedReportToPdf, exportMonthlyCtcToExcel, exportPayrollCtcToExcel,
+  type ReportColumn, type SalarySlipCompanyInfo, type PayrollCtcExportRow,
 } from '@/lib/reportExport';
 import { cn, formatCurrency } from '@/lib/utils';
 import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
@@ -233,6 +233,13 @@ interface SubtypeMeta {
   dateRange?: boolean;
   groupBy?: (row: Record<string, unknown>) => string;
   pdfAllowed?: boolean;
+  // Legacy's payroll_ctc.ctp View (and its PDF, which reuses the same template) reference
+  // $gross/$array_key/$standard_key/$variable_key/$stdctc_key/$actualctc_key — variables
+  // generatePayrollCTC() never sets (confirmed via grep: those $this->set() calls exist for ~15
+  // other report functions in this controller, not this one). Only the Excel branch, built
+  // directly off $arr_emp_details via raw PHPExcel calls, actually works. So PayrollCTC has no
+  // real on-screen View to port — Excel-only, View button hidden entirely (not just PDF).
+  viewAllowed?: boolean;
   // Excel-specific column set/order, used only when it needs to diverge from the on-screen grid —
   // e.g. SummaryPayroll's Excel export mirrors legacy's PHPExcel column order/labels exactly
   // (Sl No, no redundant Branch column since branch is already the group header, no Monthly CTC —
@@ -483,18 +490,12 @@ const SUBTYPE_META: Record<Subtype, SubtypeMeta> = {
     columns: [],
   },
   PayrollCTC: {
+    // Excel-only — legacy's own View/PDF for this report are dead code (see reports.ts's PayrollCTC
+    // comment); columns stays empty, this report is rendered/exported through its own dedicated
+    // path (exportPayrollCtcToExcel), same pattern as Monthly CTC's card layout.
     label: 'Payroll CTC Report',
-    itemPivot: 'plain',
-    groupBy: (r) => String(r.branch_name ?? ''),
-    columns: [
-      { key: 'employee_id', label: 'Employee ID' }, { key: 'emp_name', label: 'Employee' }, { key: 'branch_name', label: 'Branch' },
-      { key: 'departments', label: 'Department' }, { key: 'desig', label: 'Designation' }, { key: 'gender', label: 'Gender' },
-      { key: 'present_days', label: 'Present Days' }, { key: 'leave_days', label: 'Leave Days' }, { key: 'lop_days', label: 'LOP Days' },
-      { key: 'weekoff_total', label: 'Week Off' }, { key: 'holiday_total', label: 'Holiday' },
-      { key: 'standard_total', label: 'Standard' }, { key: 'variable_total', label: 'Variable' },
-      { key: 'employer_total', label: 'Employer Contribution' }, { key: 'other_total', label: 'Other/Ad-hoc' },
-      { key: 'total_deduction', label: 'Deductions' }, { key: 'net_salary', label: 'Net Salary' },
-    ],
+    viewAllowed: false,
+    columns: [],
   },
 };
 
@@ -783,6 +784,7 @@ export default function PayrollReportPage() {
   const meta = isBankStatementMode ? BANK_STATEMENT_META : SUBTYPE_META[subtype];
   const isSlip = subtype === 'Salaryslip';
   const isMonthlyCtc = subtype === 'MonthlyCTCReport';
+  const isPayrollCtc = subtype === 'PayrollCTC';
   // Units criteria draws a "Branch Name:" legend before each branch's first card, matching legacy's
   // needBranchWiseReport flag (monthlyctc.ctp:38-43, identically in its Excel branch) — flat,
   // sequential cards otherwise.
@@ -843,9 +845,9 @@ export default function PayrollReportPage() {
   // legacy's checkboxes only affect the report data itself for these subtypes; other subtypes render
   // the shared employee-picker's own resigned toggle (via EmployeeChecklist) but nothing report-level.
   // BankTranfer's Banks criteria hides both (legacy: loadcriteriaitems.ctp:88, `criteria !== 'Banks'`).
-  const hasResignedFilter = subtype === 'SummaryPayroll' || subtype === 'salary' || subtype === 'Grosssalary' || subtype === 'GrosssalaryNew' || subtype === 'GrosssalarySummary' || subtype === 'GrossPeriod' || subtype === 'Comparison' || subtype === 'MonthlyCTCReport'
+  const hasResignedFilter = subtype === 'SummaryPayroll' || subtype === 'salary' || subtype === 'Grosssalary' || subtype === 'GrosssalaryNew' || subtype === 'GrosssalarySummary' || subtype === 'GrossPeriod' || subtype === 'Comparison' || subtype === 'MonthlyCTCReport' || subtype === 'PayrollCTC'
     || (subtype === 'BankTranfer' && !isBankStatementMode);
-  const hasNegativeFilter = subtype === 'SummaryPayroll' || subtype === 'Grosssalary' || subtype === 'GrosssalaryNew' || subtype === 'GrosssalarySummary' || subtype === 'GrossPeriod' || subtype === 'Comparison' || subtype === 'MonthlyCTCReport'
+  const hasNegativeFilter = subtype === 'SummaryPayroll' || subtype === 'Grosssalary' || subtype === 'GrosssalaryNew' || subtype === 'GrosssalarySummary' || subtype === 'GrossPeriod' || subtype === 'Comparison' || subtype === 'MonthlyCTCReport' || subtype === 'PayrollCTC'
     || (subtype === 'BankTranfer' && !isBankStatementMode);
   // These subtypes' Excel filename/title mirror legacy's PHPExcel output exactly — every other
   // subtype keeps the existing generic pattern.
@@ -924,6 +926,15 @@ export default function PayrollReportPage() {
         exportMonthlyCtcToExcel(
           r as unknown as MonthlyCtcCard[], monthlyCtcGroupByBranch, monthLabel(monthYear),
           `${session?.user?.companyCode ?? ''}_Monthly CTC ${monthYear}`, session?.user?.name ?? ''
+        );
+        return;
+      }
+      if (isPayrollCtc) {
+        // Excel-only — no View, no PDF (see viewAllowed:false above / reports.ts's PayrollCTC comment
+        // for why legacy's own View/PDF are dead code for this report).
+        exportPayrollCtcToExcel(
+          r as unknown as PayrollCtcExportRow[], monthYear,
+          `${session?.user?.companyCode ?? ''}_PayrollCTCReport${monthYear}`, session?.user?.name ?? ''
         );
         return;
       }
@@ -1039,14 +1050,16 @@ export default function PayrollReportPage() {
           />
         </div>
         <div className="flex justify-end items-center gap-2">
-          <button
-            onClick={() => generate.mutate()}
-            disabled={generate.isPending || !monthYear || !hasCriteria}
-            title="View Report"
-            className={cn(BTN_BASE, 'bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)] text-white')}
-          >
-            {generate.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Eye className="w-4 h-4" />}
-          </button>
+          {meta.viewAllowed !== false && (
+            <button
+              onClick={() => generate.mutate()}
+              disabled={generate.isPending || !monthYear || !hasCriteria}
+              title="View Report"
+              className={cn(BTN_BASE, 'bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)] text-white')}
+            >
+              {generate.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Eye className="w-4 h-4" />}
+            </button>
+          )}
           <button
             onClick={() => exportReport.mutate('excel')}
             disabled={exportReport.isPending || !monthYear || !hasCriteria}
@@ -1067,6 +1080,8 @@ export default function PayrollReportPage() {
         {error && <p className="text-[12.5px] text-[color:var(--color-danger)]">{error}</p>}
       </div>
 
+      {meta.viewAllowed === false ? null : (
+      <>
       {generate.isSuccess && (
         <h2 className="text-[13px] font-semibold text-[#0F172A] mb-2">Report Results</h2>
       )}
@@ -1179,6 +1194,8 @@ export default function PayrollReportPage() {
             )}
           </table>
         </div>
+      )}
+      </>
       )}
     </div>
   );
