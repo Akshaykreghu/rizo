@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { EmployeeSearch } from '@/components/employees/EmployeeSearch';
@@ -59,7 +59,13 @@ export default function LeaveEncashmentPage() {
   const [filterItem, setFilterItem] = useState('');
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [overrides, setOverrides] = useState<Record<number, number>>({});
-  const [message, setMessage] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 4000);
+    return () => clearTimeout(t);
+  }, [toast]);
 
   const { data: branches = [] } = useSetupOptions('setup/branches', 'branch_code', (r) => String(r.branch_name));
   // Leave Type options depend on Employee: no employee selected -> every leave type (branch alone
@@ -98,8 +104,8 @@ export default function LeaveEncashmentPage() {
         if (!r.ok) throw new Error(b.error ?? 'Generate failed');
         return b;
       }),
-    onSuccess: (b) => { setMessage(b.procMessage || 'Generated'); invalidate(); },
-    onError: (err: Error) => setMessage(err.message),
+    onSuccess: (b) => { setToast({ message: b.procMessage || 'Generated successfully', type: 'success' }); invalidate(); },
+    onError: (err: Error) => setToast({ message: err.message, type: 'error' }),
   });
 
   const approveOne = useMutation({
@@ -113,8 +119,8 @@ export default function LeaveEncashmentPage() {
         if (!r.ok) throw new Error(b.error ?? 'Approve failed');
         return b;
       }),
-    onSuccess: (b) => { setMessage(b.procMessage ?? 'Encashed'); invalidate(); },
-    onError: (err: Error) => setMessage(err.message),
+    onSuccess: (b) => { setToast({ message: b.procMessage ?? 'Encashed successfully', type: 'success' }); invalidate(); },
+    onError: (err: Error) => setToast({ message: err.message, type: 'error' }),
   });
 
   const bulkApprove = useMutation({
@@ -129,7 +135,7 @@ export default function LeaveEncashmentPage() {
         }),
       }).then((r) => r.json()),
     onSuccess: (b) => {
-      setMessage(`Encashed ${b.succeeded.length} of ${selected.size}`);
+      setToast({ message: `Encashed successfully (${b.succeeded.length} of ${selected.size})`, type: 'success' });
       setSelected(new Set());
       invalidate();
     },
@@ -143,7 +149,7 @@ export default function LeaveEncashmentPage() {
         body: JSON.stringify({ ids: Array.from(selected) }),
       }).then((r) => r.json()),
     onSuccess: () => {
-      setMessage(`Cancelled ${selected.size} request(s)`);
+      setToast({ message: `Cancelled ${selected.size} request(s)`, type: 'success' });
       setSelected(new Set());
       invalidate();
     },
@@ -326,7 +332,6 @@ export default function LeaveEncashmentPage() {
             </button>
           </>
         )}
-        {message && <span className="text-[12.5px] text-slate-500">{message}</span>}
       </div>
 
       <div className="sticky top-0 z-20 glass-card-strong rounded-xl px-3 py-2 flex items-center mb-4">
@@ -349,6 +354,17 @@ export default function LeaveEncashmentPage() {
       </div>
 
       <DataTable data={rows} columns={columns} pageSize={10} pageSizeOptions={[10, 20, 30, 50]} isLoading={isLoading} />
+
+      {toast && (
+        <div
+          className={cn(
+            'fixed bottom-10 right-4 z-[60] min-w-[20rem] max-w-md px-5 py-3.5 rounded-xl shadow-lg text-sm font-medium text-white',
+            toast.type === 'success' ? 'bg-[color:var(--color-success)]' : 'bg-[color:var(--color-danger)]'
+          )}
+        >
+          {toast.message}
+        </div>
+      )}
     </div>
   );
 }

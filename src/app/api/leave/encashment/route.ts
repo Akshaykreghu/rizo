@@ -74,11 +74,13 @@ export async function GET(request: NextRequest) {
 
   // mysql2 returns DATE columns as JS Date objects, which JSON.stringify serializes with a
   // T00:00:00.000Z time/timezone component — approved_date is a date-only field, so strip that
-  // down to a plain YYYY-MM-DD string before it reaches the client.
-  const data = rows.map((r) => ({
-    ...r,
-    approved_date: r.approved_date != null ? toISODate(r.approved_date) : null,
-  }));
+  // down to a plain YYYY-MM-DD string before it reaches the client. A legacy `0000-00-00` row
+  // comes back as an Invalid Date; toISODate no longer throws on it, but still surface it as null
+  // (the UI already renders that as "—") rather than the ugly "Invalid Da" string fallback.
+  const data = rows.map((r) => {
+    const isValidDate = r.approved_date != null && !(r.approved_date instanceof Date && isNaN(r.approved_date.getTime()));
+    return { ...r, approved_date: isValidDate ? toISODate(r.approved_date) : null };
+  });
 
   return NextResponse.json({ data });
 }

@@ -9,8 +9,15 @@ import { evaluateArithmetic } from './salaryFormula';
 
 // mysql2 returns DATE columns as JS Date objects (no dateStrings config on the pool) — String(date)
 // gives a locale toString(), not ISO, which silently corrupts date-string comparisons/arithmetic.
+// A legacy `0000-00-00` (or otherwise invalid) DATE value comes back as an `Invalid Date`, whose
+// toISOString() throws RangeError rather than returning a string — confirmed against a live 500 on
+// the encashment "Encashed" tab caused by exactly this. Falls back to the raw stringified value
+// (sliced to 10 chars) rather than crashing the whole request over one bad legacy row.
 export function toISODate(value: unknown): string {
-  return value instanceof Date ? value.toISOString().slice(0, 10) : String(value).slice(0, 10);
+  if (value instanceof Date) {
+    return isNaN(value.getTime()) ? String(value).slice(0, 10) : value.toISOString().slice(0, 10);
+  }
+  return String(value).slice(0, 10);
 }
 
 export interface TerminationContext {
