@@ -13,9 +13,10 @@ import { useSession } from 'next-auth/react';
 //   Rizo's 4-stat leave-card breakdown isn't reconstructable from real data.
 // - No shift-override control on the day-detail popup — that's an admin/payroll concern
 //   (PUT /api/attendance/daily-shift doesn't exist here), so the popup is read-only.
-// - Authorizer/Approver are shown read-only (auto-resolved via /api/leave/authorizers from the
-//   real reporting hierarchy) rather than manual dropdowns, matching the same choice made for
-//   Requests/Approvals.
+// - Authorizer/Approver are searchable dropdowns backed by /api/leave/authorizers (which wraps
+//   leave_auth_apr_person_fn) — that function can return several eligible emp_pkeys as a comma
+//   list, matching legacy's addeditleave_new.ctp where Approve By is a select2-searchable dropdown
+//   (Authorize By a searchable typeahead) rather than a single fixed person.
 // - No inline "Pending Approvals" section — that's the dedicated Approvals page; duplicating it
 //   here would just be the same data in two places.
 
@@ -39,26 +40,6 @@ function fmtTime(t?: string | null) {
   if (!isNaN(dt.getTime())) return dt.toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true });
   return String(t);
 }
-function calcLeaveDays(from: string, fromHalf: number, to: string, toHalf: number) {
-  if (!from || !to) return 0;
-  let days = 0;
-  const cur = new Date(from + 'T00:00:00');
-  const end = new Date(to + 'T00:00:00');
-  while (cur <= end) {
-    const dow = cur.getDay();
-    if (dow !== 0 && dow !== 6) {
-      const ds = cur.toISOString().split('T')[0];
-      const isFirst = ds === from, isLast = ds === to;
-      if (isFirst && isLast) days += (fromHalf === 2 || toHalf === 1) ? 0.5 : 1;
-      else if (isFirst && fromHalf === 2) days += 0.5;
-      else if (isLast && toHalf === 1) days += 0.5;
-      else days += 1;
-    }
-    cur.setDate(cur.getDate() + 1);
-  }
-  return days;
-}
-
 const STATUS_CFG: Record<string, { label: string; color: string; bg: string }> = {
   P: { label: 'Present', color: '#16a34a', bg: '#f0fdf4' },
   A: { label: 'Absent', color: '#dc2626', bg: '#fef2f2' },
@@ -272,7 +253,13 @@ interface LeaveType { salaryHeadItemFkey: number; name: string; allowNegative: b
 
 function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: number; defaultTypeId?: number | null; onClose: () => void; onSaved: () => void }) {
   const [types, setTypes] = useState<LeaveType[]>([]);
-  const [approvers, setApprovers] = useState<{ authorizer: { name: string | null } | null; approver: { name: string | null } | null }>({ authorizer: null, approver: null });
+  interface PersonOption { empFkey: number; name: string }
+  const [authorizerOptions, setAuthorizerOptions] = useState<PersonOption[]>([]);
+  const [approverOptions, setApproverOptions] = useState<PersonOption[]>([]);
+  const [authorizerFkey, setAuthorizerFkey] = useState('');
+  const [approverFkey, setApproverFkey] = useState('');
+  const [authorizerQuery, setAuthorizerQuery] = useState('');
+  const [approverQuery, setApproverQuery] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [form, setForm] = useState({ leave_type_id: defaultTypeId ? String(defaultTypeId) : '', from_date: '', from_half: '1', to_date: '', to_half: '2', reason: '', contact_person: '', contact_no: '' });
@@ -281,10 +268,16 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
 
   useEffect(() => {
     fetch(`/api/leave/types?employee=${empId}`).then((r) => (r.ok ? r.json() : { data: [] })).then((d) => setTypes(d.data || []));
-    fetch(`/api/leave/authorizers?employee=${empId}`).then((r) => (r.ok ? r.json() : null)).then((d) => d && setApprovers(d));
+    fetch(`/api/leave/authorizers?employee=${empId}`).then((r) => (r.ok ? r.json() : null)).then((d) => {
+      if (!d) return;
+      setAuthorizerOptions(d.authorizers ?? []);
+      setApproverOptions(d.approvers ?? []);
+      // Auto-select when there's exactly one eligible candidate, matching legacy's own
+      // "count($arr_users2) == 1" auto-fill behaviour — otherwise the employee must pick.
+      if (d.authorizers?.length === 1) setAuthorizerFkey(String(d.authorizers[0].empFkey));
+      if (d.approvers?.length === 1) setApproverFkey(String(d.approvers[0].empFkey));
+    });
   }, [empId]);
-
-  const leaveDays = calcLeaveDays(form.from_date, Number(form.from_half), form.to_date, Number(form.to_half));
 
   // Ported from addeditleave_new.ctp's getLeaveBalance(): re-fetched whenever leave type or From
   // Date changes, so the balance shown reflects the date being applied for, before submitting.
@@ -313,8 +306,20 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    if (balancePreview && balancePreview.balance <= 0 && !balancePreview.allowNegative) {
+      setError('You have no leave balance available for this leave type');
+      return;
+    }
     if (balancePreview?.documentMandatory && !file) {
       setError('A supporting document is required for this leave type');
+      return;
+    }
+    if (!authorizerFkey) {
+      setError('Please select who should authorize this leave');
+      return;
+    }
+    if (!approverFkey) {
+      setError('Please select who should approve this leave');
       return;
     }
     setSaving(true);
@@ -339,6 +344,7 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
         body: JSON.stringify({
           salaryHeadItemFkey: Number(form.leave_type_id), fromDate: form.from_date, fromHalf: Number(form.from_half),
           toDate: form.to_date, toHalf: Number(form.to_half), reason: form.reason, contactNo: form.contact_no, contactPerson: form.contact_person,
+          authorizerFkey: Number(authorizerFkey), approverFkey: Number(approverFkey),
           fileName, fileType,
         }),
       });
@@ -386,7 +392,6 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
               );
             })}
           </div>
-          {leaveDays > 0 && <div style={{ marginBottom: 14, padding: '8px 14px', borderRadius: 8, background: `${BRAND}12`, border: `1px solid ${BRAND}33`, fontSize: 13, fontWeight: 700, color: BRAND }}>📅 {leaveDays} day{leaveDays !== 1 ? 's' : ''}</div>}
           {balancePreview && (
             <div style={{ marginBottom: 14, padding: '10px 14px', borderRadius: 8, background: 'var(--bg-page)', border: '1.5px solid var(--border)', fontSize: 12.5 }}>
               <div style={{ fontWeight: 800, color: 'var(--text-primary)' }}>Available Leave Balance: {balancePreview.balance}</div>
@@ -419,19 +424,91 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
               <input style={inp} value={form.contact_no} onChange={(e) => setForm((f) => ({ ...f, contact_no: e.target.value }))} />
             </div>
           </div>
-          <div style={{ display: 'flex', gap: 16, marginBottom: 14, fontSize: 12, color: 'var(--text-muted)' }}>
-            <span>Authorizer: <strong style={{ color: 'var(--text-primary)' }}>{approvers.authorizer?.name || 'Not configured'}</strong></span>
-            <span>Approver: <strong style={{ color: 'var(--text-primary)' }}>{approvers.approver?.name || 'Not configured'}</strong></span>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14, position: 'relative' }}>
+            <PersonPicker
+              label="Authorize By"
+              required
+              options={authorizerOptions}
+              value={authorizerFkey}
+              query={authorizerQuery}
+              onQueryChange={setAuthorizerQuery}
+              onSelect={setAuthorizerFkey}
+              inp={inp}
+              lbl={lbl}
+            />
+            <PersonPicker
+              label="Approve By"
+              required
+              options={approverOptions}
+              value={approverFkey}
+              query={approverQuery}
+              onQueryChange={setApproverQuery}
+              onSelect={setApproverFkey}
+              inp={inp}
+              lbl={lbl}
+            />
           </div>
           {error && <div style={{ marginBottom: 12, fontSize: 12, color: '#dc2626' }}>{error}</div>}
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
             <button type="button" onClick={onClose} style={{ padding: '8px 18px', borderRadius: 8, border: '1.5px solid var(--border)', background: 'var(--bg-page)', color: 'var(--text-muted)', fontWeight: 700, cursor: 'pointer', fontSize: 13 }}>Cancel</button>
-            <button type="submit" disabled={saving || !form.leave_type_id || !form.from_date || !form.to_date || !form.reason} style={{ padding: '8px 22px', borderRadius: 8, border: 'none', background: BRAND, color: '#fff', fontWeight: 800, cursor: 'pointer', fontSize: 13, opacity: saving ? 0.7 : 1 }}>
+            <button type="submit" disabled={saving || !form.leave_type_id || !form.from_date || !form.to_date || !form.reason || !authorizerFkey || !approverFkey || (!!balancePreview && balancePreview.balance <= 0 && !balancePreview.allowNegative)} style={{ padding: '8px 22px', borderRadius: 8, border: 'none', background: BRAND, color: '#fff', fontWeight: 800, cursor: 'pointer', fontSize: 13, opacity: saving ? 0.7 : 1 }}>
               {uploading ? 'Uploading…' : saving ? 'Submitting…' : 'Submit Leave'}
             </button>
           </div>
         </form>
       </div>
+    </div>
+  );
+}
+
+// Searchable dropdown for Authorize By / Approve By — mirrors legacy's select2-searching behaviour
+// (typing filters the candidate list returned by leave_auth_apr_person_fn) rather than a plain
+// <select>, since the candidate list can be long depending on the hierarchy configuration.
+function PersonPicker({
+  label, required, options, value, query, onQueryChange, onSelect, inp, lbl,
+}: {
+  label: string;
+  required?: boolean;
+  options: { empFkey: number; name: string }[];
+  value: string;
+  query: string;
+  onQueryChange: (q: string) => void;
+  onSelect: (empFkey: string) => void;
+  inp: React.CSSProperties;
+  lbl: React.CSSProperties;
+}) {
+  const [open, setOpen] = useState(false);
+  const selected = options.find((o) => String(o.empFkey) === value);
+  const filtered = query
+    ? options.filter((o) => o.name.toLowerCase().includes(query.toLowerCase()))
+    : options;
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <label style={lbl}>{label} {required && <span style={{ color: '#dc2626' }}>*</span>}</label>
+      <input
+        type="text"
+        style={inp}
+        placeholder="Search employee…"
+        value={open ? query : (selected?.name ?? '')}
+        onFocus={() => { onQueryChange(''); setOpen(true); }}
+        onChange={(e) => onQueryChange(e.target.value)}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+      />
+      {open && (
+        <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 4, background: 'var(--bg-card)', border: '1.5px solid var(--border)', borderRadius: 8, maxHeight: 200, overflowY: 'auto', zIndex: 20, boxShadow: '0 8px 24px rgba(0,0,0,0.15)' }}>
+          {filtered.length === 0 && <div style={{ padding: '8px 12px', fontSize: 12.5, color: 'var(--text-muted)' }}>No matches</div>}
+          {filtered.map((o) => (
+            <div
+              key={o.empFkey}
+              onMouseDown={() => { onSelect(String(o.empFkey)); setOpen(false); }}
+              style={{ padding: '8px 12px', fontSize: 12.5, cursor: 'pointer', background: String(o.empFkey) === value ? `${BRAND}12` : 'transparent', color: 'var(--text-primary)' }}
+            >
+              {o.name}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

@@ -81,21 +81,30 @@ export async function getLeaveBalance(
 }
 
 // Wraps leave_auth_apr_person_fn (confirmed live: pcompany_code, plogin_emp_fkey, paction -> varchar
-// emp_pkey, or a comma-list per legacy's convention — surfaced as-is, single value in observed data).
+// emp_pkey, OR a comma-joined list of eligible emp_pkeys — confirmed live, e.g. apr='67,2' for one
+// employee — matching legacy's own `emp_pkey IN ($emp_ids)` convention in getusers()/addeditleave_new.
+// A single scalar (Number(...)) silently breaks (NaN) whenever more than one candidate is eligible,
+// so this returns every candidate id; callers pick one, same as legacy's searchable Approve By dropdown.
+function parseEmpIdList(raw: unknown): number[] {
+  if (raw == null) return [];
+  return String(raw)
+    .split(',')
+    .map((s) => Number(s.trim()))
+    .filter((n) => Number.isFinite(n) && n > 0);
+}
+
 export async function getAuthorizerApprover(
   pool: Pool,
   companyCode: string,
   empFkey: number
-): Promise<{ authorizerFkey: number | null; approverFkey: number | null }> {
+): Promise<{ authorizerIds: number[]; approverIds: number[] }> {
   const [[row]] = await pool.query<RowDataPacket[]>(
     `SELECT leave_auth_apr_person_fn(?, ?, 'auth') AS auth_id, leave_auth_apr_person_fn(?, ?, 'apr') AS apr_id`,
     [companyCode, empFkey, companyCode, empFkey]
   );
-  const authId = Number(row?.auth_id);
-  const aprId = Number(row?.apr_id);
   return {
-    authorizerFkey: Number.isFinite(authId) && authId > 0 ? authId : null,
-    approverFkey: Number.isFinite(aprId) && aprId > 0 ? aprId : null,
+    authorizerIds: parseEmpIdList(row?.auth_id),
+    approverIds: parseEmpIdList(row?.apr_id),
   };
 }
 

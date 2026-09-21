@@ -66,7 +66,9 @@ export async function POST(request: NextRequest) {
   }
 
   const pool = await getCompanyPool(session.user.companyCode);
-  const { authorizerFkey, approverFkey } = await getAuthorizerApprover(pool, session.user.companyCode, empFkey);
+  const { authorizerIds, approverIds } = await getAuthorizerApprover(pool, session.user.companyCode, empFkey);
+  const authorizerFkey = authorizerIds[0] ?? null;
+  const approverFkey = approverIds[0] ?? null;
 
   const [result] = await pool.execute<ResultSetHeader>(
     `INSERT INTO emp_expense
