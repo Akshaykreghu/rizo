@@ -271,7 +271,7 @@ function RegularizationTab() {
   return (
     <div>
       <div style={{ display: 'flex', gap: 8, marginBottom: 12, alignItems: 'center' }}>
-        <button style={btnP} onClick={() => setShowForm((v) => !v)}>{showForm ? '✕ Cancel' : '+ Raise Request'}</button>
+        {!showForm && <button style={btnP} onClick={() => setShowForm(true)}>+ Raise Request</button>}
         {message && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{message}</span>}
       </div>
 
@@ -298,7 +298,10 @@ function RegularizationTab() {
               <input value={form.remarks} onChange={(e) => setForm((f) => ({ ...f, remarks: e.target.value }))} style={inp} />
             </div>
           </div>
-          <button type="submit" style={btnP} disabled={saving || !form.attDate || !form.logTime}>{saving ? 'Submitting…' : 'Submit'}</button>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button type="submit" style={btnP} disabled={saving || !form.attDate || !form.logTime}>{saving ? 'Submitting…' : 'Submit'}</button>
+            <button type="button" style={btnO} onClick={() => setShowForm(false)}>✕ Cancel</button>
+          </div>
         </form>
       )}
 
