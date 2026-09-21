@@ -13,9 +13,7 @@ import { NextRequest, NextResponse } from 'next/server';
 
 export async function POST(request: NextRequest) {
   const session = await getServerSession(authOptions);
-  if (!session || session.user.userGroup !== 1) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const body = await request.json();
   const { ids, decision, remarks } = body as { ids: number[]; decision: 'approve' | 'reject'; remarks?: string };
@@ -27,7 +25,20 @@ export async function POST(request: NextRequest) {
   const succeeded: number[] = [];
   const failed: { id: number; reason: string }[] = [];
 
+  // Same hierarchy-ownership gate as the single-row decide route: a userGroup 2 approver may only
+  // act on requests where employee_regularaization.approved_person is their own emp_pkey.
   for (const id of ids) {
+    if (session.user.userGroup !== 1) {
+      const [[reg]] = await pool.execute<import('mysql2').RowDataPacket[]>(
+        'SELECT approved_person FROM employee_regularaization WHERE id = ?',
+        [id]
+      );
+      if (!reg) { failed.push({ id, reason: 'Regularisation request not found' }); continue; }
+      if (String(reg.approved_person ?? '') !== String(session.user.empFkey ?? '')) {
+        failed.push({ id, reason: 'Forbidden' });
+        continue;
+      }
+    }
     const result = await decideRegularisation(pool, id, decision, remarks, session.user.loginUserId);
     if (result.ok) succeeded.push(id);
     else failed.push({ id, reason: result.error ?? 'Failed' });
