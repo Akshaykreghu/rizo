@@ -17,6 +17,19 @@ jobs:
             set -e
             cd ~/rizo-app
             git pull
+            # `npm ci` is supposed to always start from a clean `node_modules`, but a build that
+            # got killed mid-install (e.g. the previous run's stuck-build/OOM situation) can leave
+            # file locks or partial writes behind that `npm ci` doesn't fully clear, resulting in a
+            # `next` install missing files it should have (seen as "Cannot find module .../next/
+            # dist/compiled/jest-worker/processChild.js" and other ENOENTs under node_modules/next
+            # during build). Removing node_modules outright guarantees every install starts fresh.
+            rm -rf node_modules
             npm ci
+            # A prior deploy that didn't exit cleanly (e.g. this job getting cancelled or the
+            # runner dying mid-build) can leave Next's build lock behind, which then makes every
+            # subsequent `next build` refuse to start with "Another next build process is already
+            # running" even though nothing is actually running anymore. Clear it defensively before
+            # building so a stuck lock can't block deploys indefinitely.
+            rm -f .next/lock
             npm run build
             pm2 restart rizo
