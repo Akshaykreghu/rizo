@@ -8,7 +8,8 @@ import { Download, Eye, Loader2, Calendar } from 'lucide-react';
 import { CriteriaFilterPanel } from '@/components/reports/CriteriaFilterPanel';
 import {
   exportReportToExcel, exportReportToPdf, exportSalarySlipsToExcel, exportSalarySlipsToPdf,
-  exportGroupedReportToExcel, exportGroupedReportToPdf, type ReportColumn, type SalarySlipCompanyInfo,
+  exportGroupedReportToExcel, exportGroupedReportToPdf, exportMonthlyCtcToExcel,
+  type ReportColumn, type SalarySlipCompanyInfo,
 } from '@/lib/reportExport';
 import { cn, formatCurrency } from '@/lib/utils';
 import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
@@ -124,6 +125,73 @@ function SalarySlipCard({ slip }: { slip: SalarySlip }) {
           <tr>
             <td className="px-4 py-2 text-[#0F172A]" colSpan={3}>Net Pay</td>
             <td className="px-4 py-2 text-right text-[#0F172A]">{formatCurrency(slip.net_pay)}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  );
+}
+
+interface MonthlyCtcItem { label: string; amount: number; headType: string | null }
+interface MonthlyCtcCard {
+  emp_fkey: number;
+  emp_name: string;
+  employee_id: string | null;
+  branch_name: string | null;
+  departments: string | null;
+  desig: string | null;
+  items: MonthlyCtcItem[];
+  grand_total: number;
+}
+
+// Legacy's View rounds each item by head_type (monthlyctc.ctp:111-113): 'fixed'/'manually'/'limit'
+// round to 2dp and take the absolute value; everything else rounds to the nearest rupee. The Grand
+// Total is always the plain rounded sum of the raw (unrounded) amounts, not a sum of these displayed
+// per-item values.
+function monthlyCtcItemAmount(item: MonthlyCtcItem): number {
+  if (item.headType === 'fixed' || item.headType === 'manually' || item.headType === 'limit') {
+    return Math.round(Math.abs(item.amount) * 100) / 100;
+  }
+  return Math.round(item.amount);
+}
+
+// Mirrors legacy's per-employee card (monthlyctc.ctp:57-136) — a legend block, then a Salary
+// Components/Amount mini-table, then a Grand Total row. Not a table row like every other report on
+// this screen, same shape as Salary Slip's own card.
+function MonthlyCtcCardView({ card }: { card: MonthlyCtcCard }) {
+  return (
+    <div className="surface-card rounded-2xl overflow-hidden">
+      <div className="bg-slate-50 border-b border-slate-200 px-4 py-2.5">
+        <h3 className="text-[13.5px] font-semibold text-[#0F172A]">{card.emp_name}</h3>
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-1.5 px-4 py-3 text-[12.5px] border-b border-slate-100">
+        <div><span className="text-slate-500">EMP ID:</span> {card.employee_id || '—'}</div>
+        <div><span className="text-slate-500">Branch:</span> {card.branch_name || '—'}</div>
+        <div><span className="text-slate-500">Designation:</span> {card.desig || '—'}</div>
+        <div><span className="text-slate-500">Department:</span> {card.departments || '—'}</div>
+      </div>
+      <table className="w-full text-[13px]">
+        <thead className="bg-slate-100">
+          <tr>
+            <th className="text-left px-4 py-2 text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Salary</th>
+            <th className="text-right px-4 py-2 text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Amount</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {card.items.length === 0 && (
+            <tr><td colSpan={2} className="px-4 py-4 text-center text-slate-400">No employees found under this data</td></tr>
+          )}
+          {card.items.map((item, i) => (
+            <tr key={i}>
+              <td className="px-4 py-1.5 text-[#0F172A]">{item.label}</td>
+              <td className="px-4 py-1.5 text-right text-[#0F172A]">{formatCurrency(monthlyCtcItemAmount(item))}</td>
+            </tr>
+          ))}
+        </tbody>
+        <tfoot className="bg-slate-50 font-medium">
+          <tr>
+            <td className="px-4 py-2 text-[#0F172A]">Grand Total</td>
+            <td className="px-4 py-2 text-right text-[#0F172A]">{formatCurrency(card.grand_total)}</td>
           </tr>
         </tfoot>
       </table>
@@ -408,13 +476,11 @@ const SUBTYPE_META: Record<Subtype, SubtypeMeta> = {
     ],
   },
   MonthlyCTCReport: {
+    // Legacy's real UI is a per-employee card layout (see MonthlyCtcCardView/isMonthlyCtc in the
+    // page component), not this screen's usual flat grid — columns stays empty; it's unused, this
+    // report is rendered/exported through its own dedicated path.
     label: 'Monthly CTC',
-    groupBy: (r) => String(r.branch_name ?? ''),
-    columns: [
-      { key: 'employee_id', label: 'Employee ID' }, { key: 'emp_name', label: 'Employee' }, { key: 'branch_name', label: 'Branch' },
-      { key: 'departments', label: 'Department' }, { key: 'desig', label: 'Designation' },
-      { key: 'salary_head', label: 'Salary Head' }, { key: 'salary_amount', label: 'Amount' },
-    ],
+    columns: [],
   },
   PayrollCTC: {
     label: 'Payroll CTC Report',
@@ -707,6 +773,7 @@ export default function PayrollReportPage() {
   const [includeNegative, setIncludeNegative] = useState(false);
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
   const [slips, setSlips] = useState<SalarySlip[]>([]);
+  const [ctcCards, setCtcCards] = useState<MonthlyCtcCard[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   // Legacy's "Banks" criteria under BankTranfer switches the whole report into the narrower "Bank
@@ -715,6 +782,11 @@ export default function PayrollReportPage() {
   const isBankStatementMode = subtype === 'BankTranfer' && !!criteria.Banks?.length;
   const meta = isBankStatementMode ? BANK_STATEMENT_META : SUBTYPE_META[subtype];
   const isSlip = subtype === 'Salaryslip';
+  const isMonthlyCtc = subtype === 'MonthlyCTCReport';
+  // Units criteria draws a "Branch Name:" legend before each branch's first card, matching legacy's
+  // needBranchWiseReport flag (monthlyctc.ctp:38-43, identically in its Excel branch) — flat,
+  // sequential cards otherwise.
+  const monthlyCtcGroupByBranch = !!criteria.Units?.length;
   // Company letterhead for the Salary Slip PDF header (mirrors legacy's salaryslip_not_exempted.ctp
   // header block) — only fetched when actually needed.
   const { data: companyInfo } = useQuery<SalarySlipCompanyInfo>({
@@ -771,9 +843,9 @@ export default function PayrollReportPage() {
   // legacy's checkboxes only affect the report data itself for these subtypes; other subtypes render
   // the shared employee-picker's own resigned toggle (via EmployeeChecklist) but nothing report-level.
   // BankTranfer's Banks criteria hides both (legacy: loadcriteriaitems.ctp:88, `criteria !== 'Banks'`).
-  const hasResignedFilter = subtype === 'SummaryPayroll' || subtype === 'salary' || subtype === 'Grosssalary' || subtype === 'GrosssalaryNew' || subtype === 'GrosssalarySummary' || subtype === 'GrossPeriod' || subtype === 'Comparison'
+  const hasResignedFilter = subtype === 'SummaryPayroll' || subtype === 'salary' || subtype === 'Grosssalary' || subtype === 'GrosssalaryNew' || subtype === 'GrosssalarySummary' || subtype === 'GrossPeriod' || subtype === 'Comparison' || subtype === 'MonthlyCTCReport'
     || (subtype === 'BankTranfer' && !isBankStatementMode);
-  const hasNegativeFilter = subtype === 'SummaryPayroll' || subtype === 'Grosssalary' || subtype === 'GrosssalaryNew' || subtype === 'GrosssalarySummary' || subtype === 'GrossPeriod' || subtype === 'Comparison'
+  const hasNegativeFilter = subtype === 'SummaryPayroll' || subtype === 'Grosssalary' || subtype === 'GrosssalaryNew' || subtype === 'GrosssalarySummary' || subtype === 'GrossPeriod' || subtype === 'Comparison' || subtype === 'MonthlyCTCReport'
     || (subtype === 'BankTranfer' && !isBankStatementMode);
   // These subtypes' Excel filename/title mirror legacy's PHPExcel output exactly — every other
   // subtype keeps the existing generic pattern.
@@ -829,7 +901,12 @@ export default function PayrollReportPage() {
 
   const generate = useMutation({
     mutationFn: fetchReportRows,
-    onSuccess: (r) => { isSlip ? setSlips(r as unknown as SalarySlip[]) : setRows(r); setError(null); },
+    onSuccess: (r) => {
+      if (isSlip) setSlips(r as unknown as SalarySlip[]);
+      else if (isMonthlyCtc) setCtcCards(r as unknown as MonthlyCtcCard[]);
+      else setRows(r);
+      setError(null);
+    },
     onError: (err: Error) => setError(err.message),
   });
 
@@ -840,6 +917,14 @@ export default function PayrollReportPage() {
         const slipData = r as unknown as SalarySlip[];
         if (kind === 'excel') exportSalarySlipsToExcel(slipData, session?.user?.companyCode ?? '', monthLabel(monthYear), `salary_slip_${monthYear}`);
         else exportSalarySlipsToPdf(slipData, monthLabel(monthYear), `salary_slip_${monthYear}`, companyInfo, session?.user?.name ?? undefined);
+        return;
+      }
+      if (isMonthlyCtc) {
+        // No PDF for this subtype — legacy hides the button too (showreport.ctp:403 exclusion list).
+        exportMonthlyCtcToExcel(
+          r as unknown as MonthlyCtcCard[], monthlyCtcGroupByBranch, monthLabel(monthYear),
+          `${session?.user?.companyCode ?? ''}_Monthly CTC ${monthYear}`, session?.user?.name ?? ''
+        );
         return;
       }
       const { rows: expRows, columns: itemCols } = flattenItemColumns(r, meta.itemPivot);
@@ -896,7 +981,7 @@ export default function PayrollReportPage() {
 
   // Any filter change invalidates the currently displayed View results — without this, changing the
   // month/criteria/checkboxes after a successful View would leave the previous run's rows on screen.
-  const resetResults = () => { setRows([]); setSlips([]); setError(null); generate.reset(); };
+  const resetResults = () => { setRows([]); setSlips([]); setCtcCards([]); setError(null); generate.reset(); };
 
   return (
     <div>
@@ -986,7 +1071,27 @@ export default function PayrollReportPage() {
         <h2 className="text-[13px] font-semibold text-[#0F172A] mb-2">Report Results</h2>
       )}
 
-      {isSlip ? (
+      {isMonthlyCtc ? (
+        <div className="space-y-4">
+          {ctcCards.length === 0 && (
+            <div className="surface-card rounded-xl px-4 py-8 text-center text-[12.5px] text-slate-400">
+              {generate.isPending
+                ? 'Loading...'
+                : generate.isSuccess
+                  ? 'No records found for the selected criteria.'
+                  : 'Choose at least one criteria value and click Generate.'}
+            </div>
+          )}
+          {monthlyCtcGroupByBranch
+            ? groupRows(ctcCards as unknown as Record<string, unknown>[], (r) => String(r.branch_name ?? '')).map((group) => (
+                <div key={group.key} className="space-y-4">
+                  <h3 className="text-[13px] font-semibold text-[#0F172A]">{group.key}</h3>
+                  {(group.rows as unknown as MonthlyCtcCard[]).map((card) => <MonthlyCtcCardView key={card.emp_fkey} card={card} />)}
+                </div>
+              ))
+            : ctcCards.map((card) => <MonthlyCtcCardView key={card.emp_fkey} card={card} />)}
+        </div>
+      ) : isSlip ? (
         <div className="space-y-4">
           {slips.length === 0 && (
             <div className="surface-card rounded-xl px-4 py-8 text-center text-[12.5px] text-slate-400">

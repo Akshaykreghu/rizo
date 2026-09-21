@@ -567,3 +567,108 @@ export function exportSalarySlipsToExcel(slips: SalarySlipExportData[], companyC
     URL.revokeObjectURL(url);
   });
 }
+
+// Monthly CTC Detailed Report is also a per-employee card layout in legacy (monthlyctc.ctp +
+// its own Excel branch, SalaryReportsController.php:13152-13369) — a "Branch Name:" legend (Units
+// criteria only, when the branch changes), an "Employee Name:" row, an EMP ID/Branch/Designation/
+// Department row, a Salary Components/Amount mini-table (Addition items only), and a Grand Total row.
+export interface MonthlyCtcExportItem { label: string; amount: number; headType: string | null }
+export interface MonthlyCtcExportCard {
+  emp_name: string;
+  employee_id: string | null;
+  branch_name: string | null;
+  departments: string | null;
+  desig: string | null;
+  items: MonthlyCtcExportItem[];
+  grand_total: number;
+}
+
+// Legacy's Excel rounding differs from its own View (SalaryReportsController.php:13307-13311):
+// 'fixed'/'manually'/'limit' head types are shown RAW here (no rounding, no abs) — only every other
+// head type rounds to the nearest rupee. Not a typo to "fix" — a genuine View-vs-Excel divergence.
+function monthlyCtcExcelItemAmount(item: MonthlyCtcExportItem): number {
+  if (item.headType === 'fixed' || item.headType === 'manually' || item.headType === 'limit') return item.amount;
+  return Math.round(item.amount);
+}
+
+export function exportMonthlyCtcToExcel(
+  cards: MonthlyCtcExportCard[], groupByBranch: boolean, monthLabel: string, filename: string, runBy: string
+) {
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet('Monthly CTC');
+  sheet.columns = [{ width: 28 }, { width: 24 }, { width: 24 }, { width: 24 }];
+
+  sheet.mergeCells('A1:D1');
+  sheet.getCell('A1').value = `Monthly CTC - ${monthLabel}`;
+  sheet.getCell('A1').font = { bold: true, size: 16 };
+  sheet.getCell('A1').alignment = { horizontal: 'center' };
+
+  sheet.mergeCells('A2:D2');
+  sheet.getCell('A2').value = `(Report Run by ${runBy} at ${new Date().toLocaleString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }).replace(',', '')})`;
+  sheet.getCell('A2').font = { bold: true, size: 13 };
+  sheet.getCell('A2').alignment = { horizontal: 'center' };
+
+  let rowNum = 2;
+  if (cards.length === 0) {
+    rowNum = 3;
+    sheet.mergeCells(`A${rowNum}:F${rowNum}`);
+    const cell = sheet.getCell(`A${rowNum}`);
+    cell.value = 'There is no data found under this criteria';
+    cell.font = { bold: true, size: 12 };
+    cell.alignment = { horizontal: 'center' };
+  }
+
+  const bold = (cell: ExcelJS.Cell) => { cell.font = { bold: true }; };
+  let lastBranchName = '';
+  for (const card of cards) {
+    if (groupByBranch && card.branch_name !== lastBranchName) {
+      rowNum++;
+      sheet.mergeCells(rowNum, 1, rowNum, 4);
+      bold(Object.assign(sheet.getCell(rowNum, 1), { value: `Branch Name: ${card.branch_name ?? ''}` }));
+      lastBranchName = card.branch_name ?? '';
+    }
+
+    rowNum++;
+    sheet.mergeCells(rowNum, 1, rowNum, 4);
+    const nameCell = sheet.getCell(rowNum, 1);
+    nameCell.value = `Employee Name: ${card.emp_name}`;
+    nameCell.font = { bold: true };
+    nameCell.alignment = { horizontal: 'center' };
+
+    rowNum++;
+    bold(Object.assign(sheet.getCell(rowNum, 1), { value: `EMP ID : ${card.employee_id ?? ''}` }));
+    bold(Object.assign(sheet.getCell(rowNum, 2), { value: `  Branch : ${card.branch_name ?? ''}` }));
+    bold(Object.assign(sheet.getCell(rowNum, 3), { value: `  Designation : ${card.desig ?? ''}` }));
+    bold(Object.assign(sheet.getCell(rowNum, 4), { value: `  Department : ${card.departments ?? ''}` }));
+
+    rowNum++;
+    sheet.mergeCells(rowNum, 1, rowNum, 3);
+    bold(Object.assign(sheet.getCell(rowNum, 1), { value: 'Salary Components ' }));
+    bold(Object.assign(sheet.getCell(rowNum, 4), { value: 'Amount ' }));
+
+    rowNum++;
+    if (card.items.length === 0) {
+      sheet.getCell(rowNum, 1).value = 'No employees found under this data';
+      continue;
+    }
+    for (const item of card.items) {
+      sheet.mergeCells(rowNum, 1, rowNum, 3);
+      sheet.getCell(rowNum, 1).value = item.label;
+      sheet.getCell(rowNum, 4).value = monthlyCtcExcelItemAmount(item);
+      rowNum++;
+    }
+    sheet.mergeCells(rowNum, 1, rowNum, 3);
+    bold(Object.assign(sheet.getCell(rowNum, 1), { value: 'Grand Total' }));
+    bold(Object.assign(sheet.getCell(rowNum, 4), { value: card.grand_total }));
+  }
+
+  workbook.xlsx.writeBuffer().then((buffer) => {
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${filename}.xlsx`;
+    a.click();
+    URL.revokeObjectURL(url);
+  });
+}

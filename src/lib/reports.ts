@@ -369,8 +369,8 @@ export interface PayrollReportParams {
   monthYear: string; // 'YYYY-MM' — used by all subtypes except GrossPeriod
   toMonthYear?: string; // 'YYYY-MM' — GrossPeriod only, range end (monthYear is the range start)
   criteria: CriteriaSelections;
-  includeResigned?: boolean; // SummaryPayroll/salary/Grosssalary/BankTranfer/GrosssalaryNew/GrosssalarySummary/GrossPeriod/Comparison — "Include Resigned" checkbox
-  includeNegative?: boolean; // SummaryPayroll/Grosssalary/BankTranfer/GrosssalaryNew/GrosssalarySummary/GrossPeriod/Comparison — "Include Negative Salary" checkbox
+  includeResigned?: boolean; // SummaryPayroll/salary/Grosssalary/BankTranfer/GrosssalaryNew/GrosssalarySummary/GrossPeriod/Comparison/MonthlyCTCReport — "Include Resigned" checkbox
+  includeNegative?: boolean; // SummaryPayroll/Grosssalary/BankTranfer/GrosssalaryNew/GrosssalarySummary/GrossPeriod/Comparison/MonthlyCTCReport — "Include Negative Salary" checkbox
 }
 
 function prevMonth(monthYear: string): string {
@@ -1323,25 +1323,60 @@ export async function generatePayrollReport(pool: Pool, params: PayrollReportPar
   }
 
   if (params.subtype === 'MonthlyCTCReport') {
-    // Mirrors generateEmpMonthlyCTCReport() — per-employee, per-salary-head-item detail (a long
-    // format breakdown, not a pivoted summary), sourced from emp_salary_slip.
+    // Mirrors generateEmpMonthlyCTCReport() (SalaryReportsController.php:12948-13369). Unlike every
+    // other report on this screen, legacy's real UI here (monthlyctc.ctp + its own Excel branch) is
+    // a per-employee CARD layout — a legend block (Name/EMP ID/Branch/Designation/Department), a
+    // "Salary Components / Amount" mini-table of Addition-only items, and a per-employee Grand
+    // Total — not a flat pivoted table, matching the Salary Slip report's shape rather than this
+    // screen's usual SUBTYPE_META-driven grid (see MonthlyCtcCard in page.tsx). Also legacy-specific
+    // to this report: only Addition-side items are shown at all (this is a CTC report — no
+    // deductions), zero-amount items are skipped, and no item_part='Direct' filter is applied
+    // (every other report on this screen filters to Direct — this one genuinely doesn't).
+    const statusCondition = params.includeResigned ? 'ed.status IN (1,2)' : 'ed.status = 1';
+    const negativeCondition = params.includeNegative ? '' : ' AND pm.net_salary >= 0';
     const { conditions, args } = buildCriteriaConditions(params.criteria, {
       Units: 'pm.branch_code', EmployeeDetails: 'pm.emp_fkey',
     });
     const [rows] = await pool.execute<RowDataPacket[]>(
-      `SELECT pm.emp_fkey, pm.emp_name, ep.emp_company_id AS employee_id, pm.branch_name,
-              pm.departments, pm.desig, pm.month_year,
-              shi.item AS salary_head, ess.salary_amount
-       FROM emp_salary_slip ess
-       JOIN payroll_master pm ON pm.payroll_master_pkey = ess.payroll_master_fkey
-       JOIN salary_head_items shi ON shi.salary_head_item_pkey = ess.salary_head_item_fkey
+      `SELECT pm.payroll_master_pkey, pm.emp_fkey,
+              CASE WHEN ed.status = 2 THEN CONCAT(ed.first_name, ' ', ed.last_name, ' (Resigned)')
+                   ELSE CONCAT(ed.first_name, ' ', ed.last_name) END AS emp_name,
+              ep.emp_company_id AS employee_id, pm.branch_name, pm.departments, pm.desig
+       FROM payroll_master pm
+       JOIN emp_details ed ON ed.emp_pkey = pm.emp_fkey
        LEFT JOIN emp_proff ep ON ep.emp_fkey = pm.emp_fkey
-       WHERE ess.month_year = ? AND ess.end_date_effective IS NULL
-         AND pm.action IN ('Approved','Processed') AND ${conditions.join(' AND ')}
-       ORDER BY pm.emp_name, shi.salary_head_item_order1`,
+       WHERE pm.month_year = ? AND pm.action IN ('Approved','Processed') AND ${statusCondition}${negativeCondition}
+         AND EXISTS (SELECT 1 FROM emp_salary_slip ess WHERE ess.payroll_master_fkey = pm.payroll_master_pkey
+                       AND ess.head_operator = 'Addition' AND ess.salary_amount <> 0 AND ess.end_date_effective IS NULL)
+         AND ${conditions.join(' AND ')}
+       ORDER BY pm.branch_name, emp_name`,
       [params.monthYear, ...args]
     );
-    return rows;
+
+    const pkeys = rows.map((r) => r.payroll_master_pkey);
+    const itemsMap = new Map<number, { label: string; amount: number; headType: string | null }[]>();
+    if (pkeys.length > 0) {
+      const [itemRows] = await pool.query<RowDataPacket[]>(
+        `SELECT ess.payroll_master_fkey, TRIM(ess.salary_head_item_desc) AS label, ess.salary_amount, ess.head_type
+         FROM emp_salary_slip ess
+         LEFT JOIN salary_head_items shi ON shi.salary_head_item_pkey = ess.salary_head_item_fkey
+         WHERE ess.payroll_master_fkey IN (?) AND ess.head_operator = 'Addition' AND ess.salary_amount <> 0
+           AND ess.end_date_effective IS NULL
+         ORDER BY shi.salary_head_item_order1`,
+        [pkeys]
+      );
+      for (const r of itemRows as RowDataPacket[]) {
+        const list = itemsMap.get(r.payroll_master_fkey) ?? [];
+        list.push({ label: String(r.label), amount: Number(r.salary_amount), headType: r.head_type ? String(r.head_type).toLowerCase() : null });
+        itemsMap.set(r.payroll_master_fkey, list);
+      }
+    }
+
+    return rows.map((row) => {
+      const items = itemsMap.get(row.payroll_master_pkey) ?? [];
+      const grandTotal = Math.round(items.reduce((s, i) => s + i.amount, 0));
+      return { ...row, items, grand_total: grandTotal };
+    });
   }
 
   if (params.subtype === 'PayrollCTC') {
