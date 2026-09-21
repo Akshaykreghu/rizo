@@ -86,6 +86,7 @@ export const navItems: NavItem[] = [
       { label: 'Leave Balances', href: '/leave/balances', description: 'View and adjust employee leave balances.' },
       { label: 'Leave Encashment', href: '/leave/encashment', description: 'Process encashment of unused leave days.' },
       { label: 'Bulk Leave Upload', href: '/leave/bulk-upload', description: 'Upload leave records for multiple employees at once.' },
+      { label: 'Leave Balance Upload', href: '/leave/balance-upload', description: 'Correct or set an employee\'s leave balance directly.' },
     ],
     adminOnly: true,
   },
