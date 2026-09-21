@@ -18,10 +18,15 @@ export async function GET(request: NextRequest) {
   const rows = Number(searchParams.get('rows') ?? '10');
   const employee = searchParams.get('employee') ?? '';
   const branch = searchParams.get('branch') ?? '';
+  const month = searchParams.get('month') ?? '';
   const offset = (Math.max(page, 1) - 1) * rows;
 
   const pool = await getCompanyPool(session.user.companyCode);
 
+  // month is not part of legacy's own listleavebalance() — it reads $arr_request_data['month']
+  // but never adds it to $conditions, a dead parameter in the original (same read-but-unused
+  // pattern seen elsewhere in this controller). Added here as a genuine filter on created_date
+  // (the upload's timestamp), since there's no other date field on this table to filter by.
   const conditions = ['lbu.status IN (0, 1)'];
   const values: (string | number)[] = [];
   if (employee) {
@@ -31,6 +36,10 @@ export async function GET(request: NextRequest) {
   if (branch) {
     conditions.push('ed.branch_code = ?');
     values.push(branch);
+  }
+  if (month) {
+    conditions.push("DATE_FORMAT(lbu.created_date, '%Y-%m') = ?");
+    values.push(month);
   }
   const whereClause = conditions.join(' AND ');
 

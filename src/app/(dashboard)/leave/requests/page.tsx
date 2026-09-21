@@ -43,12 +43,14 @@ const STATUS_STYLE: Record<string, string> = {
   CancelledByAdmin: 'bg-slate-100 text-slate-600',
   CancellationOfAuthorized: 'bg-[color:var(--color-accent-soft)] text-[color:var(--color-accent-dark)]',
   CancellationOfApproved: 'bg-[color:var(--color-accent-soft)] text-[color:var(--color-accent-dark)]',
+  'Can not Apply 0 days': 'bg-[color:var(--color-danger-soft)] text-[color:var(--color-danger-dark)]',
 };
 
 const STATUS_LABEL: Record<string, string> = {
   CancellationOfAuthorized: 'Cancellation of Authorized',
   CancellationOfApproved: 'Cancellation of Approved',
   CancelledByAdmin: 'Cancelled by Admin',
+  'Can not Apply 0 days': 'Rejected — No Leave Days Available',
 };
 
 const INPUT_CLASS =

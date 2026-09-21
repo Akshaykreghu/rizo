@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Download, Upload, Plus, X } from 'lucide-react';
@@ -19,6 +19,11 @@ const INPUT_CLASS =
   'border border-slate-200 bg-white rounded-[9px] px-2.5 py-1.5 text-[12.5px] text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/25 focus:border-[color:var(--color-primary)] transition-colors';
 
 interface UploadResult { imported: number; errors: { row: number; message: string }[] }
+
+function currentMonth(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+}
 
 interface LeaveType { salaryHeadItemFkey: number; name: string }
 
@@ -42,6 +47,10 @@ export default function LeaveBalanceUploadPage() {
 
   const [branch, setBranch] = useState('');
   const [employee, setEmployee] = useState('');
+  // Starts empty so server and first client render match exactly, then fills in the current
+  // month client-side (avoids a hydration mismatch from computing "now" during render).
+  const [month, setMonth] = useState('');
+  useEffect(() => { setMonth(currentMonth()); }, []);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [showAdd, setShowAdd] = useState(false);
@@ -52,9 +61,9 @@ export default function LeaveBalanceUploadPage() {
   const templateHref = `/api/leave/balance-upload/template?branch=${encodeURIComponent(branch)}&employee=${encodeURIComponent(employee)}`;
 
   const { data, isLoading } = useQuery<{ data: LeaveBalanceUploadRow[]; total: number }>({
-    queryKey: ['leave', 'balance-upload', 'list', employee, branch, page, pageSize],
+    queryKey: ['leave', 'balance-upload', 'list', employee, branch, month, page, pageSize],
     queryFn: () =>
-      fetch(`/api/leave/balance-upload/list?rows=${pageSize}&page=${page}&employee=${employee}&branch=${branch}`).then((r) => r.json()),
+      fetch(`/api/leave/balance-upload/list?rows=${pageSize}&page=${page}&employee=${employee}&branch=${branch}&month=${month}`).then((r) => r.json()),
   });
   const rows = data?.data ?? [];
 
@@ -64,6 +73,13 @@ export default function LeaveBalanceUploadPage() {
     enabled: !!form.empFkey,
   });
   const leaveTypes = leaveTypesData?.data ?? [];
+
+  const { data: currentBalance } = useQuery<{ balance: number }>({
+    queryKey: ['leave', 'balance-upload', 'current', form.empFkey, form.salaryHeadItemFkey],
+    queryFn: () =>
+      fetch(`/api/leave/balance-upload/current?employee=${form.empFkey}&leaveType=${form.salaryHeadItemFkey}`).then((r) => r.json()),
+    enabled: !!form.empFkey && !!form.salaryHeadItemFkey,
+  });
 
   const upload = useMutation({
     mutationFn: (file: File) => {
@@ -159,6 +175,10 @@ export default function LeaveBalanceUploadPage() {
           <label className="block text-[11.5px] font-medium text-slate-500 mb-1">Employee</label>
           <EmployeeSearch value={employee} onChange={(v) => { setEmployee(v); setPage(1); }} emptyLabel="All employees" branch={branch} />
         </div>
+        <div>
+          <label className="block text-[11.5px] font-medium text-slate-500 mb-1">Month</label>
+          <input type="month" value={month} onChange={(e) => { setMonth(e.target.value); setPage(1); }} className={INPUT_CLASS} />
+        </div>
         <div className="flex items-center gap-2">
           <a
             href={templateHref}
@@ -242,8 +262,15 @@ export default function LeaveBalanceUploadPage() {
                   ))}
                 </select>
               </div>
+              {form.empFkey && form.salaryHeadItemFkey && (
+                <div className="rounded-[9px] bg-slate-50 border border-slate-200 px-3 py-2 text-[12.5px]">
+                  <span className="font-medium text-[#0F172A]">
+                    Current Balance: {currentBalance?.balance ?? '…'}
+                  </span>
+                </div>
+              )}
               <div>
-                <label className="block text-[12px] font-medium text-slate-600 mb-1.5">Leave Balance</label>
+                <label className="block text-[12px] font-medium text-slate-600 mb-1.5">Leave Balance to Upload</label>
                 <input
                   type="number"
                   step="0.5"

@@ -276,6 +276,8 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [form, setForm] = useState({ leave_type_id: defaultTypeId ? String(defaultTypeId) : '', from_date: '', from_half: '1', to_date: '', to_half: '2', reason: '', contact_person: '', contact_no: '' });
+  const [file, setFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
 
   useEffect(() => {
     fetch(`/api/leave/types?employee=${empId}`).then((r) => (r.ok ? r.json() : { data: [] })).then((d) => setTypes(d.data || []));
@@ -284,16 +286,60 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
 
   const leaveDays = calcLeaveDays(form.from_date, Number(form.from_half), form.to_date, Number(form.to_half));
 
+  // Ported from addeditleave_new.ctp's getLeaveBalance(): re-fetched whenever leave type or From
+  // Date changes, so the balance shown reflects the date being applied for, before submitting.
+  const [balancePreview, setBalancePreview] = useState<{
+    balance: number;
+    allowNegative: boolean;
+    minServiceOk: boolean;
+    minServiceMessage: string | null;
+    advanceNoticeOk: boolean;
+    advanceNoticeMessage: string | null;
+    documentMandatory: boolean;
+    remarks: string | null;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!form.leave_type_id || !form.from_date) {
+      setBalancePreview(null);
+      return;
+    }
+    let cancelled = false;
+    fetch(`/api/leave/balance-preview?leaveType=${form.leave_type_id}&fromDate=${form.from_date}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (!cancelled) setBalancePreview(d); });
+    return () => { cancelled = true; };
+  }, [form.leave_type_id, form.from_date]);
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    if (balancePreview?.documentMandatory && !file) {
+      setError('A supporting document is required for this leave type');
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
+      let fileName: string | undefined;
+      let fileType: string | undefined;
+      if (file) {
+        setUploading(true);
+        const formData = new FormData();
+        formData.append('file', file);
+        const uploadRes = await fetch('/api/upload', { method: 'POST', body: formData });
+        const uploadBody = await uploadRes.json();
+        setUploading(false);
+        if (!uploadRes.ok) throw new Error(uploadBody.error || 'Failed to upload document');
+        fileName = uploadBody.path;
+        fileType = file.type;
+      }
+
       const res = await fetch('/api/leave/requests', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           salaryHeadItemFkey: Number(form.leave_type_id), fromDate: form.from_date, fromHalf: Number(form.from_half),
           toDate: form.to_date, toHalf: Number(form.to_half), reason: form.reason, contactNo: form.contact_no, contactPerson: form.contact_person,
+          fileName, fileType,
         }),
       });
       const body = await res.json();
@@ -341,9 +387,27 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
             })}
           </div>
           {leaveDays > 0 && <div style={{ marginBottom: 14, padding: '8px 14px', borderRadius: 8, background: `${BRAND}12`, border: `1px solid ${BRAND}33`, fontSize: 13, fontWeight: 700, color: BRAND }}>📅 {leaveDays} day{leaveDays !== 1 ? 's' : ''}</div>}
+          {balancePreview && (
+            <div style={{ marginBottom: 14, padding: '10px 14px', borderRadius: 8, background: 'var(--bg-page)', border: '1.5px solid var(--border)', fontSize: 12.5 }}>
+              <div style={{ fontWeight: 800, color: 'var(--text-primary)' }}>Available Leave Balance: {balancePreview.balance}</div>
+              {!balancePreview.minServiceOk && <div style={{ color: '#dc2626', marginTop: 4 }}>{balancePreview.minServiceMessage}</div>}
+              {!balancePreview.advanceNoticeOk && <div style={{ color: '#dc2626', marginTop: 4 }}>{balancePreview.advanceNoticeMessage}</div>}
+              {balancePreview.balance === 0 && !balancePreview.allowNegative && <div style={{ color: '#dc2626', marginTop: 4 }}>You have no leave balance!</div>}
+              {balancePreview.remarks && <div style={{ color: 'var(--text-muted)', marginTop: 4 }}>{balancePreview.remarks}</div>}
+            </div>
+          )}
           <div style={{ marginBottom: 14 }}>
             <label style={lbl}>Reason *</label>
             <input required type="text" style={inp} value={form.reason} onChange={(e) => setForm((f) => ({ ...f, reason: e.target.value }))} />
+          </div>
+          <div style={{ marginBottom: 14 }}>
+            <label style={lbl}>Upload File {balancePreview?.documentMandatory && <span style={{ color: '#dc2626' }}>*</span>}</label>
+            <input
+              type="file"
+              required={balancePreview?.documentMandatory}
+              style={inp}
+              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+            />
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}>
             <div>
@@ -363,7 +427,7 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
             <button type="button" onClick={onClose} style={{ padding: '8px 18px', borderRadius: 8, border: '1.5px solid var(--border)', background: 'var(--bg-page)', color: 'var(--text-muted)', fontWeight: 700, cursor: 'pointer', fontSize: 13 }}>Cancel</button>
             <button type="submit" disabled={saving || !form.leave_type_id || !form.from_date || !form.to_date || !form.reason} style={{ padding: '8px 22px', borderRadius: 8, border: 'none', background: BRAND, color: '#fff', fontWeight: 800, cursor: 'pointer', fontSize: 13, opacity: saving ? 0.7 : 1 }}>
-              {saving ? 'Submitting…' : 'Submit Leave'}
+              {uploading ? 'Uploading…' : saving ? 'Submitting…' : 'Submit Leave'}
             </button>
           </div>
         </form>
@@ -389,13 +453,29 @@ interface Presence {
   monthlyAttendance: { month: string; present: number; absent: number; leave_days: number }[];
 }
 
+const STATUS_TEXT_LABEL: Record<string, string> = {
+  CancellationOfAuthorized: 'Cancellation of Authorized',
+  CancellationOfApproved: 'Cancellation of Approved',
+  CancelledByAdmin: 'Cancelled by Admin',
+  'Can not Apply 0 days': 'Rejected — No Leave Days Available',
+};
+
 function StatusBadge({ status }: { status: string }) {
-  const cfg: Record<string, [string, string]> = { Applied: [BRAND, '#e0f2fe'], Authorized: ['#7c3aed', '#f5f3ff'], Approved: ['#16a34a', '#f0fdf4'], Rejected: ['#dc2626', '#fef2f2'], Cancelled: ['#94a3b8', '#f1f5f9'] };
+  const cfg: Record<string, [string, string]> = {
+    Applied: [BRAND, '#e0f2fe'], Authorized: ['#7c3aed', '#f5f3ff'], Approved: ['#16a34a', '#f0fdf4'],
+    Rejected: ['#dc2626', '#fef2f2'], Cancelled: ['#94a3b8', '#f1f5f9'], CancelledByAdmin: ['#94a3b8', '#f1f5f9'],
+    CancellationOfAuthorized: ['#b45309', '#fffbeb'], CancellationOfApproved: ['#b45309', '#fffbeb'],
+    'Can not Apply 0 days': ['#dc2626', '#fef2f2'],
+  };
   const [color, bg] = cfg[status] || [BRAND, '#e0f2fe'];
-  return <span style={{ padding: '2px 8px', borderRadius: 20, fontSize: 9, fontWeight: 800, textTransform: 'uppercase', color, background: bg }}>{status}</span>;
+  return <span style={{ padding: '2px 8px', borderRadius: 20, fontSize: 9, fontWeight: 800, textTransform: 'uppercase', color, background: bg }}>{STATUS_TEXT_LABEL[status] ?? status}</span>;
 }
 
-const STATUS_STRIPE: Record<string, string> = { Applied: BRAND, Authorized: '#7c3aed', Approved: '#16a34a', Rejected: '#dc2626', Cancelled: '#94a3b8' };
+const STATUS_STRIPE: Record<string, string> = {
+  Applied: BRAND, Authorized: '#7c3aed', Approved: '#16a34a', Rejected: '#dc2626', Cancelled: '#94a3b8',
+  CancelledByAdmin: '#94a3b8', CancellationOfAuthorized: '#b45309', CancellationOfApproved: '#b45309',
+  'Can not Apply 0 days': '#dc2626',
+};
 
 const leaveDetailSec: React.CSSProperties = { padding: '14px 20px', borderBottom: '1px solid var(--border)' };
 const leaveDetailSecLabel: React.CSSProperties = { fontSize: 9, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.5px', color: 'var(--text-muted)', marginBottom: 8 };
@@ -408,16 +488,55 @@ function LeaveInfoRow({ label, value }: { label: string; value?: string | null }
   );
 }
 
-function LeaveDetailModal({ leave: r, onClose, onCancelled }: { leave: LeaveRow; onClose: () => void; onCancelled: () => void }) {
-  const [cancelling, setCancelling] = useState(false);
+interface LeaveDetails {
+  leaveType: string;
+  leaveBalance: number;
+  allowNegative: boolean;
+  isSandwich: boolean;
+  reason: string | null;
+  status: string;
+  transactions: { leaveDate: string; status: string; remarks: string | null }[];
+  documents: { name: string; type: string }[];
+}
 
-  async function handleCancel() {
-    setCancelling(true);
+function LeaveDetailModal({ leave: r, onClose }: { leave: LeaveRow; onClose: () => void }) {
+  const [details, setDetails] = useState<LeaveDetails | null>(null);
+  const [docName, setDocName] = useState('');
+  const [docFile, setDocFile] = useState<File | null>(null);
+  const [savingDoc, setSavingDoc] = useState(false);
+  const [docError, setDocError] = useState<string | null>(null);
+
+  const loadDetails = useCallback(() => {
+    fetch(`/api/leave/requests/${r.LEAVEENTRYID}/details`).then((res) => (res.ok ? res.json() : null)).then(setDetails);
+  }, [r.LEAVEENTRYID]);
+
+  useEffect(() => { loadDetails(); }, [loadDetails]);
+
+  async function handleSaveDocument(e: React.FormEvent) {
+    e.preventDefault();
+    if (!docFile) return;
+    setSavingDoc(true);
+    setDocError(null);
     try {
-      await fetch(`/api/leave/requests/${r.LEAVEENTRYID}/cancel`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-      onCancelled();
+      const formData = new FormData();
+      formData.append('file', docFile);
+      const uploadRes = await fetch('/api/upload', { method: 'POST', body: formData });
+      const uploadBody = await uploadRes.json();
+      if (!uploadRes.ok) throw new Error(uploadBody.error || 'Failed to upload document');
+
+      const saveRes = await fetch(`/api/leave/requests/${r.LEAVEENTRYID}/document`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fileName: uploadBody.path, displayName: docName || docFile.name }),
+      });
+      if (!saveRes.ok) throw new Error((await saveRes.json()).error || 'Failed to save document');
+
+      setDocName('');
+      setDocFile(null);
+      loadDetails();
+    } catch (err) {
+      setDocError(err instanceof Error ? err.message : 'Failed to save document');
     } finally {
-      setCancelling(false);
+      setSavingDoc(false);
     }
   }
 
@@ -425,6 +544,7 @@ function LeaveDetailModal({ leave: r, onClose, onCancelled }: { leave: LeaveRow;
   const secLabel = leaveDetailSecLabel;
   const authorizedByName = r.authorized_by_first_name ? `${r.authorized_by_first_name} ${r.authorized_by_last_name || ''}`.trim() : null;
   const approvedByName = r.approved_by_first_name ? `${r.approved_by_first_name} ${r.approved_by_last_name || ''}`.trim() : null;
+  const inp: React.CSSProperties = { width: '100%', padding: '7px 10px', borderRadius: 8, border: '1.5px solid var(--border)', background: 'var(--bg-page)', color: 'var(--text-primary)', fontSize: 12.5, outline: 'none', boxSizing: 'border-box' };
 
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 1050, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
@@ -436,6 +556,16 @@ function LeaveDetailModal({ leave: r, onClose, onCancelled }: { leave: LeaveRow;
           </div>
           <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.7)', fontSize: 20, cursor: 'pointer', padding: 0, lineHeight: 1, marginTop: 2 }}>×</button>
         </div>
+
+        {details && (
+          <div style={sec}>
+            <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 11.5 }}>
+              <span><strong style={{ color: 'var(--text-primary)' }}>Leave Balance:</strong> {details.leaveBalance}</span>
+              <span><strong style={{ color: 'var(--text-primary)' }}>Negative:</strong> {details.allowNegative ? 'Yes' : 'No'}</span>
+              <span><strong style={{ color: 'var(--text-primary)' }}>Sandwich:</strong> {details.isSandwich ? 'Yes' : 'No'}</span>
+            </div>
+          </div>
+        )}
 
         <div style={sec}>
           <div style={secLabel}>Duration</div>
@@ -484,13 +614,61 @@ function LeaveDetailModal({ leave: r, onClose, onCancelled }: { leave: LeaveRow;
           )}
         </div>
 
+        {details && details.transactions.length > 0 && (
+          <div style={sec}>
+            <div style={secLabel}>Leave Days</div>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+              <thead>
+                <tr style={{ textAlign: 'left', color: 'var(--text-muted)' }}>
+                  <th style={{ padding: '4px 0', fontWeight: 700 }}>Date</th>
+                  <th style={{ padding: '4px 0', fontWeight: 700 }}>Status</th>
+                  <th style={{ padding: '4px 0', fontWeight: 700 }}>Remarks</th>
+                </tr>
+              </thead>
+              <tbody>
+                {details.transactions.map((t, i) => (
+                  <tr key={i} style={{ borderTop: '1px solid var(--border)' }}>
+                    <td style={{ padding: '4px 0', color: 'var(--text-primary)' }}>{fmtDate(t.leaveDate)}</td>
+                    <td style={{ padding: '4px 0', color: 'var(--text-primary)' }}>{t.status}</td>
+                    <td style={{ padding: '4px 0', color: 'var(--text-muted)' }}>{t.remarks || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        <div style={sec}>
+          <div style={secLabel}>Documents</div>
+          {details && details.documents.length > 0 ? (
+            <div style={{ marginBottom: 10 }}>
+              {details.documents.map((d, i) => (
+                <div key={i} style={{ fontSize: 11, color: 'var(--text-primary)', marginBottom: 3 }}>
+                  📎 <a href={d.name} target="_blank" rel="noreferrer" style={{ color: BRAND }}>{d.type || d.name}</a>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 10 }}>No documents uploaded yet</div>
+          )}
+          <form onSubmit={handleSaveDocument} style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+            <div style={{ flex: 1, minWidth: 140 }}>
+              <label style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 3, display: 'block' }}>Document Name</label>
+              <input type="text" style={inp} value={docName} onChange={(e) => setDocName(e.target.value)} placeholder="Uploaded File Name" />
+            </div>
+            <div style={{ flex: 1, minWidth: 140 }}>
+              <label style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 3, display: 'block' }}>Upload Document</label>
+              <input type="file" style={inp} onChange={(e) => setDocFile(e.target.files?.[0] ?? null)} />
+            </div>
+            <button type="submit" disabled={!docFile || savingDoc} style={{ padding: '7px 16px', borderRadius: 8, border: 'none', background: BRAND, color: '#fff', fontWeight: 800, cursor: 'pointer', fontSize: 12, opacity: savingDoc || !docFile ? 0.6 : 1 }}>
+              {savingDoc ? 'Saving…' : 'Save'}
+            </button>
+          </form>
+          {docError && <div style={{ marginTop: 6, fontSize: 11, color: '#dc2626' }}>{docError}</div>}
+        </div>
+
         <div style={{ padding: '14px 20px', display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
           <button onClick={onClose} style={{ padding: '8px 18px', borderRadius: 8, border: '1.5px solid var(--border)', background: 'var(--bg-page)', color: 'var(--text-muted)', fontWeight: 700, cursor: 'pointer', fontSize: 13 }}>Close</button>
-          {r.LEAVESTATUS === 'Applied' && (
-            <button onClick={handleCancel} disabled={cancelling} style={{ padding: '8px 18px', borderRadius: 8, border: '1.5px solid #dc262644', background: '#fef2f2', color: '#dc2626', fontWeight: 800, cursor: 'pointer', fontSize: 13, opacity: cancelling ? 0.7 : 1 }}>
-              {cancelling ? 'Cancelling…' : 'Cancel Leave'}
-            </button>
-          )}
         </div>
       </div>
     </div>
@@ -509,6 +687,9 @@ export default function EssPresencePage() {
   const [applyType, setApplyType] = useState<number | null>(null);
   const [selectedDay, setSelectedDay] = useState<DayCell | null>(null);
   const [selectedLeaveRequest, setSelectedLeaveRequest] = useState<LeaveRow | null>(null);
+  const [selectedLeaveIds, setSelectedLeaveIds] = useState<Set<number>>(new Set());
+  const [deleting, setDeleting] = useState(false);
+  const [deleteResult, setDeleteResult] = useState<string | null>(null);
 
   const nowMonth = new Date().toISOString().slice(0, 7);
   const [selectedMonth, setSelectedMonth] = useState(nowMonth);
@@ -527,6 +708,72 @@ export default function EssPresencePage() {
   }, [empId, selectedMonth]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Same status gate as legacy's index.ctp "Remove" handler: Approved/Authorized/
+  // CancellationOfApproved can't be removed, everything else can.
+  const isLeaveDeletable = (r: LeaveRow) =>
+    !['Approved', 'Authorized', 'CancellationOfApproved'].includes(r.LEAVESTATUS);
+
+  // Ported from addeditleave_new.ctp's cancelLeave() button visibility — Applied cancels
+  // immediately, Authorized/Approved raise a pending-review cancellation instead.
+  const isLeaveCancellable = (r: LeaveRow) => ['Applied', 'Authorized', 'Approved'].includes(r.LEAVESTATUS);
+
+  const [cancellingId, setCancellingId] = useState<number | null>(null);
+
+  async function cancelLeaveRow(id: number) {
+    if (!confirm('Really you want to cancel leave?')) return;
+    setCancellingId(id);
+    try {
+      const res = await fetch(`/api/leave/requests/${id}/cancel`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || 'Failed to cancel leave');
+      alert(body.requiresReview ? 'Cancellation request submitted — pending approval.' : 'Leave cancelled.');
+      load();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to cancel leave');
+    } finally {
+      setCancellingId(null);
+    }
+  }
+
+  function toggleLeaveSelect(id: number) {
+    setSelectedLeaveIds((s) => {
+      const next = new Set(s);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  async function deleteSelectedLeaves() {
+    if (selectedLeaveIds.size === 0) return;
+    if (!confirm('Delete the selected leave request(s)?')) return;
+    setDeleting(true);
+    setDeleteResult(null);
+    try {
+      const res = await fetch('/api/leave/requests/bulk-delete', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: [...selectedLeaveIds] }),
+      });
+      const body = await res.json() as { deleted: number[]; skipped: { id: number; reason: string }[] };
+
+      // A row can still get skipped even though the checkbox only shows for deletable rows — its
+      // status may have changed (e.g. someone approved it) between page load and this click.
+      // Reporting deleted/skipped honestly here, rather than a blanket "removed", matches what
+      // actually happened instead of implying every selected row was removed.
+      if (body.skipped.length === 0) {
+        setDeleteResult(`${body.deleted.length} leave request(s) removed`);
+      } else if (body.deleted.length === 0) {
+        setDeleteResult(`None removed — ${body.skipped.map((s) => s.reason).join('; ')}`);
+      } else {
+        setDeleteResult(`${body.deleted.length} removed, ${body.skipped.length} skipped (${body.skipped.map((s) => s.reason).join('; ')})`);
+      }
+
+      setSelectedLeaveIds(new Set());
+      load();
+    } finally {
+      setDeleting(false);
+    }
+  }
 
   if (loading || !presence) {
     return (
@@ -706,8 +953,25 @@ export default function EssPresencePage() {
               <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--text-primary)' }}>My Leave Requests</div>
               <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>Click any row to view full details</div>
             </div>
-            <span style={{ fontSize: 10, color: 'var(--text-muted)', background: 'var(--bg-page)', padding: '2px 8px', borderRadius: 10, border: '1px solid var(--border)' }}>{leaves.length} total</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              {selectedLeaveIds.size > 0 && (
+                <button
+                  onClick={deleteSelectedLeaves}
+                  disabled={deleting}
+                  style={{ fontSize: 11, fontWeight: 800, color: '#dc2626', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 20, padding: '4px 12px', cursor: 'pointer', opacity: deleting ? 0.6 : 1 }}
+                >
+                  {deleting ? 'Deleting…' : `Delete (${selectedLeaveIds.size})`}
+                </button>
+              )}
+              <span style={{ fontSize: 10, color: 'var(--text-muted)', background: 'var(--bg-page)', padding: '2px 8px', borderRadius: 10, border: '1px solid var(--border)' }}>{leaves.length} total</span>
+            </div>
           </div>
+          {deleteResult && (
+            <div style={{ padding: '8px 18px', fontSize: 11, color: 'var(--text-primary)', background: 'var(--bg-page)', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span>{deleteResult}</span>
+              <button onClick={() => setDeleteResult(null)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 11 }}>Dismiss</button>
+            </div>
+          )}
           {leaves.length === 0 ? (
             <div style={{ padding: '24px 18px', fontSize: 12, color: 'var(--text-muted)', textAlign: 'center' }}>No leave requests yet</div>
           ) : (
@@ -718,6 +982,17 @@ export default function EssPresencePage() {
                   onClick={() => setSelectedLeaveRequest(r)}
                   style={{ padding: '12px 18px', borderBottom: '1px solid var(--border)', display: 'flex', gap: 12, alignItems: 'flex-start', cursor: 'pointer' }}
                 >
+                  {isLeaveDeletable(r) ? (
+                    <input
+                      type="checkbox"
+                      checked={selectedLeaveIds.has(r.LEAVEENTRYID)}
+                      onChange={() => toggleLeaveSelect(r.LEAVEENTRYID)}
+                      onClick={(e) => e.stopPropagation()}
+                      style={{ marginTop: 3, flexShrink: 0 }}
+                    />
+                  ) : (
+                    <div style={{ width: 13, flexShrink: 0 }} />
+                  )}
                   <div style={{ width: 3, alignSelf: 'stretch', borderRadius: 2, background: STATUS_STRIPE[r.LEAVESTATUS] || BRAND, flexShrink: 0 }} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 3 }}>
@@ -732,6 +1007,15 @@ export default function EssPresencePage() {
                     </div>
                     {r.Reason && <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2, fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.Reason}</div>}
                   </div>
+                  {isLeaveCancellable(r) && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); cancelLeaveRow(r.LEAVEENTRYID); }}
+                      disabled={cancellingId === r.LEAVEENTRYID}
+                      style={{ fontSize: 10, fontWeight: 800, color: '#dc2626', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 20, padding: '3px 10px', cursor: 'pointer', flexShrink: 0, alignSelf: 'center', opacity: cancellingId === r.LEAVEENTRYID ? 0.6 : 1 }}
+                    >
+                      {cancellingId === r.LEAVEENTRYID ? 'Cancelling…' : 'Cancel'}
+                    </button>
+                  )}
                   <div style={{ fontSize: 12, color: 'var(--text-muted)', flexShrink: 0, alignSelf: 'center' }}>›</div>
                 </div>
               ))}
@@ -749,7 +1033,6 @@ export default function EssPresencePage() {
         <LeaveDetailModal
           leave={selectedLeaveRequest}
           onClose={() => setSelectedLeaveRequest(null)}
-          onCancelled={() => { setSelectedLeaveRequest(null); load(); }}
         />
       )}
     </div>
