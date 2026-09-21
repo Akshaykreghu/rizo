@@ -3,6 +3,17 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useSession } from 'next-auth/react';
 
+// These modals are bespoke fixed-overlay divs (not the shared components/ui/Modal, which already
+// locks scroll) — without this, the mouse wheel still scrolls the page behind the overlay while a
+// modal is open, same pattern components/ui/Modal.tsx uses.
+function useLockBodyScroll() {
+  useEffect(() => {
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = prevOverflow; };
+  }, []);
+}
+
 // Port of New Rizo's pages/ESS/ESSPresence.jsx, backed by /api/employees/[id]/presence-summary
 // (which already supports ?month= and returns per-day worked_minutes, so the month picker and
 // Daily Working Hours / Leave Trend charts below are real, not fabricated) and the already
@@ -221,6 +232,7 @@ function MonthCalendar({ days, today, onDayClick }: { days: DayCell[]; today: nu
 }
 
 function DayDetailModal({ day, onClose }: { day: DayCell; onClose: () => void }) {
+  useLockBodyScroll();
   const cfg = cfgFor(day.status);
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 1100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
@@ -252,6 +264,7 @@ function DayDetailModal({ day, onClose }: { day: DayCell; onClose: () => void })
 interface LeaveType { salaryHeadItemFkey: number; name: string; allowNegative: boolean; maxLeave: number }
 
 function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: number; defaultTypeId?: number | null; onClose: () => void; onSaved: () => void }) {
+  useLockBodyScroll();
   const [types, setTypes] = useState<LeaveType[]>([]);
   interface PersonOption { empFkey: number; name: string }
   const [authorizerOptions, setAuthorizerOptions] = useState<PersonOption[]>([]);
@@ -604,6 +617,7 @@ interface LeaveDetails {
 }
 
 function LeaveDetailModal({ leave: r, onClose }: { leave: LeaveRow; onClose: () => void }) {
+  useLockBodyScroll();
   const [details, setDetails] = useState<LeaveDetails | null>(null);
   const [docName, setDocName] = useState('');
   const [docFile, setDocFile] = useState<File | null>(null);
