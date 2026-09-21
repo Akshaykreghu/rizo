@@ -229,7 +229,7 @@ export default function EssTeamPage() {
   const rightPeers = peers.slice(half);
 
   return (
-    <div className="page-content" style={{ maxWidth: 1400, margin: '0 auto' }}>
+    <div className="page-content">
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px', gap: 24, alignItems: 'start' }}>
 
         {/* LEFT — Hierarchy */}

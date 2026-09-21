@@ -520,7 +520,7 @@ export default function EssAboutPage() {
   }
 
   return (
-    <div className="page-content" style={{ maxWidth: 1400, margin: '0 auto' }}>
+    <div className="page-content">
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 310px', gap: 22, alignItems: 'start' }}>
 
         {/* LEFT */}

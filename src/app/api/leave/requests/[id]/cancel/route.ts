@@ -1,7 +1,7 @@
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
-import { runLeaveTransaction, toISODate } from '@/lib/leave';
+import { isLeaveTransactionFailure, runLeaveTransaction, toISODate } from '@/lib/leave';
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket } from 'mysql2';
 
@@ -72,6 +72,10 @@ export async function POST(
     fromHalf: entry.FROMHALF, toDate: toISODate(entry.TODATE), toHalf: entry.TOHALF,
     leaveDays: Number(entry.leave_days), status: newStatus,
   });
+
+  if (isLeaveTransactionFailure(procFinalStatus)) {
+    return NextResponse.json({ error: errorMessage || procFinalStatus }, { status: 409 });
+  }
 
   // leave_transaction_prc only recognizes legacy's real status names (no 'CancelledByAdmin'
   // branch exists in it) — run the transaction as 'Cancelled' so its balance-restoration/cleanup

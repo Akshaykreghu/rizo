@@ -25,7 +25,6 @@ const ALL_TABS = [
   { to: '/ess/requests', label: 'My Requests', emoji: '📋', gate: 'requests' },
   { to: '/ess/approvals', label: 'Approvals', emoji: '✅', gate: 'approvals' },
   { to: '/ess/reports', label: 'Reports', emoji: '📊', gate: 'reports' },
-  { to: '/ess/others', label: 'Others', emoji: '⚙️' },
 ];
 
 const PRIMARY_COUNT = 5;

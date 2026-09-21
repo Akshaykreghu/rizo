@@ -1,16 +1,31 @@
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
-import { fieldsToArray, computeAttendanceTotals, getNaPeriodBounds, toISODate } from '@/lib/attendance';
+import { fieldsToArray, computeAttendanceTotals, computeLiveAttendance, getNaPeriodBounds, getAttPeriod, toISODate } from '@/lib/attendance';
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket } from 'mysql2';
 
 // Self-service attendance summary for the ESS "My Presence" calendar + trend chart. Reuses the
 // same attendance_register FIELD1..32 day-code parsing as the admin register grid
-// (GET /api/attendance/register), just scoped to one employee across several months instead of
-// a whole branch for one month. If the current calendar month's register doesn't exist yet
-// (payroll/attendance hasn't been processed for it — genuinely true for a lot of real data here),
-// currentMonth.days comes back empty rather than fabricating one.
+// (GET /api/attendance/register) for any month that's been verified (isdelete='N'). For a month
+// with no register row yet, or one that exists but was never verified, this ports
+// DashboardController::empdashboard()'s own fallback (computeMonthlyBreakdownCounts) instead of
+// leaving the month blank — real per-day attendance/leave data usually exists in
+// emp_detail_timeattandance well before payroll ever processes/verifies the month's register.
+// UTC-anchored (construction + increment) so this doesn't drift on a server east of UTC (e.g.
+// IST) — a local-time construction combined with toISOString()'s always-UTC output would silently
+// shift every date back by a day.
+function enumerateDates(start: string, end: string): string[] {
+  const dates: string[] = [];
+  const cursor = new Date(start + 'T00:00:00Z');
+  const last = new Date(end + 'T00:00:00Z');
+  while (cursor <= last) {
+    dates.push(cursor.toISOString().slice(0, 10));
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return dates;
+}
+
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -49,61 +64,72 @@ export async function GET(
     const d = new Date(reqYear, reqMonStr - 1 - i, 1);
     monthList.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
   }
+  const allMonths = monthList.includes(month) ? monthList : [...monthList, month];
 
   const [registerRows] = await pool.execute<RowDataPacket[]>(
-    `SELECT registerid, month_year, calander_days,
+    `SELECT registerid, month_year, calander_days, isdelete,
             ${['FIELD1', ...Array.from({ length: 31 }, (_, i) => `FIELD${i + 2}`)].join(', ')}
      FROM attendance_register
-     WHERE emp_fkey = ? AND month_year IN (${monthList.map(() => '?').join(',')})`,
-    [empPkey, ...monthList]
+     WHERE emp_fkey = ? AND month_year IN (${allMonths.map(() => '?').join(',')})`,
+    [empPkey, ...allMonths]
   );
   const registerByMonth = new Map(registerRows.map((r) => [r.month_year as string, r]));
 
   const naBoundsMap = await getNaPeriodBounds(pool, [empPkey]);
   const naBounds = naBoundsMap[empPkey] ?? { joiningDate: null, lastWorkingDate: null };
 
-  function datesFor(m: string) {
-    // month_year rows don't carry their own period bounds; derive calendar-month dates directly
-    // (the register's own FIELD1..32 already reflect the attendance-period cycle for that label).
-    const [y, mo] = m.split('-').map(Number);
-    const daysInMonth = new Date(y, mo, 0).getDate();
-    return Array.from({ length: daysInMonth }, (_, i) => `${y}-${String(mo).padStart(2, '0')}-${String(i + 1).padStart(2, '0')}`);
-  }
+  // Real attendance-cycle bounds per month (usually calendar-month, but not guaranteed — some
+  // companies run e.g. 26th-to-25th cycles), not an assumed 1st-to-end-of-month range.
+  const periods = new Map(
+    await Promise.all(allMonths.map(async (m) => [m, await getAttPeriod(pool, m)] as const))
+  );
 
-  const monthlyAttendance = monthList.map((m) => {
-    const row = registerByMonth.get(m);
-    if (!row) return { month: m, present: 0, absent: 0, leave_days: 0 };
-    const dates = datesFor(m);
-    const totals = computeAttendanceTotals(fieldsToArray(row), dates, Number(row.calander_days) || null, naBounds.joiningDate, naBounds.lastWorkingDate);
-    return { month: m, present: totals.presentTotal, absent: totals.lopTotal, leave_days: totals.leaveTotal };
-  });
+  const monthlyAttendance = await Promise.all(
+    monthList.map(async (m) => {
+      const row = registerByMonth.get(m);
+      const period = periods.get(m)!;
+      if (row && row.isdelete === 'N') {
+        const dates = enumerateDates(period.start, period.end);
+        const totals = computeAttendanceTotals(fieldsToArray(row), dates, Number(row.calander_days) || null, naBounds.joiningDate, naBounds.lastWorkingDate);
+        return { month: m, present: totals.presentTotal, absent: totals.lopTotal, leave_days: totals.leaveTotal };
+      }
+      const live = await computeLiveAttendance(pool, empPkey, period.start, period.end);
+      return { month: m, present: live.totals.presentDays, absent: live.totals.lop, leave_days: live.totals.leaveDays };
+    })
+  );
 
   const currentRow = registerByMonth.get(month);
-  let currentMonthPayload = null;
-  if (currentRow) {
-    const dates = datesFor(month);
-    const fields = fieldsToArray(currentRow);
-    const [punchRows] = await pool.execute<RowDataPacket[]>(
-      `SELECT att_date, att_in_time, att_out_time, duration FROM emp_detail_timeattandance WHERE emp_pkey = ? AND att_date BETWEEN ? AND ?`,
-      [empPkey, dates[0], dates[dates.length - 1]]
-    );
-    const punchByDate = new Map(punchRows.map((p) => [toISODate(p.att_date), p]));
-    const todayIso = new Date().toISOString().slice(0, 10);
-    const isCurrentMonth = todayIso.slice(0, 7) === month;
+  const currentPeriod = periods.get(month)!;
+  const currentDates = enumerateDates(currentPeriod.start, currentPeriod.end);
 
-    const days = dates.map((date, i) => {
-      const raw = (fields[i] ?? '').trim().toUpperCase();
-      const status = raw.split('/')[0] || null;
-      const punch = punchByDate.get(date);
-      const d = new Date(date);
-      return {
-        date, day: d.getDate(), dow: d.getDay(), status: status || null,
-        punch_in: punch?.att_in_time ?? null, punch_out: punch?.att_out_time ?? null,
-        worked_minutes: punch?.duration ?? null,
-      };
-    });
-    currentMonthPayload = { month, today: isCurrentMonth ? new Date().getDate() : dates.length, days };
+  const [punchRows] = await pool.execute<RowDataPacket[]>(
+    `SELECT att_date, att_in_time, att_out_time, duration FROM emp_detail_timeattandance WHERE emp_pkey = ? AND att_date BETWEEN ? AND ?`,
+    [empPkey, currentDates[0], currentDates[currentDates.length - 1]]
+  );
+  const punchByDate = new Map(punchRows.map((p) => [toISODate(p.att_date), p]));
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const isCurrentMonth = todayIso.slice(0, 7) === month;
+
+  let dayCodes: (string | null)[];
+  if (currentRow && currentRow.isdelete === 'N') {
+    dayCodes = fieldsToArray(currentRow).slice(0, currentDates.length);
+  } else {
+    const live = await computeLiveAttendance(pool, empPkey, currentPeriod.start, currentPeriod.end);
+    dayCodes = live.days.map((d) => d.code);
   }
+
+  const days = currentDates.map((date, i) => {
+    const raw = (dayCodes[i] ?? '').toString().trim().toUpperCase();
+    const status = raw.split('/')[0] || null;
+    const punch = punchByDate.get(date);
+    const d = new Date(date + 'T00:00:00');
+    return {
+      date, day: d.getDate(), dow: d.getDay(), status: status || null,
+      punch_in: punch?.att_in_time ?? null, punch_out: punch?.att_out_time ?? null,
+      worked_minutes: punch?.duration ?? null,
+    };
+  });
+  const currentMonthPayload = { month, today: isCurrentMonth ? new Date().getDate() : days.length, days };
 
   return NextResponse.json({
     employee: {

@@ -11,9 +11,7 @@ import type { RowDataPacket } from 'mysql2';
 // the in-progress form fields directly since no LEAVEENTRYID exists yet.
 export async function GET(request: NextRequest) {
   const session = await getServerSession(authOptions);
-  if (!session || session.user.userGroup !== 1) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const { searchParams } = new URL(request.url);
   const employee = searchParams.get('employee');
@@ -21,6 +19,10 @@ export async function GET(request: NextRequest) {
   const fromDate = searchParams.get('fromDate');
   if (!employee || !leaveType || !fromDate) {
     return NextResponse.json({ error: 'employee, leaveType and fromDate are required' }, { status: 400 });
+  }
+  // Employee self-service is scoped to their own emp_fkey, same precedent as every other ESS route.
+  if (session.user.userGroup !== 1 && session.user.empFkey !== Number(employee)) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
   const pool = await getCompanyPool(session.user.companyCode);

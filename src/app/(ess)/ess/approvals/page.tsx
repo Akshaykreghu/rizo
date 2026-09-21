@@ -3,16 +3,22 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useSession } from 'next-auth/react';
 import AppTabs from '@/components/ess/AppTabs';
+import { EssPagination } from '@/components/ess/EssPagination';
 
 // Port of New Rizo's pages/ESS/ESSApprovals.jsx, backed by the approver-queue mode added to
 // GET /api/leave/requests (?authorizerFkey=/?approverFkey=, forced server-side to the caller's
-// own empFkey) and the self-access carve-outs on the authorize/approve/reject action routes.
+// own empFkey) and the self-access carve-outs on the authorize/approve/reject/cancellation-approve/
+// cancellation-reject action routes. Brought to parity with the admin (dashboard)/leave/requests
+// page: same role-aware pending/history split and the same cancellation review step, so a team
+// leave request and its cancellation both surface here for whichever of authorizer/approver owns
+// the next action, exactly as they do for admin.
 
 const BRAND = '#1E516E';
 
 interface LeaveRow {
   LEAVEENTRYID: number; EMP_fkey: number; leave_type: string; FROMDATE: string; TODATE: string;
   leave_days: number; LEAVESTATUS: string; applied_date: string; first_name: string; last_name: string | null; emp_id: string;
+  ISAutherizedby: number | null; APPROVEDBY: number | null; APPROVED_date: string | null;
 }
 
 const STATUS_COLOR: Record<string, { bg: string; color: string }> = {
@@ -20,7 +26,50 @@ const STATUS_COLOR: Record<string, { bg: string; color: string }> = {
   Authorized: { bg: '#fefce8', color: '#854d0e' },
   Approved: { bg: '#f0fdf4', color: '#166534' },
   Rejected: { bg: '#fef2f2', color: '#991b1b' },
+  Cancelled: { bg: '#f3f4f6', color: '#374151' },
+  CancelledByAdmin: { bg: '#f3f4f6', color: '#374151' },
+  CancellationOfAuthorized: { bg: '#fdf4ff', color: '#86198f' },
+  CancellationOfApproved: { bg: '#fdf4ff', color: '#86198f' },
 };
+
+const STATUS_LABEL: Record<string, string> = {
+  CancellationOfAuthorized: 'Cancellation of Authorized',
+  CancellationOfApproved: 'Cancellation of Approved',
+  CancelledByAdmin: 'Cancelled by Admin',
+};
+
+// Mirrors legacy LeaveRequestController's listempleaves()/listempleavesverified() + manageempleave()'s
+// $myrole split, and the admin (dashboard)/leave/requests page this ESS page is meant to match: which
+// of the two roles (authorizer vs approver) a given row belongs to for the current viewer, and what
+// they're allowed to do with it right now. A row can be irrelevant to the viewer in the "wrong" role
+// (e.g. they're the approver but it hasn't been authorized yet) — that's `null`, not pending or history.
+type RowState =
+  | { kind: 'pending'; role: 'authorizer' | 'approver'; primary: 'authorize' | 'approve'; cancellation?: false }
+  | { kind: 'pending'; role: 'authorizer' | 'approver'; cancellation: true }
+  | { kind: 'history' }
+  | null;
+
+function rowStateFor(row: LeaveRow, empId: number): RowState {
+  const isAuthorizer = row.ISAutherizedby === empId;
+  const isApprover = row.APPROVEDBY === empId;
+  if (!isAuthorizer && !isApprover) return null;
+
+  // Pending conditions are checked across BOTH roles before either role's history fallback — when
+  // the same person is configured as both authorizer and approver (the auto-approve-shortcut case),
+  // a pending CancellationOfApproved review (the approver's job) must win over the authorizer's
+  // broader history bucket, which also lists that status as one of ITS resolved end states.
+  if (isAuthorizer && row.LEAVESTATUS === 'Applied') return { kind: 'pending', role: 'authorizer', primary: 'authorize' };
+  if (isAuthorizer && row.LEAVESTATUS === 'CancellationOfAuthorized') return { kind: 'pending', role: 'authorizer', cancellation: true };
+  if (isApprover && row.LEAVESTATUS === 'Authorized' && !row.APPROVED_date) return { kind: 'pending', role: 'approver', primary: 'approve' };
+  if (isApprover && row.LEAVESTATUS === 'CancellationOfApproved') return { kind: 'pending', role: 'approver', cancellation: true };
+
+  const historyStatuses = ['Authorized', 'Rejected', 'Approved', 'CancellationOfAuthorized', 'CancellationOfApproved', 'Cancelled', 'CancelledByAdmin'];
+  if (historyStatuses.includes(row.LEAVESTATUS)) return { kind: 'history' };
+
+  // Anything else (e.g. legacy's stray "Can not Apply..." bulk-upload failure rows) isn't a real
+  // approval-relevant state for either role — leave it out of both tabs rather than showing junk.
+  return null;
+}
 
 const thS: React.CSSProperties = { padding: '10px 14px', textAlign: 'left', fontWeight: 700, fontSize: 11, color: 'var(--text-muted)', borderBottom: '1px solid var(--border)', background: 'var(--bg-page)', whiteSpace: 'nowrap', textTransform: 'uppercase', letterSpacing: '0.3px' };
 const tdS: React.CSSProperties = { padding: '11px 14px', fontSize: 13, color: 'var(--text-primary)', borderBottom: '1px solid var(--border)', verticalAlign: 'middle' };
@@ -28,7 +77,7 @@ const btnSm = (bg: string, color: string): React.CSSProperties => ({ padding: '5
 
 function StatusChip({ status }: { status: string }) {
   const s = STATUS_COLOR[status] || { bg: '#f3f4f6', color: '#374151' };
-  return <span style={{ ...s, padding: '3px 10px', borderRadius: 12, fontSize: 11, fontWeight: 700, display: 'inline-block' }}>{status}</span>;
+  return <span style={{ ...s, padding: '3px 10px', borderRadius: 12, fontSize: 11, fontWeight: 700, display: 'inline-block' }}>{STATUS_LABEL[status] ?? status}</span>;
 }
 
 function fmt(d: string) {
@@ -87,6 +136,60 @@ function RemarkModal({ row, action, onClose, onDone }: { row: LeaveRow; action: 
   );
 }
 
+// The employee who initiated this cancellation already went through .../requests/[id]/cancel — this
+// modal is the authorizer/approver's review step, confirming the cancellation (-> Cancelled, balance
+// restored) or rejecting it (reverts to Authorized/Approved, leave stays active). Ports legacy
+// grandLeave()'s 'Approve Cancellation'/'Authorize Cancellation' branches; matches the admin
+// (dashboard)/leave/requests page's cancellation/approve + cancellation/reject actions.
+function CancellationModal({ row, action, onClose, onDone }: { row: LeaveRow; action: 'confirm' | 'reject'; onClose: () => void; onDone: () => void }) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const endpoint = action === 'confirm' ? 'cancellation/approve' : 'cancellation/reject';
+  const label = action === 'confirm' ? 'Confirm Cancellation' : 'Keep Leave Active';
+  const color = action === 'confirm' ? '#16a34a' : '#dc2626';
+
+  async function submit() {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/leave/requests/${row.LEAVEENTRYID}/${endpoint}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || 'Action failed');
+      onDone();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Action failed');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: 'var(--bg-card)', borderRadius: 14, padding: 28, width: 420, boxShadow: '0 8px 40px rgba(0,0,0,0.18)' }}>
+        <h3 style={{ margin: '0 0 6px', color: BRAND, fontSize: 16, fontWeight: 800 }}>
+          {action === 'confirm' ? 'Confirm Leave Cancellation' : 'Reject Leave Cancellation'}
+        </h3>
+        <p style={{ margin: '0 0 10px', fontSize: 13, color: 'var(--text-muted)' }}>
+          {row.first_name} {row.last_name} · {row.leave_type} · {row.FROMDATE.slice(0, 10)} – {row.TODATE.slice(0, 10)} ({row.leave_days}d)
+        </p>
+        <p style={{ margin: 0, fontSize: 12.5, color: 'var(--text-primary)' }}>
+          {action === 'confirm'
+            ? 'This cancels the leave and restores the employee’s leave balance.'
+            : 'This keeps the leave active as-is and dismisses the cancellation request.'}
+        </p>
+        {error && <div style={{ marginTop: 8, fontSize: 12, color: '#dc2626' }}>{error}</div>}
+        <div style={{ display: 'flex', gap: 10, marginTop: 16, justifyContent: 'flex-end' }}>
+          <button onClick={onClose} style={btnSm('var(--bg-page)', 'var(--text-muted)')}>Back</button>
+          <button onClick={submit} disabled={loading} style={btnSm(color, '#fff')}>{loading ? '…' : label}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function EssApprovalsPage() {
   const { data: session } = useSession();
   const empId = session?.user.empFkey;
@@ -95,6 +198,9 @@ export default function EssApprovalsPage() {
   const [rows, setRows] = useState<LeaveRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState<{ row: LeaveRow; action: 'authorize' | 'approve' | 'reject' } | null>(null);
+  const [cancelModal, setCancelModal] = useState<{ row: LeaveRow; action: 'confirm' | 'reject' } | null>(null);
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 10;
 
   const load = useCallback(() => {
     if (!empId) return;
@@ -107,27 +213,33 @@ export default function EssApprovalsPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  const filtered = tab === 'pending' ? rows.filter((r) => ['Applied', 'Authorized'].includes(r.LEAVESTATUS)) : rows;
+  // Same role split as the admin (dashboard)/leave/requests page: a row only ever shows up in
+  // Pending for whichever of authorizer/approver must act on it next, and in History once that
+  // viewer's part is done — never both, and not at all if it's not yet relevant to their role.
+  const withState = rows
+    .map((row) => ({ row, state: empId ? rowStateFor(row, empId) : null }))
+    .filter((x): x is { row: LeaveRow; state: NonNullable<RowState> } => x.state !== null);
+  const filtered = withState.filter((x) => (tab === 'pending' ? x.state.kind === 'pending' : x.state.kind === 'history'));
+  const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
-  function actionFor(row: LeaveRow): { label: string; action: 'authorize' | 'approve' }[] {
-    if (row.LEAVESTATUS === 'Applied') return [{ label: 'Authorize', action: 'authorize' }];
-    if (row.LEAVESTATUS === 'Authorized') return [{ label: 'Approve', action: 'approve' }];
-    return [];
+  function changeTab(k: string) {
+    setTab(k as 'pending' | 'history');
+    setPage(1);
   }
 
   return (
-    <div className="page-content" style={{ maxWidth: 1100, margin: '0 auto' }}>
+    <div className="page-content">
       <div className="page-header">
         <div>
           <h1 className="page-title">Approvals</h1>
-          <p className="page-subtitle">Leave requests waiting on your authorization or approval</p>
+          <p className="page-subtitle">Leave requests and cancellations waiting on your authorization or approval</p>
         </div>
       </div>
 
       <div style={{ marginBottom: 20 }}>
         <AppTabs
           active={tab}
-          onChange={(k) => setTab(k as 'pending' | 'history')}
+          onChange={changeTab}
           tabs={[
             { key: 'pending', label: 'Pending' },
             { key: 'history', label: 'History' },
@@ -148,13 +260,15 @@ export default function EssApprovalsPage() {
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr>
+                  <th style={thS}>Sl.No</th>
                   {['Employee', 'Leave Type', 'From', 'To', 'Days', 'Applied On', 'Status'].map((h) => <th key={h} style={thS}>{h}</th>)}
                   {tab === 'pending' && <th style={{ ...thS, textAlign: 'center' }}>Actions</th>}
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((row) => (
+                {pageRows.map(({ row, state }, i) => (
                   <tr key={row.LEAVEENTRYID}>
+                    <td style={tdS}>{(page - 1) * PAGE_SIZE + i + 1}</td>
                     <td style={tdS}>
                       <div style={{ fontWeight: 700 }}>{row.first_name} {row.last_name}</div>
                       <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{row.emp_id}</div>
@@ -165,13 +279,22 @@ export default function EssApprovalsPage() {
                     <td style={{ ...tdS, fontWeight: 700 }}>{row.leave_days}</td>
                     <td style={tdS}>{fmt(row.applied_date)}</td>
                     <td style={tdS}><StatusChip status={row.LEAVESTATUS} /></td>
-                    {tab === 'pending' && (
+                    {tab === 'pending' && state.kind === 'pending' && (
                       <td style={{ ...tdS, textAlign: 'center' }}>
                         <div style={{ display: 'flex', gap: 6, justifyContent: 'center', flexWrap: 'wrap' }}>
-                          {actionFor(row).map((a) => (
-                            <button key={a.action} style={btnSm(a.action === 'authorize' ? '#1d4ed8' : '#16a34a', '#fff')} onClick={() => setModal({ row, action: a.action })}>{a.label}</button>
-                          ))}
-                          <button style={btnSm('#dc2626', '#fff')} onClick={() => setModal({ row, action: 'reject' })}>Reject</button>
+                          {state.cancellation ? (
+                            <>
+                              <button style={btnSm('#16a34a', '#fff')} onClick={() => setCancelModal({ row, action: 'confirm' })}>Confirm Cancellation</button>
+                              <button style={btnSm('#dc2626', '#fff')} onClick={() => setCancelModal({ row, action: 'reject' })}>Keep Leave</button>
+                            </>
+                          ) : (
+                            <>
+                              <button style={btnSm(state.primary === 'authorize' ? '#1d4ed8' : '#16a34a', '#fff')} onClick={() => setModal({ row, action: state.primary })}>
+                                {state.primary === 'authorize' ? 'Authorize' : 'Approve'}
+                              </button>
+                              <button style={btnSm('#dc2626', '#fff')} onClick={() => setModal({ row, action: 'reject' })}>Reject</button>
+                            </>
+                          )}
                         </div>
                       </td>
                     )}
@@ -181,9 +304,11 @@ export default function EssApprovalsPage() {
             </table>
           </div>
         )}
+        <EssPagination page={page} pageSize={PAGE_SIZE} totalItems={filtered.length} onChange={setPage} />
       </div>
 
       {modal && <RemarkModal row={modal.row} action={modal.action} onClose={() => setModal(null)} onDone={() => { setModal(null); load(); }} />}
+      {cancelModal && <CancellationModal row={cancelModal.row} action={cancelModal.action} onClose={() => setCancelModal(null)} onDone={() => { setCancelModal(null); load(); }} />}
     </div>
   );
 }

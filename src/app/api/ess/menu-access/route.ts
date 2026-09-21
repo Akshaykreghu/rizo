@@ -41,6 +41,12 @@ export async function GET() {
     [empId]
   );
 
+  // "Settings" (menu_url "User/profile") is a legacy account-settings page fully superseded by
+  // the About Me self-edit page built for this app — surfacing it as a dead "Coming soon" tile
+  // would just be confusing, so it's hidden rather than listed disabled like a genuinely
+  // not-yet-built feature.
+  const HIDDEN_MENU_URLS = new Set(['user/profile']);
+
   const seen = new Set<string>();
   const items: MenuItem[] = [];
   for (const r of rows) {
@@ -48,6 +54,7 @@ export async function GET() {
     // Blank or "#" menu_url is a legacy container/section heading, not a real destination —
     // only its children (which do have real urls) are worth listing.
     if (!menuUrl || menuUrl === '#') continue;
+    if (HIDDEN_MENU_URLS.has(menuUrl.trim().toLowerCase())) continue;
 
     const key = `${r.parent_id}|${r.menu_title}|${menuUrl}`;
     if (seen.has(key)) continue;

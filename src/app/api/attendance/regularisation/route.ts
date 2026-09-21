@@ -81,6 +81,14 @@ export async function POST(request: NextRequest) {
 
   const pool = await getCompanyPool(session.user.companyCode);
 
+  // Ports bulkupdate_self()'s own checks, in its own order — this is the action the live (non-backup)
+  // form.ctp/bulkform.ctp actually submit to; bulksavenew() (auto-approved, admin/hierarchy-only)
+  // is dead code no current view path reaches, so it's not a source of truth here.
+  const [[future]] = await pool.execute<RowDataPacket[]>(`SELECT ? > CURDATE() AS isFuture`, [attDate]);
+  if (future?.isFuture) {
+    return NextResponse.json({ error: 'Cannot add attendance to upcoming dates' }, { status: 409 });
+  }
+
   const [[emp]] = await pool.execute<RowDataPacket[]>(
     'SELECT emp_id, branch_code FROM emp_details WHERE emp_pkey = ?',
     [empFkey]
@@ -93,6 +101,26 @@ export async function POST(request: NextRequest) {
   );
   if (verified?.isdelete === 'N') {
     return NextResponse.json({ error: 'Attendance is already verified for this month' }, { status: 409 });
+  }
+
+  // Legacy's second, day-level verified check (independent of the whole-month attendance_register
+  // check above) — a day can be individually verified in emp_detail_timeattandance even when its
+  // month-level register row isn't.
+  const [[dayVerified]] = await pool.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS cnt FROM emp_detail_timeattandance WHERE emp_pkey = ? AND att_date = ? AND isdelete = 'N'`,
+    [empFkey, attDate]
+  );
+  if (Number(dayVerified?.cnt ?? 0) > 0) {
+    return NextResponse.json({ error: 'Attendance is already verified for this date' }, { status: 409 });
+  }
+
+  const [[pendingDup]] = await pool.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS cnt FROM employee_regularaization
+     WHERE C1 = ? AND LOGDATE = ? AND approved = 'P' AND empid = ? AND status = 1`,
+    [direction, attDate, emp.emp_id]
+  );
+  if (Number(pendingDup?.cnt ?? 0) > 0) {
+    return NextResponse.json({ error: 'A regularisation request for this date and direction is already pending' }, { status: 409 });
   }
 
   const alreadyLeave = await isLeaveAlreadyApplied(pool, empFkey, attDate, 3);

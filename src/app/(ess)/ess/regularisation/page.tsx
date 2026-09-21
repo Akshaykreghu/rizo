@@ -4,6 +4,9 @@ import { useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Plus, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { EssPagination } from '@/components/ess/EssPagination';
+
+const PAGE_SIZE = 10;
 
 // Employee self-service counterpart to /attendance/regularisation — same API, scoped server-side
 // to the caller's own emp_fkey. No employee picker (there's only one possible employee: you), no
@@ -24,6 +27,16 @@ function currentMonth() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
+// Local-date components, not toISOString() (which is UTC and would show yesterday's date near
+// midnight IST) — same convention as currentMonth() above.
+function today() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+function nowTime() {
+  const d = new Date();
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`;
+}
 
 const INPUT_CLASS =
   'border border-slate-200 bg-white rounded-[9px] px-2.5 py-1.5 text-[12.5px] text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/25 focus:border-[color:var(--color-primary)] transition-colors';
@@ -42,7 +55,8 @@ export default function EssRegularisationPage() {
   const [month, setMonth] = useState(currentMonth());
   const [showRaise, setShowRaise] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  const [form, setForm] = useState({ attDate: '', direction: 'in' as 'in' | 'out', logTime: '', remarks: '' });
+  const [form, setForm] = useState({ attDate: today(), direction: 'in' as 'in' | 'out', logTime: nowTime(), remarks: '' });
+  const [page, setPage] = useState(1);
 
   const { data, isLoading, refetch } = useQuery<{ data: RegRow[] }>({
     queryKey: ['ess-regularisation', month],
@@ -65,7 +79,8 @@ export default function EssRegularisationPage() {
     onSuccess: () => {
       setMessage('Regularisation request raised');
       setShowRaise(false);
-      setForm({ attDate: '', direction: 'in', logTime: '', remarks: '' });
+      setForm({ attDate: today(), direction: 'in', logTime: nowTime(), remarks: '' });
+      setPage(1);
       refetch();
     },
     onError: (err: Error) => setMessage(err.message),
@@ -89,7 +104,7 @@ export default function EssRegularisationPage() {
       <div className="surface-card rounded-xl px-4 py-2.5 mb-4 flex flex-wrap items-end gap-3">
         <div>
           <label className="block text-[11.5px] font-medium text-slate-500 mb-1">Month</label>
-          <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className={INPUT_CLASS} />
+          <input type="month" value={month} onChange={(e) => { setMonth(e.target.value); setPage(1); }} className={INPUT_CLASS} />
         </div>
         {message && <span className="text-[12.5px] text-slate-500">{message}</span>}
       </div>
@@ -100,32 +115,37 @@ export default function EssRegularisationPage() {
         ) : rows.length === 0 ? (
           <div className="px-4 py-6 text-center text-[12.5px] text-slate-400">No requests for this month</div>
         ) : (
-          <table className="w-full text-[12.5px]">
-            <thead>
-              <tr className="border-b border-slate-100 text-left text-slate-500">
-                <th className="px-4 py-2 font-medium">Date</th>
-                <th className="px-4 py-2 font-medium">Direction</th>
-                <th className="px-4 py-2 font-medium">Time</th>
-                <th className="px-4 py-2 font-medium">Remarks</th>
-                <th className="px-4 py-2 font-medium">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <tr key={row.id} className="border-b border-slate-50 last:border-0">
-                  <td className="px-4 py-2">{row.att_date}</td>
-                  <td className="px-4 py-2 capitalize">{row.direction}</td>
-                  <td className="px-4 py-2">{row.LOGTIME}</td>
-                  <td className="px-4 py-2 text-slate-500">{row.remarks}</td>
-                  <td className="px-4 py-2">
-                    <span className={cn('px-2 py-0.5 rounded text-[11px] font-medium', STATUS_STYLE[row.approved])}>
-                      {STATUS_LABEL[row.approved]}
-                    </span>
-                  </td>
+          <>
+            <table className="w-full text-[12.5px]">
+              <thead>
+                <tr className="border-b border-slate-100 text-left text-slate-500">
+                  <th className="px-4 py-2 font-medium">Sl.No</th>
+                  <th className="px-4 py-2 font-medium">Date</th>
+                  <th className="px-4 py-2 font-medium">Direction</th>
+                  <th className="px-4 py-2 font-medium">Time</th>
+                  <th className="px-4 py-2 font-medium">Remarks</th>
+                  <th className="px-4 py-2 font-medium">Status</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map((row, i) => (
+                  <tr key={row.id} className="border-b border-slate-50 last:border-0">
+                    <td className="px-4 py-2">{(page - 1) * PAGE_SIZE + i + 1}</td>
+                    <td className="px-4 py-2">{row.att_date}</td>
+                    <td className="px-4 py-2 capitalize">{row.direction}</td>
+                    <td className="px-4 py-2">{row.LOGTIME}</td>
+                    <td className="px-4 py-2 text-slate-500">{row.remarks}</td>
+                    <td className="px-4 py-2">
+                      <span className={cn('px-2 py-0.5 rounded text-[11px] font-medium', STATUS_STYLE[row.approved])}>
+                        {STATUS_LABEL[row.approved]}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <EssPagination page={page} pageSize={PAGE_SIZE} totalItems={rows.length} onChange={setPage} />
+          </>
         )}
       </div>
 

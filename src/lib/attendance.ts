@@ -144,8 +144,12 @@ export async function getLeaveTypeOptions(pool: Pool, empFkey: number, leaveDate
   return options;
 }
 
-// Checks whether an Applied/Authorized/Approved leave already exists for this date/half — mirrors
-// isLeaveAlreadyApplied(). session: 1=first half, 2=second half, 3=full day (matches any half).
+// Checks whether a leave already exists for this date/half — mirrors legacy's savenew() conflict
+// check. session: 1=first half, 2=second half, 3=full day (matches any half). Status list includes
+// CancellationOfAuthorized/CancellationOfApproved alongside Applied/Authorized/Approved — a
+// cancellation only takes effect once actually reviewed and confirmed (see the leave cancellation
+// review flow), so a leave sitting in either cancellation-pending status is still an active leave
+// for conflict-checking purposes, exactly as legacy's own status list treats it.
 export async function isLeaveAlreadyApplied(
   pool: Pool | PoolConnection,
   empFkey: number,
@@ -156,7 +160,8 @@ export async function isLeaveAlreadyApplied(
     `SELECT COUNT(*) AS cnt
      FROM emp_leave_transactions elt
      JOIN leaveentries le ON le.LEAVEENTRYID = elt.LEAVEENTRYID
-     WHERE le.EMP_fkey = ? AND elt.leave_date = ? AND elt.Leavestatus IN ('Applied', 'Authorized', 'Approved')
+     WHERE le.EMP_fkey = ? AND elt.leave_date = ?
+       AND elt.Leavestatus IN ('Applied', 'Authorized', 'Approved', 'CancellationOfAuthorized', 'CancellationOfApproved')
        AND (elt.leave_session = 3 OR ? = 3 OR elt.leave_session = ?)`,
     [empFkey, attDate, session, session]
   );
@@ -460,6 +465,169 @@ export function computeAttendanceTotals(
     workingDays,
     calendarDays,
   };
+}
+
+const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+export interface LiveDayResult {
+  date: string;
+  code: string; // Same vocabulary as attendance_register.FIELDn, e.g. "P/P", "A/WO", "HO", "CL/CL".
+}
+export interface LiveMonthlyTotals {
+  presentDays: number;
+  leaveDays: number;
+  lop: number;
+  holidays: number;
+  weekoff: number;
+}
+
+// Ports DashboardController::computeMonthlyBreakdownCounts() — legacy's live fallback for a month
+// that hasn't been processed into a verified attendance_register row yet (isdelete='N'). Computes
+// the same per-half (forenoon/afternoon) resolution directly from emp_detail_timeattandance +
+// holidays + shift week-off config + approved/authorized leave transactions, instead of leaving the
+// month blank the way attendance_register-only reads do. Returns both a per-day display code (same
+// vocabulary as attendance_register.FIELDn, for the calendar) and the aggregate totals (computed
+// directly, not by re-parsing the codes through computeAttendanceTotals — that parser doesn't credit
+// a bare "A" toward LOP the way this live path's own arithmetic does).
+export async function computeLiveAttendance(
+  pool: Pool,
+  empFkey: number,
+  rangeStart: string,
+  rangeEnd: string
+): Promise<{ days: LiveDayResult[]; totals: LiveMonthlyTotals }> {
+  const [[empRow]] = await pool.execute<RowDataPacket[]>(
+    `SELECT ep.joining_date, ep.emp_type, ep.day_time_seq, ep.HOLIDAY_GROUP_ID,
+            t.last_approved_working_date, s.prorate_code
+     FROM emp_proff ep
+     LEFT JOIN termination t ON t.emp_fkey = ep.emp_fkey AND t.status = 1
+     LEFT JOIN salary_structure s ON s.structure_id = ep.structure_id
+     WHERE ep.emp_fkey = ?
+     LIMIT 1`,
+    [empFkey]
+  );
+  const joiningDate = empRow?.joining_date ? toISODate(empRow.joining_date) : null;
+  const terminationDate = empRow?.last_approved_working_date ? toISODate(empRow.last_approved_working_date) : null;
+  const shiftId = empRow?.day_time_seq ?? 0;
+  const holidayGroupId = empRow?.HOLIDAY_GROUP_ID ?? 0;
+  // DAILY WAGES employees exclude na_ho_count/na_wo_count from LOP, matching
+  // AttendanceRegisterNewController's own salary-structure-wise rule.
+  const salaryStructure = empRow?.emp_type === 'DAILY WAGES' ? 2 : Number(empRow?.prorate_code ?? 0);
+
+  const [holidayRows] = await pool.execute<RowDataPacket[]>(
+    `SELECT HOLIDAYDATE FROM holidays WHERE HOLIDAY_GROUP_ID = ? AND status = 1 AND HOLIDAYDATE BETWEEN ? AND ?`,
+    [holidayGroupId, rangeStart, rangeEnd]
+  );
+  const holidaySet = new Set(holidayRows.map((h) => toISODate(h.HOLIDAYDATE)));
+
+  const [[shiftRow]] = await pool.execute<RowDataPacket[]>(
+    `SELECT Sunday, Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, is_exception,
+            Sunday_F, Monday_F, Tuesday_F, Wednesday_F, Thursday_F, Friday_F, Saturday_F
+     FROM working_day_time_procedures WHERE day_time_seq = ?`,
+    [shiftId]
+  );
+  const sc: Record<string, string> = shiftRow ?? {};
+  const isException = String(sc.is_exception ?? '') === '1';
+
+  const exceptionMap = new Map<string, Map<number, string>>();
+  if (isException) {
+    const [exRows] = await pool.execute<RowDataPacket[]>(
+      `SELECT ex_week_day, ex_week, week_off FROM shift_exceptions WHERE shift_id = ? AND status = 1`,
+      [shiftId]
+    );
+    for (const ex of exRows) {
+      const day = String(ex.ex_week_day);
+      if (!exceptionMap.has(day)) exceptionMap.set(day, new Map());
+      exceptionMap.get(day)!.set(Number(ex.ex_week), String(ex.week_off));
+    }
+  }
+
+  const [attRows] = await pool.execute<RowDataPacket[]>(
+    `SELECT att_date, present FROM emp_detail_timeattandance WHERE emp_pkey = ? AND att_date BETWEEN ? AND ?`,
+    [empFkey, rangeStart, rangeEnd]
+  );
+  const attendanceMap = new Map<string, string>();
+  for (const a of attRows) attendanceMap.set(toISODate(a.att_date), (a.present ?? '').toString().trim().toUpperCase());
+
+  const [leaveRows] = await pool.execute<RowDataPacket[]>(
+    `SELECT elt.leave_date, elt.leave_session, shi.occurance
+     FROM emp_leave_transactions elt
+     JOIN leaveentries le ON le.LEAVEENTRYID = elt.LEAVEENTRYID
+     JOIN salary_head_items shi ON shi.salary_head_item_pkey = le.salary_head_item_fkey
+     WHERE le.EMP_fkey = ? AND elt.Leavestatus IN ('Approved', 'Authorized') AND elt.leave_date BETWEEN ? AND ?`,
+    [empFkey, rangeStart, rangeEnd]
+  );
+  // Per-day, per-half (1=forenoon, 2=afternoon) leave occurance; session 3 = full day, applies to both halves.
+  const leaveMap = new Map<string, Map<number, string>>();
+  for (const lq of leaveRows) {
+    const date = toISODate(lq.leave_date);
+    const session = Number(lq.leave_session);
+    const occ = (lq.occurance ?? '').toString();
+    if (!leaveMap.has(date)) leaveMap.set(date, new Map());
+    const half = leaveMap.get(date)!;
+    if (session === 3) { half.set(1, occ); half.set(2, occ); }
+    else if (session === 1 || session === 2) half.set(session, occ);
+  }
+
+  const days: LiveDayResult[] = [];
+  let presentDays = 0, leaveDays = 0, lop = 0, holidays = 0, weekoff = 0;
+  let naHoCount = 0, naWoCount = 0;
+
+  // UTC-anchored throughout (construction, getters, increment) — mixing local-time construction
+  // (`new Date(s + 'T00:00:00')`) with `.toISOString()` (always UTC) silently shifts every date
+  // back by a day on any server east of UTC (e.g. IST), because ISO strings with no zone suffix
+  // parse as local time per the ECMAScript spec while toISOString() always prints UTC.
+  const cursor = new Date(rangeStart + 'T00:00:00Z');
+  const end = new Date(rangeEnd + 'T00:00:00Z');
+  while (cursor <= end) {
+    const attDate = cursor.toISOString().slice(0, 10);
+    const dayName = WEEKDAY_NAMES[cursor.getUTCDay()];
+    const dayNum = cursor.getUTCDate();
+    const weekIndex = Math.ceil(dayNum / 7);
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+
+    const exceptionWo = isException ? exceptionMap.get(dayName)?.get(weekIndex) : undefined;
+    const isHalfWo = exceptionWo === undefined && sc[`${dayName}_F`] === 'Y';
+    const isWo = exceptionWo === 'Y' || (exceptionWo === undefined && sc[dayName] === 'N') || isHalfWo;
+    const isHolidayDay = holidaySet.has(attDate);
+
+    const present = attendanceMap.get(attDate) ?? '';
+    const presentParts = present.split('/');
+    const presentFirst = (presentParts[0] ?? '').trim();
+    const presentSecond = (presentParts[1] !== undefined ? presentParts[1] : presentFirst).trim();
+    let presentHalves: Record<1 | 2, string> = { 1: presentFirst, 2: presentSecond };
+
+    const hasLeave = leaveMap.has(attDate);
+    const isNaPeriod = (joiningDate != null && attDate < joiningDate) || (terminationDate != null && attDate > terminationDate);
+    if (isNaPeriod) {
+      if (isHolidayDay) { presentHalves = { 1: 'NA', 2: 'HO' }; naHoCount += 0.5; }
+      else if (isWo) { presentHalves = { 1: 'NA', 2: 'WO' }; naWoCount += 0.5; }
+      else { presentHalves = { 1: 'NA', 2: 'NA' }; }
+    }
+
+    const codes: string[] = [];
+    for (const half of [1, 2] as const) {
+      const punchCode = presentHalves[half];
+      const leaveOcc = leaveMap.get(attDate)?.get(half);
+      let code: string;
+      if (punchCode === 'WO') { weekoff += 0.5; code = 'WO'; }
+      else if (punchCode === 'HO') { holidays += 0.5; code = 'HO'; }
+      else if (punchCode === 'NA') { lop += 0.5; code = 'NA'; }
+      else if (isWo && isHalfWo && half === 2) { weekoff += 0.5; code = 'WO'; }
+      else if (isWo && !isHalfWo) { weekoff += 0.5; code = 'WO'; }
+      else if (isHolidayDay) { holidays += 0.5; code = 'HO'; }
+      else if (hasLeave && leaveOcc !== undefined && leaveOcc !== 'LOP') { leaveDays += 0.5; code = leaveOcc; }
+      else if (hasLeave && leaveOcc !== undefined) { lop += 0.5; code = 'LOP'; }
+      else if (punchCode === 'P') { presentDays += 0.5; code = 'P'; }
+      else { lop += 0.5; code = 'A'; }
+      codes.push(code);
+    }
+
+    days.push({ date: attDate, code: codes.join('/') });
+  }
+
+  if (salaryStructure !== 2) lop += naHoCount + naWoCount;
+
+  return { days, totals: { presentDays, leaveDays, lop, holidays, weekoff } };
 }
 
 // Batch-fetch the two NA-period inputs computeAttendanceTotals needs beyond the register row itself:

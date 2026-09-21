@@ -9,6 +9,7 @@ import { toISODate } from './settlement';
 export interface LeaveTypeOption {
   salaryHeadItemFkey: number;
   name: string;
+  occurance: string;
   allowNegative: boolean;
   isLeaveEncash: boolean;
   documentMandatory: boolean;
@@ -27,7 +28,7 @@ export async function getEmployeeLeaveTypes(pool: Pool, empFkey: number): Promis
   if (!proff?.LEAVEPOLICY_GROUP_ID) return [];
 
   const [rows] = await pool.execute<RowDataPacket[]>(
-    `SELECT shi.salary_head_item_pkey, shi.item, lp.ALLOW_NEGETIVE, lp.is_leave_encash,
+    `SELECT shi.salary_head_item_pkey, shi.item, shi.occurance, lp.ALLOW_NEGETIVE, lp.is_leave_encash,
             lp.document_mandatory, lp.minimum_leave, lp.maximum_leave, lp.min_day_before_apply
      FROM leavepolicy lp
      JOIN salary_head_items shi ON shi.salary_head_item_pkey = lp.salary_head_item_fkey
@@ -38,6 +39,7 @@ export async function getEmployeeLeaveTypes(pool: Pool, empFkey: number): Promis
   return rows.map((r) => ({
     salaryHeadItemFkey: r.salary_head_item_pkey,
     name: (r.item ?? '').toString().trim(),
+    occurance: (r.occurance ?? '').toString().trim().toUpperCase(),
     allowNegative: r.ALLOW_NEGETIVE === 'Y',
     isLeaveEncash: r.is_leave_encash === 'Y',
     documentMandatory: r.document_mandatory === 'Y',
@@ -325,6 +327,16 @@ export async function runLeaveTransaction(
     [entry.leaveEntryId]
   );
   return { finalStatus: statusRow?.LEAVESTATUS ?? entry.status, errorMessage: errRow?.err ?? null };
+}
+
+// The proc's own rejection statuses (real values seen in the live DB: 'Can not Apply' and
+// 'Can not Apply 0 days') — every runLeaveTransaction() caller was returning HTTP 200 success
+// regardless of finalStatus, so a request the proc actually rejected (e.g. a zero-chargeable-day
+// date, or a hard balance/cycle failure) looked identical to a real success to the client: the row
+// just silently landed in this broken status with no error surfaced. Callers should check this and
+// respond with an error instead of success when it's true.
+export function isLeaveTransactionFailure(status: string): boolean {
+  return status.toLowerCase().startsWith('can not apply');
 }
 
 export { toISODate };

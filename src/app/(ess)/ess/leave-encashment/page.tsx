@@ -4,6 +4,9 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { EssPagination } from '@/components/ess/EssPagination';
+
+const PAGE_SIZE = 10;
 
 // Employee self-service counterpart to /leave/encashment — same API, scoped server-side to the
 // caller's own emp_fkey (see the route's ESS-scoping comment). No employee picker (there's only
@@ -48,6 +51,7 @@ export default function EssLeaveEncashmentPage() {
   const [message, setMessage] = useState<string | null>(null);
   const [reason, setReason] = useState('');
   const [requested, setRequested] = useState<Record<number, string>>({});
+  const [page, setPage] = useState(1);
 
   const { data: balancesData } = useQuery<{ data: BalanceRow[] }>({
     queryKey: ['ess-leave-balances'],
@@ -88,6 +92,7 @@ export default function EssLeaveEncashmentPage() {
       setRequested({});
       setReason('');
       setTab('pending');
+      setPage(1);
       invalidate();
     },
     onError: (err: Error) => setMessage(err.message),
@@ -123,7 +128,7 @@ export default function EssLeaveEncashmentPage() {
         {TABS.map((t) => (
           <button
             key={t.key}
-            onClick={() => setTab(t.key)}
+            onClick={() => { setTab(t.key); setPage(1); }}
             className={cn(
               'px-3 py-1 rounded-md transition-all duration-[180ms] font-medium border whitespace-nowrap',
               tab === t.key
@@ -144,41 +149,46 @@ export default function EssLeaveEncashmentPage() {
         ) : rows.length === 0 ? (
           <div className="px-4 py-6 text-center text-[12.5px] text-slate-400">No requests</div>
         ) : (
-          <table className="w-full text-[12.5px]">
-            <thead>
-              <tr className="border-b border-slate-100 text-left text-slate-500">
-                <th className="px-4 py-2 font-medium">Leave Type</th>
-                <th className="px-4 py-2 font-medium">Requested</th>
-                <th className="px-4 py-2 font-medium">Approved</th>
-                <th className="px-4 py-2 font-medium">Status</th>
-                <th className="px-4 py-2 font-medium"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <tr key={row.leave_encashment_master_pkey} className="border-b border-slate-50 last:border-0">
-                  <td className="px-4 py-2">{row.leave_type}</td>
-                  <td className="px-4 py-2">{row.requested_days}</td>
-                  <td className="px-4 py-2">{row.approved_days ?? '—'}</td>
-                  <td className="px-4 py-2">
-                    <span className={cn('px-2 py-0.5 rounded text-[11px] font-medium', STATUS_STYLE[row.is_approved])}>
-                      {row.is_approved === 'Y' ? 'Approved' : 'Pending'}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2 text-right">
-                    {row.is_approved === 'N' && (
-                      <button
-                        onClick={() => cancel.mutate(row.leave_encashment_master_pkey)}
-                        className="text-[color:var(--color-danger)] hover:underline"
-                      >
-                        Cancel
-                      </button>
-                    )}
-                  </td>
+          <>
+            <table className="w-full text-[12.5px]">
+              <thead>
+                <tr className="border-b border-slate-100 text-left text-slate-500">
+                  <th className="px-4 py-2 font-medium">Sl.No</th>
+                  <th className="px-4 py-2 font-medium">Leave Type</th>
+                  <th className="px-4 py-2 font-medium">Requested</th>
+                  <th className="px-4 py-2 font-medium">Approved</th>
+                  <th className="px-4 py-2 font-medium">Status</th>
+                  <th className="px-4 py-2 font-medium"></th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map((row, i) => (
+                  <tr key={row.leave_encashment_master_pkey} className="border-b border-slate-50 last:border-0">
+                    <td className="px-4 py-2">{(page - 1) * PAGE_SIZE + i + 1}</td>
+                    <td className="px-4 py-2">{row.leave_type}</td>
+                    <td className="px-4 py-2">{row.requested_days}</td>
+                    <td className="px-4 py-2">{row.approved_days ?? '—'}</td>
+                    <td className="px-4 py-2">
+                      <span className={cn('px-2 py-0.5 rounded text-[11px] font-medium', STATUS_STYLE[row.is_approved])}>
+                        {row.is_approved === 'Y' ? 'Approved' : 'Pending'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2 text-right">
+                      {row.is_approved === 'N' && (
+                        <button
+                          onClick={() => cancel.mutate(row.leave_encashment_master_pkey)}
+                          className="text-[color:var(--color-danger)] hover:underline"
+                        >
+                          Cancel
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <EssPagination page={page} pageSize={PAGE_SIZE} totalItems={rows.length} onChange={setPage} />
+          </>
         )}
       </div>
 

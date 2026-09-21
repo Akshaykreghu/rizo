@@ -1,26 +1,26 @@
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
-import { runLeaveTransaction, toISODate } from '@/lib/leave';
+import { isLeaveTransactionFailure, runLeaveTransaction, toISODate } from '@/lib/leave';
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket } from 'mysql2';
 
 // Rejects a pending cancellation request — reverts to the pre-cancellation status
-// (CancellationOfAuthorized -> Authorized, CancellationOfApproved -> Approved).
+// (CancellationOfAuthorized -> Authorized, CancellationOfApproved -> Approved). Same actor
+// carve-out as .../cancellation/approve: ISAutherizedby owns CancellationOfAuthorized, APPROVEDBY
+// owns CancellationOfApproved.
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await getServerSession(authOptions);
-  if (!session || session.user.userGroup !== 1) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const { id } = await params;
   const pool = await getCompanyPool(session.user.companyCode);
 
   const [[entry]] = await pool.execute<RowDataPacket[]>(
-    `SELECT LEAVEENTRYID, EMP_fkey, FROMDATE, FROMHALF, TODATE, TOHALF, leave_days, LEAVESTATUS
+    `SELECT LEAVEENTRYID, EMP_fkey, FROMDATE, FROMHALF, TODATE, TOHALF, leave_days, LEAVESTATUS, ISAutherizedby, APPROVEDBY
      FROM leaveentries WHERE LEAVEENTRYID = ?`,
     [id]
   );
@@ -31,6 +31,11 @@ export async function POST(
   if (!revertTo) {
     return NextResponse.json({ error: `No pending cancellation request for status '${entry.LEAVESTATUS}'` }, { status: 409 });
   }
+  const isAdmin = session.user.userGroup === 1;
+  const responsibleActor = entry.LEAVESTATUS === 'CancellationOfAuthorized' ? entry.ISAutherizedby : entry.APPROVEDBY;
+  if (!isAdmin && session.user.empFkey !== responsibleActor) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
 
   await pool.execute(`UPDATE leaveentries SET LEAVESTATUS = ? WHERE LEAVEENTRYID = ?`, [revertTo, id]);
 
@@ -39,6 +44,10 @@ export async function POST(
     fromHalf: entry.FROMHALF, toDate: toISODate(entry.TODATE), toHalf: entry.TOHALF,
     leaveDays: Number(entry.leave_days), status: revertTo,
   });
+
+  if (isLeaveTransactionFailure(finalStatus)) {
+    return NextResponse.json({ error: errorMessage || finalStatus }, { status: 409 });
+  }
 
   return NextResponse.json({ success: true, status: finalStatus, procMessage: errorMessage });
 }

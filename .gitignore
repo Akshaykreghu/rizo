@@ -39,6 +39,12 @@ yarn-error.log*
 # user-uploaded files (local-disk storage fallback — never belongs in version control)
 /public/uploads/
 
+# local database dumps at repo root (real employee PII — never belongs in version control)
+/*.sql
+
+# local dev server output
+dev-server-run.log
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

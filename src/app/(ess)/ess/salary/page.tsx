@@ -278,7 +278,7 @@ export default function EssSalaryPage() {
   return (
     <div style={{ background: 'var(--bg-page)', minHeight: '100%' }}>
       <div style={{ background: `linear-gradient(135deg, #0c1f2c 0%, ${BRAND} 55%, #2d7fb8 100%)`, padding: '18px 28px 0' }}>
-        <div style={{ maxWidth: 1200, margin: '0 auto' }}>
+        <div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12, marginBottom: 14 }}>
             <div style={{ fontSize: 15, fontWeight: 900, color: '#fff' }}>💰 Salary & Benefits</div>
             {allFinYears.length > 0 && (
@@ -303,7 +303,7 @@ export default function EssSalaryPage() {
         </div>
       </div>
 
-      <div style={{ maxWidth: 1200, margin: '0 auto', padding: '20px 28px 48px' }}>
+      <div style={{ padding: '20px 28px 48px' }}>
         {tab === 'salary' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12 }}>
@@ -347,15 +347,18 @@ export default function EssSalaryPage() {
               </div>
               <div style={{ overflowX: 'auto' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
-                  <thead><tr style={{ background: 'var(--bg-page)' }}>{['Month', 'Status', 'Net Salary', 'Deductions', 'Present Days', 'Payslip'].map((h) => <th key={h} style={{ padding: '8px 14px', textAlign: h === 'Month' || h === 'Status' ? 'left' : h === 'Payslip' ? 'center' : 'right', fontWeight: 700, fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', borderBottom: '1px solid var(--border)' }}>{h}</th>)}</tr></thead>
+                  <thead><tr style={{ background: 'var(--bg-page)' }}>{['Sl.No', 'Month', 'Status', 'Net Salary', 'Deductions', 'Present Days', 'Payslip'].map((h) => <th key={h} style={{ padding: '8px 14px', textAlign: h === 'Sl.No' || h === 'Month' || h === 'Status' ? 'left' : h === 'Payslip' ? 'center' : 'right', fontWeight: 700, fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', borderBottom: '1px solid var(--border)' }}>{h}</th>)}</tr></thead>
                   <tbody>
-                    {allFYMonths.map((m) => {
+                    {/* Always exactly 12 rows (one per FY month) — a fixed calendar view, not paginated,
+                        so switching financial years doesn't hide months behind a page click. */}
+                    {allFYMonths.map((m, i) => {
                       const p = processedMap.get(m);
                       const isFuture = m > thisMonthStr;
                       const isCurrent = m === thisMonthStr;
                       const [yr, mo] = m.split('-');
                       return (
                         <tr key={m} style={{ background: p ? `${BRAND}06` : isCurrent ? `${BRAND}0a` : 'transparent', borderBottom: '1px solid var(--border)' }}>
+                          <td style={{ padding: '9px 14px', color: 'var(--text-muted)' }}>{i + 1}</td>
                           <td style={{ padding: '9px 14px', fontWeight: isCurrent ? 800 : 600 }}>{MON[parseInt(mo)]} {yr}</td>
                           <td style={{ padding: '9px 14px' }}>{p ? <span style={{ padding: '2px 8px', borderRadius: 20, fontSize: 9, fontWeight: 800, background: '#f0fdf4', color: '#16a34a' }}>Processed</span> : isFuture ? <span style={{ padding: '2px 8px', borderRadius: 20, fontSize: 9, fontWeight: 800, background: '#f1f5f9', color: '#64748b' }}>Upcoming</span> : <span style={{ padding: '2px 8px', borderRadius: 20, fontSize: 9, fontWeight: 800, background: '#fffbeb', color: '#d97706' }}>Pending</span>}</td>
                           <td style={{ padding: '9px 14px', textAlign: 'right', fontWeight: p ? 700 : 400, color: p ? BRAND : 'var(--text-muted)' }}>{p ? fmtINR(p.net_salary) : '—'}</td>

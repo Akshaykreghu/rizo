@@ -1,7 +1,8 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSession } from 'next-auth/react';
+import AppTabs from '@/components/ess/AppTabs';
 
 // Port of New Rizo's pages/ESS/ESSPresence.jsx, backed by /api/employees/[id]/presence-summary
 // (which already supports ?month= and returns per-day worked_minutes, so the month picker and
@@ -20,68 +21,89 @@ import { useSession } from 'next-auth/react';
 //   here would just be the same data in two places.
 
 const BRAND = '#1E516E';
+const LEAVE_COLOR = '#006398';
 const DOW_FULL = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-function fmtDate(d?: string | null) { if (!d) return '—'; return new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }); }
+// EssLegacyShell's own theme state (`isDark`) is local to that component and isn't exposed via
+// context, so it can't just be imported — this reads the same `data-theme` attribute it sets on
+// the `.ess-legacy` root and stays in sync via MutationObserver, so a live toggle updates the
+// hardcoded status-color backgrounds below without needing a page refresh.
+function useIsDarkTheme(): boolean {
+  const [isDark, setIsDark] = useState(false);
+  useEffect(() => {
+    const root = document.querySelector('.ess-legacy');
+    if (!root) return;
+    const update = () => setIsDark(root.getAttribute('data-theme') === 'dark');
+    update();
+    const observer = new MutationObserver(update);
+    observer.observe(root, { attributes: true, attributeFilter: ['data-theme'] });
+    return () => observer.disconnect();
+  }, []);
+  return isDark;
+}
+
 function fmtMonth(m: string) { const [y, mo] = m.split('-'); return `${MONTHS_SHORT[parseInt(mo) - 1]} ${y}`; }
 function fmtMins(mins?: number | null) { if (!mins) return '—'; const h = Math.floor(mins / 60), rm = mins % 60; return h > 0 ? `${h}h ${rm}m` : `${rm}m`; }
-function tenureStr(from: string) {
-  const s = new Date(from), e = new Date();
-  const months = (e.getFullYear() - s.getFullYear()) * 12 + (e.getMonth() - s.getMonth());
-  const y = Math.floor(months / 12), m = months % 12;
-  return y > 0 ? `${y}y ${m}m` : `${m}m`;
-}
-function halfLabel(h?: number | null) { return h === 1 ? 'First Half' : h === 2 ? 'Second Half' : '—'; }
 function fmtTime(t?: string | null) {
   if (!t) return '—';
   const dt = new Date(t);
   if (!isNaN(dt.getTime())) return dt.toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true });
   return String(t);
 }
-function calcLeaveDays(from: string, fromHalf: number, to: string, toHalf: number) {
-  if (!from || !to) return 0;
-  let days = 0;
-  const cur = new Date(from + 'T00:00:00');
-  const end = new Date(to + 'T00:00:00');
-  while (cur <= end) {
-    const dow = cur.getDay();
-    if (dow !== 0 && dow !== 6) {
-      const ds = cur.toISOString().split('T')[0];
-      const isFirst = ds === from, isLast = ds === to;
-      if (isFirst && isLast) days += (fromHalf === 2 || toHalf === 1) ? 0.5 : 1;
-      else if (isFirst && fromHalf === 2) days += 0.5;
-      else if (isLast && toHalf === 1) days += 0.5;
-      else days += 1;
-    }
-    cur.setDate(cur.getDate() + 1);
-  }
-  return days;
+function fmtTimeShort(t?: string | null) {
+  if (!t) return '';
+  const dt = new Date(t);
+  if (isNaN(dt.getTime())) return '';
+  return dt.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false });
 }
-
-const STATUS_CFG: Record<string, { label: string; color: string; bg: string }> = {
-  P: { label: 'Present', color: '#16a34a', bg: '#f0fdf4' },
-  A: { label: 'Absent', color: '#dc2626', bg: '#fef2f2' },
-  WO: { label: 'Weekend', color: '#94a3b8', bg: '#f1f5f9' },
-  HO: { label: 'Holiday', color: '#7c3aed', bg: '#f5f3ff' },
-  NA: { label: 'Not processed', color: '#94a3b8', bg: '#f8fafc' },
-  LOP: { label: 'LOP', color: '#b91c1c', bg: '#fef2f2' },
+// Short caption shown inside each calendar cell — same status data as the click-through detail
+// modal, just surfaced without a click so the grid reads at a glance.
+function captionFor(cell: DayCell, isToday = false): string {
+  if (isToday && (cell.status === 'P' || !cell.status)) return 'Active';
+  if (cell.status === 'P') return fmtTimeShort(cell.punch_in);
+  if (cell.status === 'WO') return 'W-Off';
+  if (cell.status === 'HO') return 'Holiday';
+  if (cell.status === 'A') return 'Absent';
+  if (cell.status?.includes('LOP') ?? false) return 'LOP';
+  if (!cell.status || cell.status === 'NA') return '';
+  return 'Leave';
+}
+// The light pastel `bg` tints below only work on the light theme's white cards — on the dark
+// theme's navy cards they'd render as bright, out-of-place patches, so each status also carries a
+// `bgDark` (a dark tint of the same hue) picked at render time via useIsDarkTheme(). `color` (the
+// saturated foreground used for text) stays the same in both themes.
+const STATUS_CFG: Record<string, { label: string; color: string; bg: string; bgDark: string }> = {
+  P: { label: 'Present', color: '#16a34a', bg: '#f0fdf4', bgDark: '#0f2a1a' },
+  A: { label: 'Absent', color: '#dc2626', bg: '#fef2f2', bgDark: '#2a1416' },
+  WO: { label: 'Weekend', color: '#94a3b8', bg: '#f1f5f9', bgDark: '#182634' },
+  HO: { label: 'Holiday', color: '#7c3aed', bg: '#f5f3ff', bgDark: '#1f1a33' },
+  NA: { label: 'Not processed', color: '#94a3b8', bg: '#f8fafc', bgDark: '#111c28' },
+  // Same red as Absent (LOP counts toward the same "Absent" ribbon stat) — only the label differs,
+  // shown in the day caption/detail panel for anyone who checks a specific day.
+  LOP: { label: 'LOP', color: '#dc2626', bg: '#fef2f2', bgDark: '#2a1416' },
 };
-function cfgFor(status: string | null) {
-  if (!status) return { label: 'No data', color: '#cbd5e1', bg: '#f8fafc' };
-  return STATUS_CFG[status] || { label: status, color: '#d97706', bg: '#fffbeb' };
+function cfgFor(status: string | null, isDark = false) {
+  const entry = status ? STATUS_CFG[status] : null;
+  if (entry) return { label: entry.label, color: entry.color, bg: isDark ? entry.bgDark : entry.bg };
+  if (!status) return { label: 'No data', color: '#cbd5e1', bg: isDark ? '#111c28' : '#f8fafc' };
+  return { label: status, color: LEAVE_COLOR, bg: isDark ? '#0f2233' : '#eff8ff' };
 }
 
 // ── Attendance bar chart ──────────────────────────────────────────────────────
-function AttendanceBarsChart({ months }: { months: { month: string; present: number; absent: number; leave_days: number }[] }) {
+// `targetDays` is the real working-day count for the currently-viewed month (not an invented
+// policy number) — used as a rough per-month reference line since monthlyAttendance itself
+// doesn't carry a working-day count for every historical month.
+function AttendanceBarsChart({ months, targetDays }: { months: { month: string; present: number; absent: number; leave_days: number }[]; targetDays?: number }) {
   if (!months.some((m) => m.present || m.absent)) return <div style={{ height: 160, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: 12 }}>No processed attendance data yet</div>;
   const W = 400, H = 200, PL = 24, PR = 4, PT = 10, PB = 24;
   const cW = W - PL - PR, cH = H - PT - PB;
-  const maxPresent = Math.max(...months.map((m) => m.present), 5);
+  const maxPresent = Math.max(...months.map((m) => m.present), targetDays ?? 0, 5);
   const n = months.length;
   const slotW = cW / n;
   const barW = Math.max(6, slotW - 6);
   const yMax = Math.ceil(maxPresent / 5) * 5 || 25;
+  const targetY = targetDays ? PT + cH - (targetDays / yMax) * cH : null;
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: H }}>
@@ -90,20 +112,28 @@ function AttendanceBarsChart({ months }: { months: { month: string; present: num
         return <g key={v}><line x1={PL} x2={W - PR} y1={y} y2={y} stroke="var(--border)" strokeWidth={0.5} strokeDasharray="3,3" /><text x={PL - 3} y={y + 3} fontSize={6.5} textAnchor="end" fill="var(--text-muted)">{Math.round(v)}</text></g>;
       })}
       {months.map((m, i) => {
+        const isCurrent = i === months.length - 1;
         const total = m.present + m.absent;
         const pct = total > 0 ? m.present / total : 0;
-        const color = total === 0 ? '#e2e8f0' : pct >= 0.9 ? '#16a34a' : pct >= 0.7 ? '#f59e0b' : '#dc2626';
+        const color = isCurrent ? BRAND : total === 0 ? '#e2e8f0' : pct >= 0.9 ? '#16a34a' : pct >= 0.7 ? '#f59e0b' : '#dc2626';
         const barH = (m.present / yMax) * cH;
         const x = PL + i * slotW + (slotW - barW) / 2;
         const y = PT + cH - barH;
         const [, mo] = m.month.split('-');
         return (
           <g key={m.month}>
-            <rect x={x} y={y} width={barW} height={Math.max(barH, 1)} fill={color} rx={2} opacity={0.85}><title>{fmtMonth(m.month)}: {m.present} present, {m.absent} absent</title></rect>
-            <text x={x + barW / 2} y={H - PB + 11} fontSize={6.5} textAnchor="middle" fill="var(--text-muted)">{MONTHS_SHORT[parseInt(mo) - 1]}</text>
+            <rect x={x} y={y} width={barW} height={Math.max(barH, 1)} fill={color} rx={Math.min(4, barW / 2)} opacity={0.9}><title>{fmtMonth(m.month)}: {m.present} present, {m.absent} absent</title></rect>
+            {m.present > 0 && <text x={x + barW / 2} y={y - 3} fontSize={6.5} textAnchor="middle" fill={color} fontWeight={700}>{m.present}</text>}
+            <text x={x + barW / 2} y={H - PB + 11} fontSize={6.5} textAnchor="middle" fill={isCurrent ? BRAND : 'var(--text-muted)'} fontWeight={isCurrent ? 700 : 400}>{MONTHS_SHORT[parseInt(mo) - 1]}</text>
           </g>
         );
       })}
+      {targetY !== null && (
+        <g>
+          <line x1={PL} x2={W - PR} y1={targetY} y2={targetY} stroke="#94a3b8" strokeWidth={1} strokeDasharray="4,3" opacity={0.7} />
+          <text x={W - PR} y={targetY - 3} fontSize={6.5} textAnchor="end" fill="#94a3b8">Target ({targetDays}d)</text>
+        </g>
+      )}
     </svg>
   );
 }
@@ -111,30 +141,39 @@ function AttendanceBarsChart({ months }: { months: { month: string; present: num
 // ── Daily working hours chart ─────────────────────────────────────────────────
 function WorkingHoursChart({ days, fullDayMins, halfDayMins }: { days: DayCell[]; fullDayMins: number; halfDayMins: number }) {
   const workDays = days.filter((d) => d.status && d.status !== 'WO' && d.status !== 'HO');
-  if (!workDays.length) return <div style={{ height: 160, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: 12 }}>No data</div>;
+  const hasLoggedHours = workDays.some((d) => (d.worked_minutes || 0) > 0);
+  if (!workDays.length || !hasLoggedHours) return <div style={{ height: 160, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: 12 }}>No working hours recorded this month</div>;
 
   const W = 400, H = 200, PL = 26, PR = 4, PT = 10, PB = 24;
   const cW = W - PL - PR, cH = H - PT - PB;
   const fullH = fullDayMins / 60;
   const halfH = halfDayMins / 60;
-  const yMax = Math.max(fullH * 1.3, 10);
+  const step = 2;
+  // Gridlines every 2 hours up to a clean rounded top (instead of just 0/half/full), with the
+  // half/full-day marks picked out in color since they fall on this same 2h grid for a typical
+  // 8h/4h shift — falls back to also drawing them separately if a shift's half/full hours aren't
+  // even multiples of 2.
+  const topGrid = Math.max(Math.ceil((fullH * 1.3) / step) * step, step);
+  const yMax = topGrid;
+  const gridSet = new Set<number>([0, fullH, halfH]);
+  for (let v = 0; v <= topGrid; v += step) gridSet.add(v);
+  const yLines = [...gridSet].filter((v) => v <= yMax).sort((a, b) => a - b);
   const n = workDays.length;
   const slotW = cW / Math.max(n, 1);
   const barW = Math.max(4, slotW - 4);
   const toY = (h: number) => PT + cH - (h / yMax) * cH;
-  const yLines = [...new Set([0, halfH, fullH, yMax])];
 
   return (
-    <div style={{ overflowX: 'auto' }}>
-      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: H, minWidth: Math.max(W, n * 16 + 40) }}>
+    <div>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: H, display: 'block' }}>
         {yLines.map((v) => {
           const y = toY(v);
           const isRef = v === fullH || v === halfH;
-          const label = v === 0 ? '0' : v === halfH ? `${halfH}h½` : v === fullH ? `${fullH}h` : '';
+          const refColor = v === fullH ? '#16a34a' : '#f59e0b';
           return (
             <g key={v}>
-              <line x1={PL} x2={W - PR} y1={y} y2={y} stroke={isRef ? (v === fullH ? '#16a34a' : '#f59e0b') : 'var(--border)'} strokeWidth={isRef ? 1 : 0.5} strokeDasharray={isRef ? '4,3' : '3,3'} opacity={isRef ? 0.7 : 1} />
-              {label && <text x={PL - 3} y={y + 3} fontSize={6.5} textAnchor="end" fill={isRef ? (v === fullH ? '#16a34a' : '#f59e0b') : 'var(--text-muted)'}>{label}</text>}
+              <line x1={PL} x2={W - PR} y1={y} y2={y} stroke={isRef ? refColor : 'var(--border)'} strokeWidth={isRef ? 1 : 0.5} strokeDasharray={isRef ? '4,3' : '3,3'} opacity={isRef ? 0.7 : 0.8} />
+              <text x={PL - 3} y={y + 3} fontSize={6.5} textAnchor="end" fill={isRef ? refColor : 'var(--text-muted)'}>{v === 0 ? '0' : `${v}h`}</text>
             </g>
           );
         })}
@@ -153,10 +192,11 @@ function WorkingHoursChart({ days, fullDayMins, halfDayMins }: { days: DayCell[]
           );
         })}
       </svg>
-      <div style={{ display: 'flex', gap: 10, marginTop: 5 }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 10px', marginTop: 8 }}>
         {[['#16a34a', `Full (${fullH}h)`], ['#f59e0b', `Half (${halfH}h)`], ['#dc2626', 'Short']].map(([c, l]) => (
-          <div key={c} style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 8.5, color: 'var(--text-muted)' }}>
-            <div style={{ width: 8, height: 8, borderRadius: 2, background: c }} />{l}
+          <div key={c} style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 9 }}>
+            <div style={{ width: 8, height: 8, borderRadius: 2, background: c, flexShrink: 0 }} />
+            <span style={{ color: 'var(--text-muted)' }}>{l}</span>
           </div>
         ))}
       </div>
@@ -166,6 +206,7 @@ function WorkingHoursChart({ days, fullDayMins, halfDayMins }: { days: DayCell[]
 
 // ── Leave trend chart ─────────────────────────────────────────────────────────
 function LeaveTrendChart({ months }: { months: { month: string; leave_days: number }[] }) {
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
   const W = 400, H = 160, PL = 20, PR = 8, PT = 8, PB = 22;
   const cW = W - PL - PR, cH = H - PT - PB;
   const maxL = Math.max(...months.map((m) => m.leave_days), 5);
@@ -177,211 +218,239 @@ function LeaveTrendChart({ months }: { months: { month: string; leave_days: numb
   }));
   const polyline = pts.map((p) => `${p.x},${p.y}`).join(' ');
   const polygon = `${pts[0].x},${PT + cH} ${polyline} ${pts[pts.length - 1].x},${PT + cH}`;
+  const hovered = hoverIdx !== null ? pts[hoverIdx] : null;
+  // Custom tooltip instead of the native SVG <title> (which has a slow OS-level hover delay and
+  // can't be styled) — clamped horizontally so it never renders past the chart edges.
+  const tw = 60, th = 24;
+  const tx = hovered ? Math.max(2, Math.min(W - tw - 2, hovered.x - tw / 2)) : 0;
+  const ty = hovered ? Math.max(2, hovered.y - th - 8) : 0;
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: H }}>
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: H, overflow: 'visible' }}>
       <defs>
         <linearGradient id="lgFill" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#d97706" stopOpacity={0.3} />
-          <stop offset="100%" stopColor="#d97706" stopOpacity={0.03} />
+          <stop offset="0%" stopColor={LEAVE_COLOR} stopOpacity={0.3} />
+          <stop offset="100%" stopColor={LEAVE_COLOR} stopOpacity={0.03} />
         </linearGradient>
       </defs>
       <polygon points={polygon} fill="url(#lgFill)" />
-      <polyline points={polyline} fill="none" stroke="#d97706" strokeWidth={2} strokeLinejoin="round" />
+      <polyline points={polyline} fill="none" stroke={LEAVE_COLOR} strokeWidth={2} strokeLinejoin="round" />
       {pts.map((p, i) => (
         <g key={i}>
-          <circle cx={p.x} cy={p.y} r={3} fill="#d97706"><title>{fmtMonth(p.m.month)}: {p.m.leave_days} day(s)</title></circle>
-          <text x={p.x} y={H - PB + 11} fontSize={7} textAnchor="middle" fill="var(--text-muted)">{p.m.month.slice(5)}</text>
+          <circle cx={p.x} cy={p.y} r={hoverIdx === i ? 4 : 3} fill={LEAVE_COLOR} stroke="var(--bg-card)" strokeWidth={1.5} pointerEvents="none" />
+          {/* Larger transparent hit-area so hovering near a point (not just its 3px dot) triggers the tooltip. */}
+          <circle
+            cx={p.x} cy={p.y} r={9} fill="transparent" style={{ cursor: 'pointer' }}
+            onMouseEnter={() => setHoverIdx(i)}
+            onMouseLeave={() => setHoverIdx((cur) => (cur === i ? null : cur))}
+          />
+          <text x={p.x} y={H - PB + 11} fontSize={7} textAnchor="middle" fill={hoverIdx === i ? LEAVE_COLOR : 'var(--text-muted)'} fontWeight={hoverIdx === i ? 700 : 400}>{MONTHS_SHORT[parseInt(p.m.month.slice(5, 7)) - 1]}</text>
         </g>
       ))}
+      {hovered && (
+        <g pointerEvents="none">
+          <line x1={hovered.x} x2={hovered.x} y1={PT} y2={PT + cH} stroke={LEAVE_COLOR} strokeWidth={1} strokeDasharray="2,2" opacity={0.35} />
+          <rect x={tx} y={ty} width={tw} height={th} rx={5} fill="#1e293b" />
+          <text x={tx + tw / 2} y={ty + 10} fontSize={6.5} textAnchor="middle" fill="#cbd5e1" fontWeight={600}>{fmtMonth(hovered.m.month)}</text>
+          <text x={tx + tw / 2} y={ty + 19} fontSize={7.5} textAnchor="middle" fill="#fff" fontWeight={800}>{hovered.m.leave_days} day{hovered.m.leave_days === 1 ? '' : 's'}</text>
+        </g>
+      )}
     </svg>
   );
 }
 
-// ── Square month calendar ─────────────────────────────────────────────────────
+// ── Custom month picker (replaces the native <input type="month">, whose OS/browser popup
+// can't be styled and looks jarring against the app's own hero) ────────────────
+function MonthPickerDropdown({ value, max, onChange }: { value: string; max: string; onChange: (m: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [viewYear, setViewYear] = useState(() => parseInt(value.slice(0, 4), 10));
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onClickOutside = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onClickOutside);
+    return () => document.removeEventListener('mousedown', onClickOutside);
+  }, [open]);
+
+  const [selYear, selMon] = value.split('-').map(Number);
+  const [maxYear, maxMon] = max.split('-').map(Number);
+
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <button
+        onClick={() => { if (!open) setViewYear(parseInt(value.slice(0, 4), 10)); setOpen((o) => !o); }}
+        style={{ background: 'none', border: 'none', color: '#fff', fontSize: 13, fontWeight: 800, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5, padding: '2px 4px' }}
+      >
+        📅 {fmtMonth(value)}
+      </button>
+      {open && (
+        // Theme-aware (var(--bg-card) etc.), same as every modal/popover elsewhere in this app —
+        // centered under the trigger button (not right/left-anchored) so it lines up predictably
+        // regardless of how wide the "📅 Month, Year" label happens to render.
+        <div style={{ position: 'absolute', top: 'calc(100% + 8px)', left: '50%', transform: 'translateX(-50%)', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 12, boxShadow: '0 16px 40px rgba(0,0,0,0.35)', padding: 12, zIndex: 50, width: 216 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+            <button onClick={() => setViewYear((y) => y - 1)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, color: 'var(--text-muted)', padding: 2 }}>‹</button>
+            <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--text-primary)' }}>{viewYear}</span>
+            <button
+              onClick={() => viewYear < maxYear && setViewYear((y) => y + 1)}
+              disabled={viewYear >= maxYear}
+              style={{ background: 'none', border: 'none', cursor: viewYear >= maxYear ? 'default' : 'pointer', fontSize: 14, color: viewYear >= maxYear ? 'var(--border)' : 'var(--text-muted)', padding: 2 }}
+            >›</button>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6 }}>
+            {MONTHS_SHORT.map((m, i) => {
+              const mm = i + 1;
+              const isFuture = viewYear > maxYear || (viewYear === maxYear && mm > maxMon);
+              const isSelected = viewYear === selYear && mm === selMon;
+              return (
+                <button
+                  key={m}
+                  disabled={isFuture}
+                  onClick={() => { onChange(`${viewYear}-${String(mm).padStart(2, '0')}`); setOpen(false); }}
+                  style={{
+                    padding: '6px 0', borderRadius: 8, fontSize: 11, fontWeight: 700,
+                    cursor: isFuture ? 'default' : 'pointer',
+                    border: isSelected ? `1.5px solid ${BRAND}` : '1px solid transparent',
+                    background: isSelected ? `${BRAND}18` : 'transparent',
+                    color: isFuture ? 'var(--border)' : isSelected ? BRAND : 'var(--text-primary)',
+                  }}
+                >{m}</button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Small radial progress ring (used by the monthly breakdown ribbon) ──────────
+function RadialRing({ pct, color, size = 34 }: { pct: number; color: string; size?: number }) {
+  const stroke = 3.5;
+  const r = (size - stroke) / 2;
+  const c = 2 * Math.PI * r;
+  const clamped = Math.max(0, Math.min(1, pct));
+  return (
+    <svg width={size} height={size} style={{ transform: 'rotate(-90deg)', flexShrink: 0 }}>
+      {/* Track uses the ring's own color at low opacity, not the generic hairline-border color —
+          that's too pale to read as a ring shape on its own card, especially at 0% where no
+          colored arc is drawn at all and the "ring" would otherwise be almost invisible. */}
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={color} strokeOpacity={0.16} strokeWidth={stroke} />
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={color} strokeWidth={stroke} strokeDasharray={c} strokeDashoffset={c * (1 - clamped)} strokeLinecap="round" />
+    </svg>
+  );
+}
+
+// ── Month calendar (columns stretch to fill the card width) ────────────────────
 interface DayCell { date: string; day: number; dow: number; status: string | null; punch_in: string | null; punch_out: string | null; worked_minutes: number | null }
 
-function MonthCalendar({ days, today, onDayClick }: { days: DayCell[]; today: number; onDayClick: (d: DayCell) => void }) {
+function MonthCalendar({ days, today, isCurrentMonth, onDayClick, isDark }: { days: DayCell[]; today: number; isCurrentMonth: boolean; onDayClick: (d: DayCell) => void; isDark: boolean }) {
   const firstDow = days.length ? new Date(days[0].date).getDay() : 0;
   const cells: (DayCell | null)[] = [...Array(firstDow).fill(null), ...days];
-  const CELL = 34;
+  const CELL = 42;
 
   return (
     <div>
-      <div style={{ display: 'grid', gridTemplateColumns: `repeat(7, ${CELL}px)`, gap: 3, marginBottom: 4 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 4, marginBottom: 4 }}>
         {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, i) => (
-          <div key={i} style={{ width: CELL, textAlign: 'center', fontSize: 9, fontWeight: 800, color: i === 0 || i === 6 ? '#94a3b8' : 'var(--text-muted)' }}>{d}</div>
+          <div key={i} style={{ textAlign: 'center', fontSize: 9, fontWeight: 800, color: i === 0 || i === 6 ? '#94a3b8' : 'var(--text-muted)' }}>{d}</div>
         ))}
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: `repeat(7, ${CELL}px)`, gap: 3 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 4 }}>
         {cells.map((cell, i) => {
-          if (!cell) return <div key={i} style={{ width: CELL, height: CELL }} />;
-          const isFuture = cell.day > today;
-          const cfg = cfgFor(cell.status);
-          const isToday = cell.day === today;
+          if (!cell) return <div key={i} style={{ height: CELL }} />;
+          // `today` is the elapsed-days cursor from the API, which for a fully-completed past
+          // month is just that month's last day (so stats can treat every day as "elapsed") — it
+          // does not mean today is actually that date, so the real-today highlight/caption must
+          // also check we're viewing the real current month.
+          const isFuture = isCurrentMonth && cell.day > today;
+          const cfg = cfgFor(cell.status, isDark);
+          const isToday = isCurrentMonth && cell.day === today;
+          const caption = isFuture ? '' : captionFor(cell, isToday);
           return (
             <div key={i} onClick={() => !isFuture && onDayClick(cell)} title={`${cell.day} ${DOW_FULL[cell.dow]}: ${isFuture ? 'Upcoming' : cfg.label}`}
-              style={{ width: CELL, height: CELL, borderRadius: 6, cursor: isFuture ? 'default' : 'pointer', background: isFuture ? 'transparent' : cfg.bg, border: isToday ? `2px solid ${BRAND}` : isFuture ? '1px dashed var(--border)' : `1px solid ${cfg.color}44`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <span style={{ fontSize: 10, fontWeight: isToday ? 900 : 700, color: isFuture ? 'var(--text-muted)' : cfg.color }}>{cell.day}</span>
+              style={{ width: '100%', height: CELL, borderRadius: 8, cursor: isFuture ? 'default' : 'pointer', background: isFuture ? 'transparent' : cfg.bg, border: isToday ? `2px solid ${BRAND}` : isFuture ? '1px dashed var(--border)' : `1px solid ${cfg.color}44`, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 1, overflow: 'hidden', boxSizing: 'border-box' }}>
+              <span style={{ fontSize: 12, fontWeight: isToday ? 900 : 700, color: isFuture ? 'var(--text-muted)' : cfg.color, lineHeight: 1 }}>{cell.day}</span>
+              {caption && <span style={{ fontSize: 8, fontWeight: 700, color: cfg.color, opacity: 0.8, lineHeight: 1, whiteSpace: 'nowrap' }}>{caption}</span>}
             </div>
           );
         })}
       </div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 10px', marginTop: 10 }}>
-        {['P', 'A', 'WO', 'HO', 'NA'].map((k) => (
-          <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 9 }}>
-            <div style={{ width: 8, height: 8, borderRadius: 2, background: STATUS_CFG[k].bg, border: `1px solid ${STATUS_CFG[k].color}44` }} />
-            <span style={{ color: 'var(--text-muted)' }}>{STATUS_CFG[k].label}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function DayDetailModal({ day, onClose }: { day: DayCell; onClose: () => void }) {
-  const cfg = cfgFor(day.status);
-  return (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 1100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: 'var(--bg-card)', borderRadius: 16, width: 340, boxShadow: '0 24px 60px rgba(0,0,0,0.35)', overflow: 'hidden' }}>
-        <div style={{ background: cfg.bg, borderBottom: `3px solid ${cfg.color}`, padding: '14px 18px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-          <div>
-            <div style={{ fontSize: 10, color: cfg.color, fontWeight: 800, textTransform: 'uppercase' }}>{DOW_FULL[day.dow]}</div>
-            <div style={{ fontSize: 18, fontWeight: 900, color: 'var(--text-primary)' }}>{day.day} {MONTHS_SHORT[parseInt(day.date.split('-')[1]) - 1]}</div>
-          </div>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 18, color: 'var(--text-muted)', cursor: 'pointer' }}>×</button>
-        </div>
-        <div style={{ display: 'flex', borderBottom: '1px solid var(--border)' }}>
-          {[['Check In', fmtTime(day.punch_in)], ['Check Out', fmtTime(day.punch_out)], ['Duration', fmtMins(day.worked_minutes)]].map(([label, val]) => (
-            <div key={label} style={{ flex: 1, textAlign: 'center', padding: '10px 8px' }}>
-              <div style={{ fontSize: 9, color: 'var(--text-muted)', fontWeight: 700, textTransform: 'uppercase' }}>{label}</div>
-              <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--text-primary)', marginTop: 2 }}>{val}</div>
+        {['P', 'Leave', 'A', 'WO', 'HO', 'NA'].map((k) => {
+          const swatch = k === 'Leave' ? { label: 'Leave', color: LEAVE_COLOR } : STATUS_CFG[k];
+          return (
+            <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 9 }}>
+              <div style={{ width: 8, height: 8, borderRadius: 2, background: k === 'NA' ? 'transparent' : swatch.color, border: k === 'NA' ? `1.5px dashed ${swatch.color}` : 'none' }} />
+              <span style={{ color: 'var(--text-muted)' }}>{swatch.label}</span>
             </div>
-          ))}
-        </div>
-        <div style={{ padding: 14, textAlign: 'center' }}>
-          <span style={{ padding: '4px 14px', borderRadius: 20, fontSize: 12, fontWeight: 800, color: cfg.color, background: `${cfg.color}18` }}>{cfg.label}</span>
-        </div>
+          );
+        })}
       </div>
     </div>
   );
 }
 
-// ── Apply leave modal ─────────────────────────────────────────────────────────
-interface LeaveType { salaryHeadItemFkey: number; name: string; allowNegative: boolean; maxLeave: number }
-
-function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: number; defaultTypeId?: number | null; onClose: () => void; onSaved: () => void }) {
-  const [types, setTypes] = useState<LeaveType[]>([]);
-  const [approvers, setApprovers] = useState<{ authorizer: { name: string | null } | null; approver: { name: string | null } | null }>({ authorizer: null, approver: null });
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [form, setForm] = useState({ leave_type_id: defaultTypeId ? String(defaultTypeId) : '', from_date: '', from_half: '1', to_date: '', to_half: '2', reason: '', contact_person: '', contact_no: '' });
-
-  useEffect(() => {
-    fetch(`/api/leave/types?employee=${empId}`).then((r) => (r.ok ? r.json() : { data: [] })).then((d) => setTypes(d.data || []));
-    fetch(`/api/leave/authorizers?employee=${empId}`).then((r) => (r.ok ? r.json() : null)).then((d) => d && setApprovers(d));
-  }, [empId]);
-
-  const leaveDays = calcLeaveDays(form.from_date, Number(form.from_half), form.to_date, Number(form.to_half));
-
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    setSaving(true);
-    setError(null);
-    try {
-      const res = await fetch('/api/leave/requests', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          salaryHeadItemFkey: Number(form.leave_type_id), fromDate: form.from_date, fromHalf: Number(form.from_half),
-          toDate: form.to_date, toHalf: Number(form.to_half), reason: form.reason, contactNo: form.contact_no, contactPerson: form.contact_person,
-        }),
-      });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error || 'Failed to apply');
-      onSaved();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to apply');
-    } finally {
-      setSaving(false);
-    }
+// Always-visible summary for the selected/default day, sitting inline below the calendar instead
+// of behind a click-triggered modal — same fields (check-in/out/duration + status), just always in view.
+// When the selected day is today and the employee is currently checked in, the status/duration
+// switch to the live punch-status snapshot (same source as the Home page's punch widget) instead
+// of the day's `worked_minutes` — that field is populated by end-of-day attendance processing, so
+// it can't reflect a shift that's still in progress.
+function DayDetailPanel({ day, isToday, punchStatus, fullDayMins, isDark }: { day: DayCell | null; isToday: boolean; punchStatus: { checkedIn: boolean; elapsedSeconds: number; lastPunch: { time: string; direction: string } | null } | null; fullDayMins: number; isDark: boolean }) {
+  if (!day) {
+    return (
+      <div style={{ padding: '12px 14px', background: 'var(--bg-page)', border: '1px dashed var(--border)', borderRadius: 12, fontSize: 11, color: 'var(--text-muted)', textAlign: 'center' }}>
+        Select a day above to see check-in / check-out details
+      </div>
+    );
   }
-
-  const inp: React.CSSProperties = { width: '100%', padding: '8px 10px', borderRadius: 8, border: '1.5px solid var(--border)', background: 'var(--bg-page)', color: 'var(--text-primary)', fontSize: 13, outline: 'none', boxSizing: 'border-box' };
-  const lbl: React.CSSProperties = { fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 4, display: 'block' };
+  const onDuty = isToday && (punchStatus?.checkedIn ?? false);
+  const cfg = onDuty ? { label: 'On Duty', color: '#16a34a', bg: isDark ? '#0f2a1a' : '#f0fdf4' } : cfgFor(day.status, isDark);
+  // A working day (Present/Absent/LOP — not a weekend, holiday, leave or not-yet-processed day)
+  // with no check-in or no check-out recorded is a genuine punch gap worth flagging — an ongoing
+  // shift (onDuty) legitimately has no check-out yet, so that's excluded rather than flagged.
+  const isWorkStatus = day.status === 'P' || day.status === 'A' || (day.status?.includes('LOP') ?? false);
+  const missingPunch = !onDuty && isWorkStatus && (!day.punch_in || !day.punch_out);
+  const btnBase: React.CSSProperties = { fontSize: 10.5, fontWeight: 700, padding: '7px 13px', borderRadius: 8, textDecoration: 'none', whiteSpace: 'nowrap', textAlign: 'center' };
 
   return (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: 'var(--bg-card)', borderRadius: 16, width: 540, maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
-        <div style={{ background: `linear-gradient(135deg, #0c1f2c, ${BRAND})`, padding: '16px 20px', borderRadius: '16px 16px 0 0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div style={{ fontSize: 14, fontWeight: 900, color: '#fff' }}>🌴 Apply for Leave</div>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.7)', fontSize: 20, cursor: 'pointer' }}>×</button>
+    <div style={{ padding: '10px 14px', background: 'var(--bg-page)', border: `1px solid ${cfg.color}33`, borderRadius: 12, display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+      <div style={{ width: 42, height: 42, borderRadius: 10, background: cfg.bg, border: `1px solid ${cfg.color}44`, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+        <span style={{ fontSize: 8, fontWeight: 800, color: cfg.color, textTransform: 'uppercase', lineHeight: 1 }}>{MONTHS_SHORT[parseInt(day.date.split('-')[1]) - 1]}</span>
+        <span style={{ fontSize: 16, fontWeight: 900, color: cfg.color, lineHeight: 1.3 }}>{day.day}</span>
+      </div>
+      <div style={{ flex: '1 1 200px', minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 12, fontWeight: 800, color: 'var(--text-primary)' }}>{DOW_FULL[day.dow]}</span>
+          <span style={{ fontSize: 10, fontWeight: 800, color: cfg.color, background: `${cfg.color}18`, borderRadius: 20, padding: '1px 9px' }}>{onDuty && <span style={{ marginRight: 3 }}>●</span>}{cfg.label}</span>
         </div>
-        <form onSubmit={submit} style={{ padding: 20 }}>
-          <div style={{ marginBottom: 14 }}>
-            <label style={lbl}>Leave Type *</label>
-            <select required style={inp} value={form.leave_type_id} onChange={(e) => setForm((f) => ({ ...f, leave_type_id: e.target.value }))}>
-              <option value="">-- Select --</option>
-              {types.map((t) => <option key={t.salaryHeadItemFkey} value={t.salaryHeadItemFkey}>{t.name}</option>)}
-            </select>
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}>
-            {(['From', 'To'] as const).map((label) => {
-              const dk = label === 'From' ? 'from_date' : 'to_date';
-              const hk = label === 'From' ? 'from_half' : 'to_half';
-              return (
-                <div key={label}>
-                  <label style={lbl}>{label} Date *</label>
-                  <input type="date" required style={{ ...inp, marginBottom: 6 }} value={form[dk]} onChange={(e) => setForm((f) => ({ ...f, [dk]: e.target.value }))} />
-                  <select style={inp} value={form[hk]} onChange={(e) => setForm((f) => ({ ...f, [hk]: e.target.value }))}>
-                    <option value="1">First Half</option>
-                    <option value="2">Second Half</option>
-                  </select>
-                </div>
-              );
-            })}
-          </div>
-          {leaveDays > 0 && <div style={{ marginBottom: 14, padding: '8px 14px', borderRadius: 8, background: `${BRAND}12`, border: `1px solid ${BRAND}33`, fontSize: 13, fontWeight: 700, color: BRAND }}>📅 {leaveDays} day{leaveDays !== 1 ? 's' : ''}</div>}
-          <div style={{ marginBottom: 14 }}>
-            <label style={lbl}>Reason *</label>
-            <input required type="text" style={inp} value={form.reason} onChange={(e) => setForm((f) => ({ ...f, reason: e.target.value }))} />
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}>
-            <div>
-              <label style={lbl}>Duties Handed To</label>
-              <input style={inp} value={form.contact_person} onChange={(e) => setForm((f) => ({ ...f, contact_person: e.target.value }))} />
-            </div>
-            <div>
-              <label style={lbl}>Contact During Leave</label>
-              <input style={inp} value={form.contact_no} onChange={(e) => setForm((f) => ({ ...f, contact_no: e.target.value }))} />
-            </div>
-          </div>
-          <div style={{ display: 'flex', gap: 16, marginBottom: 14, fontSize: 12, color: 'var(--text-muted)' }}>
-            <span>Authorizer: <strong style={{ color: 'var(--text-primary)' }}>{approvers.authorizer?.name || 'Not configured'}</strong></span>
-            <span>Approver: <strong style={{ color: 'var(--text-primary)' }}>{approvers.approver?.name || 'Not configured'}</strong></span>
-          </div>
-          {error && <div style={{ marginBottom: 12, fontSize: 12, color: '#dc2626' }}>{error}</div>}
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
-            <button type="button" onClick={onClose} style={{ padding: '8px 18px', borderRadius: 8, border: '1.5px solid var(--border)', background: 'var(--bg-page)', color: 'var(--text-muted)', fontWeight: 700, cursor: 'pointer', fontSize: 13 }}>Cancel</button>
-            <button type="submit" disabled={saving || !form.leave_type_id || !form.from_date || !form.to_date || !form.reason} style={{ padding: '8px 22px', borderRadius: 8, border: 'none', background: BRAND, color: '#fff', fontWeight: 800, cursor: 'pointer', fontSize: 13, opacity: saving ? 0.7 : 1 }}>
-              {saving ? 'Submitting…' : 'Submit Leave'}
-            </button>
-          </div>
-        </form>
+        <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 3 }}>
+          {onDuty ? (
+            <>First in: <strong style={{ color: 'var(--text-primary)' }}>{fmtTime(day.punch_in)}</strong> · Current logged: <strong style={{ color: 'var(--text-primary)' }}>{fmtMins(Math.round((punchStatus?.elapsedSeconds ?? 0) / 60))}</strong> / {fmtMins(fullDayMins)}</>
+          ) : day.punch_in || day.punch_out ? (
+            <>In: <strong style={{ color: 'var(--text-primary)' }}>{fmtTime(day.punch_in)}</strong> · Out: <strong style={{ color: 'var(--text-primary)' }}>{fmtTime(day.punch_out)}</strong> · Duration: <strong style={{ color: 'var(--text-primary)' }}>{fmtMins(day.worked_minutes)}</strong></>
+          ) : (
+            <span>No punch recorded</span>
+          )}
+        </div>
+      </div>
+      <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+        {missingPunch && (
+          <a href="/ess/requests?tab=regularization" style={{ ...btnBase, color: '#d97706', background: 'var(--bg-card)', border: '1px solid var(--border)' }}>Regularize Log</a>
+        )}
+        {isToday && (
+          <a href="/ess" style={{ ...btnBase, color: '#fff', background: BRAND, border: '1px solid transparent' }}>{onDuty ? 'Punch Out' : 'Punch In'}</a>
+        )}
       </div>
     </div>
   );
 }
 
 // ── Main page ─────────────────────────────────────────────────────────────────
-interface Balance { salaryHeadItemFkey: number; name: string; allowNegative: boolean; maxLeave: number; isLeaveEncash: boolean; balance: number }
-interface LeaveRow {
-  LEAVEENTRYID: number; leave_type: string; FROMDATE: string; FROMHALF: number; TODATE: string; TOHALF: number;
-  leave_days: number; LEAVESTATUS: string; applied_date: string;
-  Reason: string | null; contact_person: string | null; contact_No: string | null;
-  ISAutherizedby: number | null; Autherized_date: string | null; authorized_by_first_name: string | null; authorized_by_last_name: string | null;
-  APPROVEDBY: number | null; APPROVED_date: string | null; approved_by_first_name: string | null; approved_by_last_name: string | null;
-  REMARKS: string | null;
-}
 interface Presence {
   employee: { emp_pkey: number; first_name: string; last_name: string; joining_date: string | null; shift_name: string | null; leave_group_name: string | null };
   shiftInfo: { fullDayMins: number; halfDayMins: number; startTime: string | null; endTime: string | null };
@@ -389,144 +458,35 @@ interface Presence {
   monthlyAttendance: { month: string; present: number; absent: number; leave_days: number }[];
 }
 
-function StatusBadge({ status }: { status: string }) {
-  const cfg: Record<string, [string, string]> = { Applied: [BRAND, '#e0f2fe'], Authorized: ['#7c3aed', '#f5f3ff'], Approved: ['#16a34a', '#f0fdf4'], Rejected: ['#dc2626', '#fef2f2'], Cancelled: ['#94a3b8', '#f1f5f9'] };
-  const [color, bg] = cfg[status] || [BRAND, '#e0f2fe'];
-  return <span style={{ padding: '2px 8px', borderRadius: 20, fontSize: 9, fontWeight: 800, textTransform: 'uppercase', color, background: bg }}>{status}</span>;
-}
-
-const STATUS_STRIPE: Record<string, string> = { Applied: BRAND, Authorized: '#7c3aed', Approved: '#16a34a', Rejected: '#dc2626', Cancelled: '#94a3b8' };
-
-const leaveDetailSec: React.CSSProperties = { padding: '14px 20px', borderBottom: '1px solid var(--border)' };
-const leaveDetailSecLabel: React.CSSProperties = { fontSize: 9, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.5px', color: 'var(--text-muted)', marginBottom: 8 };
-function LeaveInfoRow({ label, value }: { label: string; value?: string | null }) {
-  return (
-    <div style={{ display: 'flex', gap: 10, marginBottom: 5, alignItems: 'flex-start' }}>
-      <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 700, minWidth: 130, flexShrink: 0 }}>{label}</span>
-      <span style={{ fontSize: 11, color: 'var(--text-primary)' }}>{value || '—'}</span>
-    </div>
-  );
-}
-
-function LeaveDetailModal({ leave: r, onClose, onCancelled }: { leave: LeaveRow; onClose: () => void; onCancelled: () => void }) {
-  const [cancelling, setCancelling] = useState(false);
-
-  async function handleCancel() {
-    setCancelling(true);
-    try {
-      await fetch(`/api/leave/requests/${r.LEAVEENTRYID}/cancel`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-      onCancelled();
-    } finally {
-      setCancelling(false);
-    }
-  }
-
-  const sec = leaveDetailSec;
-  const secLabel = leaveDetailSecLabel;
-  const authorizedByName = r.authorized_by_first_name ? `${r.authorized_by_first_name} ${r.authorized_by_last_name || ''}`.trim() : null;
-  const approvedByName = r.approved_by_first_name ? `${r.approved_by_first_name} ${r.approved_by_last_name || ''}`.trim() : null;
-
-  return (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 1050, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: 'var(--bg-card)', borderRadius: 18, width: 480, maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 24px 60px rgba(0,0,0,0.35)' }}>
-        <div style={{ background: `linear-gradient(135deg, #0c1f2c, ${BRAND})`, padding: '16px 20px', borderRadius: '18px 18px 0 0', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
-          <div>
-            <div style={{ fontSize: 12, fontWeight: 800, color: '#fff', marginBottom: 4 }}>🌴 {r.leave_type || 'Leave Request'}</div>
-            <StatusBadge status={r.LEAVESTATUS} />
-          </div>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.7)', fontSize: 20, cursor: 'pointer', padding: 0, lineHeight: 1, marginTop: 2 }}>×</button>
-        </div>
-
-        <div style={sec}>
-          <div style={secLabel}>Duration</div>
-          <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
-            <div style={{ textAlign: 'center' }}>
-              <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 2 }}>From</div>
-              <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--text-primary)' }}>{fmtDate(r.FROMDATE)}</div>
-              <div style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 1 }}>{halfLabel(r.FROMHALF)}</div>
-            </div>
-            <div style={{ fontSize: 18, color: 'var(--text-muted)', fontWeight: 300 }}>→</div>
-            <div style={{ textAlign: 'center' }}>
-              <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 2 }}>To</div>
-              <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--text-primary)' }}>{fmtDate(r.TODATE)}</div>
-              <div style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 1 }}>{halfLabel(r.TOHALF)}</div>
-            </div>
-            <div style={{ marginLeft: 'auto', textAlign: 'center', padding: '8px 16px', borderRadius: 10, background: `${BRAND}12`, border: `1px solid ${BRAND}33` }}>
-              <div style={{ fontSize: 22, fontWeight: 900, color: BRAND, lineHeight: 1 }}>{r.leave_days}</div>
-              <div style={{ fontSize: 9, color: 'var(--text-muted)' }}>day{r.leave_days !== 1 ? 's' : ''}</div>
-            </div>
-          </div>
-        </div>
-
-        <div style={sec}>
-          <div style={secLabel}>Details</div>
-          <LeaveInfoRow label="Reason" value={r.Reason} />
-          {r.contact_person && <LeaveInfoRow label="Duties Handed To" value={r.contact_person} />}
-          {r.contact_No && <LeaveInfoRow label="Contact During Leave" value={r.contact_No} />}
-        </div>
-
-        <div style={sec}>
-          <div style={secLabel}>Approval Chain</div>
-          <LeaveInfoRow label="Applied On" value={fmtDate(r.applied_date)} />
-          <LeaveInfoRow
-            label="Authorized By"
-            value={authorizedByName ? `${authorizedByName}${r.Autherized_date ? ' · ' + fmtDate(r.Autherized_date) : ''}` : (r.LEAVESTATUS === 'Applied' ? 'Pending' : '—')}
-          />
-          <LeaveInfoRow
-            label="Approved By"
-            value={approvedByName ? `${approvedByName}${r.APPROVED_date ? ' · ' + fmtDate(r.APPROVED_date) : ''}` : (r.LEAVESTATUS === 'Authorized' || r.LEAVESTATUS === 'Applied' ? 'Pending' : '—')}
-          />
-          {r.LEAVESTATUS === 'Rejected' && r.REMARKS && (
-            <div style={{ marginTop: 8, padding: '8px 12px', borderRadius: 8, background: '#fef2f2', border: '1px solid #dc262622' }}>
-              <div style={{ fontSize: 9, fontWeight: 800, color: '#dc2626', textTransform: 'uppercase', marginBottom: 3 }}>Rejection Remarks</div>
-              <div style={{ fontSize: 11, color: '#dc2626' }}>{r.REMARKS}</div>
-            </div>
-          )}
-        </div>
-
-        <div style={{ padding: '14px 20px', display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
-          <button onClick={onClose} style={{ padding: '8px 18px', borderRadius: 8, border: '1.5px solid var(--border)', background: 'var(--bg-page)', color: 'var(--text-muted)', fontWeight: 700, cursor: 'pointer', fontSize: 13 }}>Close</button>
-          {r.LEAVESTATUS === 'Applied' && (
-            <button onClick={handleCancel} disabled={cancelling} style={{ padding: '8px 18px', borderRadius: 8, border: '1.5px solid #dc262644', background: '#fef2f2', color: '#dc2626', fontWeight: 800, cursor: 'pointer', fontSize: 13, opacity: cancelling ? 0.7 : 1 }}>
-              {cancelling ? 'Cancelling…' : 'Cancel Leave'}
-            </button>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 export default function EssPresencePage() {
   const { data: session } = useSession();
   const empId = session?.user.empFkey;
+  const isDark = useIsDarkTheme();
 
   const [presence, setPresence] = useState<Presence | null>(null);
-  const [balances, setBalances] = useState<Balance[]>([]);
-  const [leaves, setLeaves] = useState<LeaveRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [applyOpen, setApplyOpen] = useState(false);
-  const [applyType, setApplyType] = useState<number | null>(null);
-  const [selectedDay, setSelectedDay] = useState<DayCell | null>(null);
-  const [selectedLeaveRequest, setSelectedLeaveRequest] = useState<LeaveRow | null>(null);
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
 
   const nowMonth = new Date().toISOString().slice(0, 7);
   const [selectedMonth, setSelectedMonth] = useState(nowMonth);
+  const [chartTab, setChartTab] = useState<'attendance' | 'hours' | 'leave'>('attendance');
+  const [punchStatus, setPunchStatus] = useState<{ checkedIn: boolean; elapsedSeconds: number; lastPunch: { time: string; direction: string } | null } | null>(null);
 
   const load = useCallback(() => {
     if (!empId) return;
-    Promise.all([
-      fetch(`/api/employees/${empId}/presence-summary?month=${selectedMonth}`).then((r) => (r.ok ? r.json() : null)),
-      fetch('/api/leave/balances').then((r) => (r.ok ? r.json() : { data: [] })),
-      fetch('/api/leave/requests').then((r) => (r.ok ? r.json() : { data: [] })),
-    ]).then(([p, b, l]) => {
-      setPresence(p);
-      setBalances(b.data || []);
-      setLeaves(l.data || []);
-    }).finally(() => setLoading(false));
+    fetch(`/api/employees/${empId}/presence-summary?month=${selectedMonth}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then(setPresence)
+      .finally(() => setLoading(false));
   }, [empId, selectedMonth]);
 
   useEffect(() => { load(); }, [load]);
+  // Same live punch data the Home page's punch widget uses — surfaced here too so today's
+  // check-in status is visible without navigating away from Presence.
+  useEffect(() => {
+    if (!empId) return;
+    fetch('/api/ess/punch/status').then((r) => (r.ok ? r.json() : null)).then(setPunchStatus).catch(() => {});
+  }, [empId]);
 
   if (loading || !presence) {
     return (
@@ -537,14 +497,7 @@ export default function EssPresencePage() {
     );
   }
 
-  const { employee: emp, shiftInfo, currentMonth, monthlyAttendance } = presence;
-
-  const avgAtt = monthlyAttendance.length
-    ? Math.round(monthlyAttendance.reduce((s, m) => s + (m.present / Math.max(m.present + m.absent, 1)) * 100, 0) / monthlyAttendance.length)
-    : 0;
-  const totalLeavesTaken = monthlyAttendance.reduce((s, m) => s + m.leave_days, 0);
-  const bestMonth = monthlyAttendance.length ? [...monthlyAttendance].sort((a, b) => b.present - a.present)[0] : null;
-  const totalPresent = monthlyAttendance.reduce((s, m) => s + m.present, 0);
+  const { shiftInfo, currentMonth, monthlyAttendance } = presence;
 
   // Derived (not fabricated) from currentMonth.days — the API doesn't precompute working-days /
   // days-remaining fields the way New Rizo's backend does, but they're a straight read of the
@@ -552,6 +505,11 @@ export default function EssPresencePage() {
   const cmDays = currentMonth?.days ?? [];
   const cmToday = currentMonth?.today ?? 0;
   const elapsedDays = cmDays.filter((d) => d.day <= cmToday);
+
+  // Selected day for the always-visible detail panel: whatever was last clicked, if that date
+  // still exists in the currently-loaded month, else default to today (or the last elapsed day,
+  // for a past month) — computed at render time rather than synced via an effect.
+  const selectedDay = (cmDays.find((d) => d.date === selectedDate) ?? cmDays.find((d) => d.day === cmToday) ?? cmDays[cmDays.length - 1] ?? null);
   const cmData = {
     present: elapsedDays.filter((d) => d.status === 'P').length,
     absent: elapsedDays.filter((d) => d.status === 'A' || (d.status?.includes('LOP') ?? false)).length,
@@ -559,22 +517,22 @@ export default function EssPresencePage() {
     holiday: cmDays.filter((d) => d.status === 'HO').length,
   };
   const workingDays = cmDays.filter((d) => d.status !== 'WO' && d.status !== 'HO').length;
-  const daysRemaining = Math.max(cmDays.length - cmToday, 0);
+  const totalWorkedMins = cmDays.reduce((s, d) => s + (d.worked_minutes || 0), 0);
+  const elapsedCalendarDays = elapsedDays.length;
+  // Present/Leave/Absent are fractions of elapsed WORKING days (weekends/holidays were never an
+  // opportunity to be present), not raw elapsed calendar days — dividing by calendar days would
+  // silently understate every percentage (e.g. 25 present / 31 calendar days = 81% instead of the
+  // correct 25 / 26 working days = 96%, which is what the "N working days" badge next to it means).
+  const elapsedWorkingDays = cmData.present + cmData.absent + cmData.leave;
+  const pctOfElapsed = (v: number) => (elapsedWorkingDays > 0 ? v / elapsedWorkingDays : 0);
 
   return (
     <div style={{ background: 'var(--bg-page)', minHeight: '100%' }}>
       <div style={{ background: `linear-gradient(135deg, #0c1f2c 0%, ${BRAND} 55%, #2d7fb8 100%)`, padding: '18px 28px 16px' }}>
-        <div style={{ maxWidth: 1300, margin: '0 auto' }}>
+        <div>
           <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
             <div>
-              <div style={{ fontSize: 15, fontWeight: 900, color: '#fff', marginBottom: 6 }}>📊 My Presence</div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 20px', alignItems: 'center' }}>
-                {emp.joining_date && <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.75)' }}>Joined <strong style={{ color: '#fff' }}>{fmtDate(emp.joining_date)}</strong> · {tenureStr(emp.joining_date)} tenure</span>}
-                {emp.shift_name && <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.75)' }}>⏰ Shift: <strong style={{ color: '#fff' }}>{emp.shift_name}</strong>{shiftInfo.startTime && <span style={{ color: 'rgba(255,255,255,0.6)' }}> ({fmtTime(shiftInfo.startTime)} – {fmtTime(shiftInfo.endTime)})</span>}</span>}
-                {emp.leave_group_name && <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.75)' }}>🌴 Policy: <strong style={{ color: '#fff' }}>{emp.leave_group_name}</strong></span>}
-                {monthlyAttendance.length > 0 && <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.75)' }}>Avg attendance: <strong style={{ color: avgAtt >= 90 ? '#86efac' : avgAtt >= 70 ? '#fde68a' : '#fca5a5' }}>{avgAtt}%</strong></span>}
-                {currentMonth && selectedMonth === nowMonth && <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.75)' }}><strong style={{ color: '#fff' }}>{daysRemaining} days remaining</strong> · {workingDays} working days</span>}
-              </div>
+              <div style={{ fontSize: 15, fontWeight: 900, color: '#fff' }}>📊 My Presence</div>
             </div>
 
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(255,255,255,0.12)', borderRadius: 10, padding: '6px 12px', border: '1px solid rgba(255,255,255,0.2)' }}>
@@ -582,13 +540,7 @@ export default function EssPresencePage() {
                 onClick={() => { const [y, m] = selectedMonth.split('-').map(Number); const d = new Date(y, m - 2, 1); setSelectedMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`); }}
                 style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.8)', fontSize: 16, cursor: 'pointer', padding: '0 4px', lineHeight: 1 }}
               >‹</button>
-              <input
-                type="month"
-                value={selectedMonth}
-                max={nowMonth}
-                onChange={(e) => e.target.value && setSelectedMonth(e.target.value)}
-                style={{ background: 'none', border: 'none', color: '#fff', fontSize: 13, fontWeight: 800, cursor: 'pointer', outline: 'none', colorScheme: 'dark' }}
-              />
+              <MonthPickerDropdown value={selectedMonth} max={nowMonth} onChange={setSelectedMonth} />
               <button
                 onClick={() => { if (selectedMonth >= nowMonth) return; const [y, m] = selectedMonth.split('-').map(Number); const d = new Date(y, m, 1); setSelectedMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`); }}
                 style={{ background: 'none', border: 'none', color: selectedMonth >= nowMonth ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.8)', fontSize: 16, cursor: selectedMonth >= nowMonth ? 'default' : 'pointer', padding: '0 4px', lineHeight: 1 }}
@@ -601,157 +553,121 @@ export default function EssPresencePage() {
         </div>
       </div>
 
-      {monthlyAttendance.length > 0 && bestMonth && (
-        <div style={{ background: `${BRAND}0a`, borderBottom: '1px solid var(--border)', padding: '8px 28px' }}>
-          <div style={{ maxWidth: 1300, margin: '0 auto', fontSize: 11, color: 'var(--text-muted)' }}>
-            Since joining — {totalPresent} days present across {monthlyAttendance.length} month{monthlyAttendance.length !== 1 ? 's' : ''} · {totalLeavesTaken} leave day{totalLeavesTaken !== 1 ? 's' : ''} taken · Best month: {fmtMonth(bestMonth.month)} ({bestMonth.present} days present)
-          </div>
-        </div>
-      )}
+      <div style={{ padding: '16px 28px 32px', display: 'flex', flexDirection: 'column', gap: 14 }}>
 
-      <div style={{ maxWidth: 1300, margin: '0 auto', padding: '20px 28px 48px', display: 'flex', flexDirection: 'column', gap: 20 }}>
+        <div style={{ background: 'var(--bg-card)', border: '1.5px solid var(--border)', borderRadius: 16, padding: '14px 16px' }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '10px 28px' }}>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--text-primary)' }}>Monthly Working Cycle Breakdown</span>
+                <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', background: 'var(--bg-page)', border: '1px solid var(--border)', borderRadius: 20, padding: '2px 9px' }}>{workingDays} working days</span>
+              </div>
+              <div style={{ fontSize: 10.5, color: 'var(--text-muted)', marginTop: 3 }}>Consolidated presence distribution for {currentMonth ? fmtMonth(currentMonth.month) : 'this month'}</div>
+            </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 10 }}>
-          {[
-            { label: 'Present', val: cmData.present, color: '#16a34a', bg: '#f0fdf4' },
-            { label: 'Absent', val: cmData.absent, color: '#dc2626', bg: '#fef2f2' },
-            { label: 'On Leave', val: cmData.leave, color: '#d97706', bg: '#fffbeb' },
-            { label: 'Holidays', val: cmData.holiday, color: '#7c3aed', bg: '#f5f3ff' },
-          ].map((s) => (
-            <div key={s.label} style={{ background: s.bg, border: `1.5px solid ${s.color}22`, borderRadius: 16, padding: '12px 16px' }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: s.color, textTransform: 'uppercase', letterSpacing: '0.5px' }}>{s.label}</div>
-              <div style={{ fontSize: 26, fontWeight: 900, color: s.color, lineHeight: 1.2, marginTop: 2 }}>{s.val}</div>
-              <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>This month</div>
-            </div>
-          ))}
-        </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, minWidth: 0 }}>
-          <div style={{ background: 'var(--bg-card)', border: '1.5px solid var(--border)', borderRadius: 16, padding: '12px 14px', minWidth: 0 }}>
-            <div style={{ marginBottom: 4 }}>
-              <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--text-primary)' }}>Attendance Trend</div>
-              <div style={{ fontSize: 9, color: 'var(--text-muted)' }}>Present days / month</div>
-            </div>
-            <AttendanceBarsChart months={monthlyAttendance} />
-          </div>
-          <div style={{ background: 'var(--bg-card)', border: '1.5px solid var(--border)', borderRadius: 16, padding: '12px 14px', minWidth: 0 }}>
-            <div style={{ marginBottom: 4 }}>
-              <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--text-primary)' }}>Daily Working Hours</div>
-              <div style={{ fontSize: 9, color: 'var(--text-muted)' }}>Logged vs full ({shiftInfo.fullDayMins / 60}h) / half ({shiftInfo.halfDayMins / 60}h) day</div>
-            </div>
-            {currentMonth
-              ? <WorkingHoursChart days={currentMonth.days} fullDayMins={shiftInfo.fullDayMins} halfDayMins={shiftInfo.halfDayMins} />
-              : <div style={{ fontSize: 11, color: 'var(--text-muted)', padding: '8px 0' }}>No data</div>}
-          </div>
-          <div style={{ background: 'var(--bg-card)', border: '1.5px solid var(--border)', borderRadius: 16, padding: '12px 14px', minWidth: 0 }}>
-            <div style={{ marginBottom: 4 }}>
-              <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--text-primary)' }}>Leave Trend</div>
-              <div style={{ fontSize: 9, color: 'var(--text-muted)' }}>Leave days taken per month</div>
-            </div>
-            {monthlyAttendance.some((m) => m.leave_days > 0)
-              ? <LeaveTrendChart months={monthlyAttendance} />
-              : <div style={{ height: 160, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, color: 'var(--text-muted)' }}>No leave days recorded</div>}
-          </div>
-        </div>
-
-        <div style={{ background: 'var(--bg-card)', border: '1.5px solid var(--border)', borderRadius: 16, padding: '16px 18px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, flexWrap: 'wrap', gap: 10 }}>
-            <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--text-primary)' }}>{currentMonth ? `${fmtMonth(currentMonth.month)} — Day by Day` : 'Current Month'}</div>
-            {currentMonth && (
-              <div style={{ display: 'flex', gap: 16 }}>
-                {[['Working Days', workingDays], ['Days Elapsed', cmToday], ['Remaining', daysRemaining]].map(([label, val]) => (
-                  <div key={label} style={{ textAlign: 'center' }}>
-                    <div style={{ fontSize: 14, fontWeight: 900, color: BRAND }}>{val}</div>
-                    <div style={{ fontSize: 9, color: 'var(--text-muted)' }}>{label}</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px 22px' }}>
+              {[
+                { label: 'Present', val: cmData.present, color: '#16a34a', pct: pctOfElapsed(cmData.present), suffix: `/ ${elapsedWorkingDays}d` },
+                { label: 'On Leave', val: cmData.leave, color: LEAVE_COLOR, pct: pctOfElapsed(cmData.leave), suffix: cmData.leave === 1 ? 'day' : 'days' },
+                { label: 'Absent', val: cmData.absent, color: '#dc2626', pct: pctOfElapsed(cmData.absent), suffix: cmData.absent === 1 ? 'day' : 'days' },
+                { label: 'Holidays', val: cmData.holiday, color: '#7c3aed', pct: elapsedCalendarDays > 0 ? cmData.holiday / elapsedCalendarDays : 0, suffix: cmData.holiday === 1 ? 'day' : 'days' },
+              ].map((s) => (
+                <div key={s.label} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <RadialRing pct={s.pct} color={s.color} size={34} />
+                  <div>
+                    <div style={{ fontSize: 18, fontWeight: 900, color: s.color, lineHeight: 1.1 }}>{s.val} <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)' }}>{s.suffix}</span></div>
+                    <div style={{ fontSize: 9.5, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{s.label} <span style={{ color: s.color, fontWeight: 700 }}>({Math.round(s.pct * 100)}%)</span></div>
                   </div>
-                ))}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14, alignItems: 'stretch' }}>
+
+          <div style={{ flex: '1.6 1 460px', minWidth: 0, background: 'var(--bg-card)', border: '1.5px solid var(--border)', borderRadius: 16, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--text-primary)', marginBottom: 4 }}>{currentMonth ? `${fmtMonth(currentMonth.month)} — Day by Day` : 'Current Month'}</div>
+              <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 10 }}>Click any day to inspect it below</div>
+              {currentMonth ? (
+                <MonthCalendar days={currentMonth.days} today={currentMonth.today} isCurrentMonth={selectedMonth === nowMonth} onDayClick={(d) => setSelectedDate(d.date)} isDark={isDark} />
+              ) : (
+                <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>Attendance for this month hasn&apos;t been processed yet</div>
+              )}
+            </div>
+            <DayDetailPanel day={selectedDay} isToday={selectedMonth === nowMonth && selectedDay?.day === cmToday} punchStatus={punchStatus} fullDayMins={shiftInfo.fullDayMins} isDark={isDark} />
+          </div>
+
+          <div style={{ flex: '1 1 300px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <div style={{ background: 'var(--bg-card)', border: '1.5px solid var(--border)', borderRadius: 16, padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <AppTabs
+                tabs={[{ key: 'hours', label: 'Hours' }, { key: 'attendance', label: 'Attendance' }, { key: 'leave', label: 'Leave' }]}
+                active={chartTab}
+                onChange={(k) => setChartTab(k as 'attendance' | 'hours' | 'leave')}
+              />
+              {chartTab === 'attendance' && (
+                <>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
+                    <div style={{ fontSize: 9, color: 'var(--text-muted)' }}>Present days / month</div>
+                    <div style={{ textAlign: 'right' }}>
+                      <span style={{ fontSize: 15, fontWeight: 900, color: '#16a34a' }}>{cmData.present}d</span>
+                      <span style={{ fontSize: 8.5, color: 'var(--text-muted)', marginLeft: 4 }}>this month</span>
+                    </div>
+                  </div>
+                  <AttendanceBarsChart months={monthlyAttendance} targetDays={workingDays} />
+                </>
+              )}
+              {chartTab === 'hours' && (
+                <>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
+                    <div style={{ fontSize: 9, color: 'var(--text-muted)' }}>Logged vs full ({shiftInfo.fullDayMins / 60}h) / half ({shiftInfo.halfDayMins / 60}h) day</div>
+                    <div style={{ textAlign: 'right' }}>
+                      <span style={{ fontSize: 15, fontWeight: 900, color: BRAND }}>{totalWorkedMins > 0 ? fmtMins(totalWorkedMins) : '0h 0m'}</span>
+                      <span style={{ fontSize: 8.5, color: 'var(--text-muted)', marginLeft: 4 }}>this month</span>
+                    </div>
+                  </div>
+                  {currentMonth
+                    ? <WorkingHoursChart days={currentMonth.days} fullDayMins={shiftInfo.fullDayMins} halfDayMins={shiftInfo.halfDayMins} />
+                    : <div style={{ fontSize: 11, color: 'var(--text-muted)', padding: '8px 0' }}>No data</div>}
+                </>
+              )}
+              {chartTab === 'leave' && (
+                <>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
+                    <div style={{ fontSize: 9, color: 'var(--text-muted)' }}>Leave days taken / month</div>
+                    <div style={{ textAlign: 'right' }}>
+                      <span style={{ fontSize: 15, fontWeight: 900, color: LEAVE_COLOR }}>{cmData.leave}d</span>
+                      <span style={{ fontSize: 8.5, color: 'var(--text-muted)', marginLeft: 4 }}>this month</span>
+                    </div>
+                  </div>
+                  {monthlyAttendance.some((m) => m.leave_days > 0)
+                    ? <LeaveTrendChart months={monthlyAttendance} />
+                    : <div style={{ height: 160, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, color: 'var(--text-muted)' }}>No leave days recorded</div>}
+                </>
+              )}
+            </div>
+
+            {punchStatus && (
+              <div style={{ background: 'var(--bg-card)', border: '1.5px solid var(--border)', borderRadius: 16, padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ width: 34, height: 34, borderRadius: '50%', background: punchStatus.checkedIn ? '#f0fdf4' : 'var(--bg-page)', border: `1.5px solid ${punchStatus.checkedIn ? '#16a34a44' : 'var(--border)'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: 15 }}>
+                  {punchStatus.checkedIn ? '🟢' : '⚪'}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 10.5, fontWeight: 800, color: 'var(--text-primary)' }}>Today&apos;s Presence</div>
+                  <div style={{ fontSize: 9.5, color: 'var(--text-muted)' }}>
+                    {punchStatus.checkedIn ? 'Checked in' : punchStatus.lastPunch ? 'Checked out' : 'Not punched in yet'}
+                    {punchStatus.lastPunch && <> · {fmtTime(punchStatus.lastPunch.time)}</>}
+                  </div>
+                </div>
+                <a href="/ess" style={{ fontSize: 9.5, fontWeight: 700, color: BRAND, textDecoration: 'none', flexShrink: 0 }}>Punch on Home →</a>
               </div>
             )}
           </div>
-          <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 10 }}>Click any day to see check-in / check-out details</div>
-          {currentMonth ? (
-            <MonthCalendar days={currentMonth.days} today={currentMonth.today} onDayClick={setSelectedDay} />
-          ) : (
-            <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>Attendance for this month hasn&apos;t been processed yet</div>
-          )}
+
         </div>
 
-        {balances.length > 0 && (
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-              <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--text-primary)' }}>🌴 Leave Balances</div>
-              <button onClick={() => { setApplyType(null); setApplyOpen(true); }} style={{ padding: '6px 16px', borderRadius: 20, background: BRAND, color: '#fff', border: 'none', fontSize: 12, fontWeight: 800, cursor: 'pointer' }}>+ Apply Leave</button>
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 14 }}>
-              {balances.map((b) => (
-                <div key={b.salaryHeadItemFkey} style={{ background: 'var(--bg-card)', border: '1.5px solid var(--border)', borderRadius: 14, padding: 16 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
-                    <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--text-primary)' }}>{b.name}</div>
-                    <span style={{ fontSize: 26, fontWeight: 900, color: b.balance >= 0 ? BRAND : '#dc2626' }}>{b.balance}</span>
-                  </div>
-                  <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginBottom: 10 }}>
-                    {b.maxLeave > 0 && <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 20, background: `${BRAND}12`, color: BRAND }}>Max {b.maxLeave}/yr</span>}
-                    {b.isLeaveEncash && <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 20, background: '#ecfeff', color: '#0891b2' }}>Encashable</span>}
-                  </div>
-                  <button onClick={() => { setApplyType(b.salaryHeadItemFkey); setApplyOpen(true); }} style={{ width: '100%', padding: '7px 12px', borderRadius: 8, border: `1.5px solid ${BRAND}`, background: 'transparent', color: BRAND, fontSize: 12, fontWeight: 800, cursor: 'pointer' }}>+ Apply {b.name}</button>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        <div style={{ background: 'var(--bg-card)', border: '1.5px solid var(--border)', borderRadius: 16, overflow: 'hidden' }}>
-          <div style={{ padding: '14px 18px 10px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div>
-              <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--text-primary)' }}>My Leave Requests</div>
-              <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>Click any row to view full details</div>
-            </div>
-            <span style={{ fontSize: 10, color: 'var(--text-muted)', background: 'var(--bg-page)', padding: '2px 8px', borderRadius: 10, border: '1px solid var(--border)' }}>{leaves.length} total</span>
-          </div>
-          {leaves.length === 0 ? (
-            <div style={{ padding: '24px 18px', fontSize: 12, color: 'var(--text-muted)', textAlign: 'center' }}>No leave requests yet</div>
-          ) : (
-            <div>
-              {leaves.slice(0, 10).map((r) => (
-                <div
-                  key={r.LEAVEENTRYID}
-                  onClick={() => setSelectedLeaveRequest(r)}
-                  style={{ padding: '12px 18px', borderBottom: '1px solid var(--border)', display: 'flex', gap: 12, alignItems: 'flex-start', cursor: 'pointer' }}
-                >
-                  <div style={{ width: 3, alignSelf: 'stretch', borderRadius: 2, background: STATUS_STRIPE[r.LEAVESTATUS] || BRAND, flexShrink: 0 }} />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 3 }}>
-                      <span style={{ fontSize: 12, fontWeight: 800, color: 'var(--text-primary)' }}>{r.leave_type}</span>
-                      <StatusBadge status={r.LEAVESTATUS} />
-                    </div>
-                    <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                      {fmtDate(r.FROMDATE)}{r.FROMHALF ? <span style={{ fontSize: 9, marginLeft: 3 }}>({halfLabel(r.FROMHALF)})</span> : null}
-                      {' → '}
-                      {fmtDate(r.TODATE)}{r.TOHALF ? <span style={{ fontSize: 9, marginLeft: 3 }}>({halfLabel(r.TOHALF)})</span> : null}
-                      {' · '}<strong style={{ color: 'var(--text-primary)' }}>{r.leave_days}d</strong>
-                    </div>
-                    {r.Reason && <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2, fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.Reason}</div>}
-                  </div>
-                  <div style={{ fontSize: 12, color: 'var(--text-muted)', flexShrink: 0, alignSelf: 'center' }}>›</div>
-                </div>
-              ))}
-              {leaves.length > 10 && (
-                <div style={{ padding: '10px 18px', fontSize: 11, color: 'var(--text-muted)', textAlign: 'center', borderTop: '1px solid var(--border)' }}>Showing 10 of {leaves.length} requests</div>
-              )}
-            </div>
-          )}
-        </div>
       </div>
-
-      {applyOpen && empId && <ApplyLeaveModal empId={empId} defaultTypeId={applyType} onClose={() => setApplyOpen(false)} onSaved={() => { setApplyOpen(false); load(); }} />}
-      {selectedDay && <DayDetailModal day={selectedDay} onClose={() => setSelectedDay(null)} />}
-      {selectedLeaveRequest && (
-        <LeaveDetailModal
-          leave={selectedLeaveRequest}
-          onClose={() => setSelectedLeaveRequest(null)}
-          onCancelled={() => { setSelectedLeaveRequest(null); load(); }}
-        />
-      )}
     </div>
   );
 }

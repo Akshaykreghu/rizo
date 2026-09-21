@@ -1,7 +1,7 @@
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
-import { runLeaveTransaction, toISODate } from '@/lib/leave';
+import { isLeaveTransactionFailure, runLeaveTransaction, toISODate } from '@/lib/leave';
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket } from 'mysql2';
 
@@ -52,6 +52,10 @@ export async function POST(
     fromHalf: entry.FROMHALF, toDate: toISODate(entry.TODATE), toHalf: entry.TOHALF,
     leaveDays: Number(entry.leave_days), status: 'Approved',
   });
+
+  if (isLeaveTransactionFailure(finalStatus)) {
+    return NextResponse.json({ error: errorMessage || finalStatus }, { status: 409 });
+  }
 
   return NextResponse.json({ success: true, status: finalStatus, procMessage: errorMessage });
 }

@@ -2,6 +2,9 @@
 
 import { useEffect, useState } from 'react';
 import { useSession } from 'next-auth/react';
+import { EssPagination } from '@/components/ess/EssPagination';
+
+const PAGE_SIZE = 10;
 
 // Port of New Rizo's pages/ESS/ESSReports.jsx. New Rizo's version delegated to four separate
 // sub-components (Reports/SalarySlip, AttendanceReport, LeaveBalance, LeaveDetailed) that weren't
@@ -32,14 +35,16 @@ function PaySlipReport({ empId }: { empId: number }) {
     <div style={card}>
       <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', fontSize: 12, fontWeight: 800, color: 'var(--text-primary)' }}>Processed Pay Slips — {finYear || '—'}</div>
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-        <thead><tr>{['Month', 'Gross', 'Deductions', 'Net Pay'].map((h) => <th key={h} style={thS}>{h}</th>)}</tr></thead>
+        <thead><tr>{['Sl.No', 'Month', 'Gross', 'Deductions', 'Net Pay'].map((h) => <th key={h} style={thS}>{h}</th>)}</tr></thead>
         <tbody>
-          {loading ? <tr><td colSpan={4} style={{ ...tdS, textAlign: 'center', color: 'var(--text-muted)' }}>Loading…</td></tr>
-            : months.length === 0 ? <tr><td colSpan={4} style={{ ...tdS, textAlign: 'center', color: 'var(--text-muted)' }}>No payslips processed this FY</td></tr>
-            : months.map((m) => {
+          {/* Bounded to one financial year (<=12 rows) — a fixed calendar view, not paginated. */}
+          {loading ? <tr><td colSpan={5} style={{ ...tdS, textAlign: 'center', color: 'var(--text-muted)' }}>Loading…</td></tr>
+            : months.length === 0 ? <tr><td colSpan={5} style={{ ...tdS, textAlign: 'center', color: 'var(--text-muted)' }}>No payslips processed this FY</td></tr>
+            : months.map((m, i) => {
               const [yr, mo] = m.month.split('-');
               return (
                 <tr key={m.payroll_master_id}>
+                  <td style={{ ...tdS, color: 'var(--text-muted)' }}>{i + 1}</td>
                   <td style={tdS}>{MON[parseInt(mo)]} {yr}</td>
                   <td style={tdS}>₹{fmtINR(m.gross_salary)}</td>
                   <td style={{ ...tdS, color: '#dc2626' }}>₹{fmtINR(m.total_deductions)}</td>
@@ -65,13 +70,15 @@ function AttendanceReportView({ empId }: { empId: number }) {
     <div style={card}>
       <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', fontSize: 12, fontWeight: 800, color: 'var(--text-primary)' }}>Attendance — last 12 months</div>
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-        <thead><tr>{['Month', 'Present', 'Absent / LOP', 'Leave Days'].map((h) => <th key={h} style={thS}>{h}</th>)}</tr></thead>
+        <thead><tr>{['Sl.No', 'Month', 'Present', 'Absent / LOP', 'Leave Days'].map((h) => <th key={h} style={thS}>{h}</th>)}</tr></thead>
         <tbody>
-          {loading ? <tr><td colSpan={4} style={{ ...tdS, textAlign: 'center', color: 'var(--text-muted)' }}>Loading…</td></tr>
-            : months.map((m) => {
+          {/* Fixed at "last 12 months" (see the label above) — a rolling calendar view, not paginated. */}
+          {loading ? <tr><td colSpan={5} style={{ ...tdS, textAlign: 'center', color: 'var(--text-muted)' }}>Loading…</td></tr>
+            : months.map((m, i) => {
               const [yr, mo] = m.month.split('-');
               return (
                 <tr key={m.month}>
+                  <td style={{ ...tdS, color: 'var(--text-muted)' }}>{i + 1}</td>
                   <td style={tdS}>{MON[parseInt(mo)]} {yr}</td>
                   <td style={{ ...tdS, color: '#16a34a', fontWeight: 700 }}>{m.present}</td>
                   <td style={{ ...tdS, color: m.absent > 0 ? '#dc2626' : 'var(--text-muted)' }}>{m.absent}</td>
@@ -88,6 +95,7 @@ function AttendanceReportView({ empId }: { empId: number }) {
 function LeaveBalanceReport() {
   const [rows, setRows] = useState<{ salaryHeadItemFkey: number; name: string; balance: number; maxLeave: number; allowNegative: boolean }[]>([]);
   const [loading, setLoading] = useState(true);
+  const [page, setPage] = useState(1);
 
   useEffect(() => {
     fetch('/api/leave/balances').then((r) => (r.ok ? r.json() : { data: [] })).then((d) => setRows(d.data || [])).finally(() => setLoading(false));
@@ -97,12 +105,13 @@ function LeaveBalanceReport() {
     <div style={card}>
       <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', fontSize: 12, fontWeight: 800, color: 'var(--text-primary)' }}>Leave Balance</div>
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-        <thead><tr>{['Leave Type', 'Balance', 'Annual Max', 'Carries Negative'].map((h) => <th key={h} style={thS}>{h}</th>)}</tr></thead>
+        <thead><tr>{['Sl.No', 'Leave Type', 'Balance', 'Annual Max', 'Carries Negative'].map((h) => <th key={h} style={thS}>{h}</th>)}</tr></thead>
         <tbody>
-          {loading ? <tr><td colSpan={4} style={{ ...tdS, textAlign: 'center', color: 'var(--text-muted)' }}>Loading…</td></tr>
-            : rows.length === 0 ? <tr><td colSpan={4} style={{ ...tdS, textAlign: 'center', color: 'var(--text-muted)' }}>No leave policy assigned</td></tr>
-            : rows.map((r) => (
+          {loading ? <tr><td colSpan={5} style={{ ...tdS, textAlign: 'center', color: 'var(--text-muted)' }}>Loading…</td></tr>
+            : rows.length === 0 ? <tr><td colSpan={5} style={{ ...tdS, textAlign: 'center', color: 'var(--text-muted)' }}>No leave policy assigned</td></tr>
+            : rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map((r, i) => (
               <tr key={r.salaryHeadItemFkey}>
+                <td style={{ ...tdS, color: 'var(--text-muted)' }}>{(page - 1) * PAGE_SIZE + i + 1}</td>
                 <td style={tdS}>{r.name}</td>
                 <td style={{ ...tdS, fontWeight: 700, color: r.balance >= 0 ? BRAND : '#dc2626' }}>{r.balance}</td>
                 <td style={tdS}>{r.maxLeave || '—'}</td>
@@ -111,6 +120,7 @@ function LeaveBalanceReport() {
             ))}
         </tbody>
       </table>
+      <EssPagination page={page} pageSize={PAGE_SIZE} totalItems={rows.length} onChange={setPage} />
     </div>
   );
 }
@@ -118,6 +128,7 @@ function LeaveBalanceReport() {
 function LeaveDetailedReport() {
   const [rows, setRows] = useState<{ LEAVEENTRYID: number; leave_type: string; FROMDATE: string; TODATE: string; leave_days: number; LEAVESTATUS: string; Reason: string | null }[]>([]);
   const [loading, setLoading] = useState(true);
+  const [page, setPage] = useState(1);
 
   useEffect(() => {
     fetch('/api/leave/requests').then((r) => (r.ok ? r.json() : { data: [] })).then((d) => setRows(d.data || [])).finally(() => setLoading(false));
@@ -128,12 +139,13 @@ function LeaveDetailedReport() {
       <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', fontSize: 12, fontWeight: 800, color: 'var(--text-primary)' }}>Leave History</div>
       <div style={{ overflowX: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead><tr>{['Leave Type', 'From', 'To', 'Days', 'Status', 'Reason'].map((h) => <th key={h} style={thS}>{h}</th>)}</tr></thead>
+          <thead><tr>{['Sl.No', 'Leave Type', 'From', 'To', 'Days', 'Status', 'Reason'].map((h) => <th key={h} style={thS}>{h}</th>)}</tr></thead>
           <tbody>
-            {loading ? <tr><td colSpan={6} style={{ ...tdS, textAlign: 'center', color: 'var(--text-muted)' }}>Loading…</td></tr>
-              : rows.length === 0 ? <tr><td colSpan={6} style={{ ...tdS, textAlign: 'center', color: 'var(--text-muted)' }}>No leave history</td></tr>
-              : rows.map((r) => (
+            {loading ? <tr><td colSpan={7} style={{ ...tdS, textAlign: 'center', color: 'var(--text-muted)' }}>Loading…</td></tr>
+              : rows.length === 0 ? <tr><td colSpan={7} style={{ ...tdS, textAlign: 'center', color: 'var(--text-muted)' }}>No leave history</td></tr>
+              : rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map((r, i) => (
                 <tr key={r.LEAVEENTRYID}>
+                  <td style={{ ...tdS, color: 'var(--text-muted)' }}>{(page - 1) * PAGE_SIZE + i + 1}</td>
                   <td style={tdS}>{r.leave_type}</td>
                   <td style={tdS}>{fmtDate(r.FROMDATE)}</td>
                   <td style={tdS}>{fmtDate(r.TODATE)}</td>
@@ -145,6 +157,7 @@ function LeaveDetailedReport() {
           </tbody>
         </table>
       </div>
+      <EssPagination page={page} pageSize={PAGE_SIZE} totalItems={rows.length} onChange={setPage} />
     </div>
   );
 }
@@ -165,7 +178,7 @@ export default function EssReportsPage() {
   if (!empId) return null;
 
   return (
-    <div className="page-content" style={{ maxWidth: 1100, margin: '0 auto' }}>
+    <div className="page-content">
       <div className="page-header">
         <div>
           <h1 className="page-title">My Reports</h1>

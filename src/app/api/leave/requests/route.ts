@@ -1,7 +1,7 @@
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
-import { checkAttendanceConflict, getEmployeeLeaveTypes, runLeaveTransaction, toISODate } from '@/lib/leave';
+import { checkAttendanceConflict, getEmployeeLeaveTypes, isLeaveTransactionFailure, runLeaveTransaction, toISODate } from '@/lib/leave';
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket, ResultSetHeader } from 'mysql2';
 
@@ -173,6 +173,10 @@ export async function POST(request: NextRequest) {
     leaveEntryId, empFkey, fromDate, fromHalf: Number(fromHalf), toDate, toHalf: Number(toHalf),
     leaveDays, status: initialStatus,
   });
+
+  if (isLeaveTransactionFailure(finalStatus)) {
+    return NextResponse.json({ error: errorMessage || finalStatus, id: leaveEntryId }, { status: 409 });
+  }
 
   return NextResponse.json({ success: true, id: leaveEntryId, leaveDays, status: finalStatus, procMessage: errorMessage });
 }

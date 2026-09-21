@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useSession } from 'next-auth/react';
-import { Phone, Mail, Clock, MapPin } from 'lucide-react';
+import { Phone, Mail, Clock, MapPin, LogIn, LogOut } from 'lucide-react';
 
 // Port of New Rizo's pages/ESS/ESSDashboard.jsx, a `1fr 1fr 300px` 3-panel top row (Leadership
 // Message | Company Updates | Profile sidebar). rizo-revamp has no announcements/leadership-
@@ -45,6 +45,13 @@ function fmtTime(t?: string | null) {
   const h12 = h % 12 || 12;
   return `${h12}:${mn} ${ampm}`;
 }
+function fmtElapsed(totalSecs: number) {
+  const h = Math.floor(totalSecs / 3600);
+  const m = Math.floor((totalSecs % 3600) / 60);
+  const s = Math.floor(totalSecs % 60);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(h)}:${pad(m)}:${pad(s)}`;
+}
 function tenureStr(from: string) {
   const joined = new Date(from);
   const now = new Date();
@@ -72,6 +79,11 @@ function computeCompleteness(emp: Employee | null, family: FamilyMember[], educa
   return { score: Math.round((done / checks.length) * 100), missing: checks.filter((c) => !c.done).map((c) => c.label) };
 }
 
+interface PunchStatus {
+  checkedIn: boolean;
+  elapsedSeconds: number;
+  lastPunch: { time: string; direction: 'in' | 'out' } | null;
+}
 interface TimedEvent extends EventPerson {
   kind: 'birthday' | 'anniversary';
   color: string;
@@ -95,6 +107,10 @@ export default function EssHomePage() {
   const [newJoiners, setNewJoiners] = useState<EventPerson[]>([]);
   const [announcementTab, setAnnouncementTab] = useState<(typeof ANNOUNCEMENT_TABS)[number]>('all');
   const [shiftInfo, setShiftInfo] = useState<{ shiftName: string | null; startTime: string | null; endTime: string | null }>({ shiftName: null, startTime: null, endTime: null });
+  const [punchStatus, setPunchStatus] = useState<PunchStatus | null>(null);
+  const [punching, setPunching] = useState(false);
+  const [punchError, setPunchError] = useState<string | null>(null);
+  const [displaySecs, setDisplaySecs] = useState(0);
 
   useEffect(() => {
     if (!empId) return;
@@ -132,6 +148,71 @@ export default function EssHomePage() {
       setLoading(false);
     });
   }, [empId]);
+
+  const refreshPunchStatus = () => {
+    fetch('/api/ess/punch/status')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: PunchStatus | null) => {
+        if (!d) return;
+        setPunchStatus(d);
+        setDisplaySecs(d.elapsedSeconds);
+      })
+      .catch(() => {});
+  };
+
+  useEffect(() => {
+    if (!empId) return;
+    refreshPunchStatus();
+  }, [empId]);
+
+  // Live-ticking "working time" clock while checked in — content ported from legacy's
+  // empdashboard.ctp clock (setInterval incrementing a displayed HH:MM:SS), not re-fetched from
+  // the server every second.
+  useEffect(() => {
+    if (!punchStatus?.checkedIn) return;
+    const t = setInterval(() => setDisplaySecs((s) => s + 1), 1000);
+    return () => clearInterval(t);
+  }, [punchStatus?.checkedIn]);
+
+  function doPunch(direction: 'in' | 'out', lat: number | null, lng: number | null) {
+    setPunching(true);
+    fetch('/api/ess/punch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ direction, lat, lng }),
+    })
+      .then((r) => r.json())
+      .then((d) => {
+        if (!d.success) throw new Error();
+        refreshPunchStatus();
+      })
+      .catch(() => setPunchError('Punch failed. Please try again.'))
+      .finally(() => setPunching(false));
+  }
+
+  // Geolocation is required before a punch is recorded — ported from legacy's checkin()/checkout()
+  // (Controller/DashboardController.php's checkpunch() logs it for the audit trail), including the
+  // same specific permission/unavailable/timeout messages instead of a generic failure.
+  function handlePunch(direction: 'in' | 'out') {
+    setPunchError(null);
+    if (!navigator.geolocation) {
+      setPunchError('Location services are not available in this browser.');
+      return;
+    }
+    setPunching(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => doPunch(direction, pos.coords.latitude, pos.coords.longitude),
+      (err) => {
+        setPunching(false);
+        let msg = 'Could not get your location.';
+        if (err.code === err.PERMISSION_DENIED) msg = 'Location permission is blocked. Please allow location access for this site and try again.';
+        else if (err.code === err.POSITION_UNAVAILABLE) msg = 'Your location is unavailable right now. Please check GPS/location services and try again.';
+        else if (err.code === err.TIMEOUT) msg = 'Getting your location timed out. Please try again.';
+        setPunchError(msg);
+      },
+      { timeout: 15000 }
+    );
+  }
 
   if (loading) {
     return (
@@ -272,6 +353,36 @@ export default function EssHomePage() {
                       </div>
                     </div>
                   )}
+
+                  {punchStatus && (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handlePunch(punchStatus.checkedIn ? 'out' : 'in')}
+                        disabled={punching}
+                        className={`inline-flex items-center gap-1.5 rounded-lg text-xs font-bold shadow-sm transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed ${
+                          punchStatus.checkedIn
+                            ? 'bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/30'
+                            : 'bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/30'
+                        }`}
+                        style={{ padding: '6px 12px' }}
+                      >
+                        {punchStatus.checkedIn ? <LogOut className="w-3.5 h-3.5" strokeWidth={2} /> : <LogIn className="w-3.5 h-3.5" strokeWidth={2} />}
+                        {punching ? 'Please wait…' : punchStatus.checkedIn ? 'Punch OUT' : 'Punch IN'}
+                      </button>
+                      {punchStatus.checkedIn && (
+                        <span className="font-mono text-xs text-slate-200 tabular-nums" title="Working time today">
+                          {fmtElapsed(displaySecs)}
+                        </span>
+                      )}
+                      {!punchStatus.checkedIn && punchStatus.lastPunch && (
+                        <span className="text-[11px] text-slate-400">
+                          Last: {new Date(punchStatus.lastPunch.time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })} · {punchStatus.lastPunch.direction.toUpperCase()}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                  {punchError && <div className="text-[11px] text-rose-300">{punchError}</div>}
                 </div>
               </div>
 
@@ -318,7 +429,7 @@ export default function EssHomePage() {
         <div style={{ height: 20, background: 'linear-gradient(to bottom, transparent, var(--bg-page))', position: 'relative', zIndex: 1 }} />
       </div>
 
-      <div style={{ maxWidth: 1400, margin: '0 auto', padding: '8px 28px 48px' }}>
+      <div style={{ padding: '8px 28px 48px' }}>
         {/* TOP ROW — 3 panels, matching New Rizo's `1fr 1fr 300px` grid */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 300px', gap: 20, alignItems: 'start' }}>
 
