@@ -377,17 +377,25 @@ const SUBTYPE_META: Record<Subtype, SubtypeMeta> = {
     // three change-detection flag columns (Variable Additions/Deductions Count each show a count pair
     // AND a same-row "No change"/"Change identified" flag — not a numeric diff; Bank Account is
     // flag-only, no numeric values at all), and the row-level `status` column aggregating all of the
-    // above (comparison_report.ctp:334) — placed first, right after Sl No, matching legacy's layout.
-    // Grouping is dynamic (see comparisonGroupBy below, wired into viewGroupBy/excelGroupBy in the
-    // page component) — legacy branch-groups only for the Units criteria, identically on View and
-    // Excel; flat otherwise. meta.groupBy stays unset here for that reason.
+    // above (comparison_report.ctp:334). Column order matches legacy exactly: Sl No, Employee ID,
+    // User ID, Employee Name, Joining Date, Branch, Department, Designation, Termination Date,
+    // Status, then the metric groups (SalaryReportsController.php:19212-19232).
+    // Grouping differs between View and Excel (see viewGroupBy/excelGroupBy in the page component):
+    // the View sections into separate per-branch tables for the Units criteria
+    // (comparison_report.ctp:79-175) — comparisonGroupBy below. Excel, despite also branching on
+    // needBranchWiseReport, writes ONE header block then a single continuous loop over every branch's
+    // employees (SalaryReportsController.php:19334-19422) — always one flat table regardless of
+    // criteria, same pattern as Grosssalary/GrosssalaryNew's Excel — so excelGroupBy stays unset for
+    // this subtype.
     label: 'Salary Previous Month Comparison',
     itemPivot: 'comparison',
+    slNo: true,
+    excelSlNo: true,
     columns: [
-      { key: 'status', label: 'Status' },
       { key: 'employee_id', label: 'Employee ID' }, { key: 'login_user_id', label: 'User ID' }, { key: 'emp_name', label: 'Employee' },
-      { key: 'branch_name', label: 'Branch' }, { key: 'departments', label: 'Department' }, { key: 'desig', label: 'Designation' },
-      { key: 'joining_date', label: 'Joining Date' }, { key: 'termination_date', label: 'Termination Date' },
+      { key: 'joining_date', label: 'Joining Date' }, { key: 'branch_name', label: 'Branch' },
+      { key: 'departments', label: 'Department' }, { key: 'desig', label: 'Designation' },
+      { key: 'termination_date', label: 'Termination Date' }, { key: 'status', label: 'Status' },
       { key: 'previous_ctc_standard', label: 'Previous CTC (Standard)' }, { key: 'current_ctc_standard', label: 'Current CTC (Standard)' }, { key: 'ctc_standard_change', label: 'CTC (Standard) Change' },
       { key: 'previous_gross_standard', label: 'Previous Gross Salary (Standard)' }, { key: 'current_gross_standard', label: 'Current Gross Salary (Standard)' }, { key: 'gross_standard_change', label: 'Gross Salary (Standard) Change' },
       { key: 'previous_gross_actual', label: 'Previous Gross Salary (Actual)' }, { key: 'current_gross_actual', label: 'Current Gross Salary (Actual)' }, { key: 'gross_actual_change', label: 'Gross Salary (Actual) Change' },
@@ -681,6 +689,13 @@ function monthLabel(monthYear: string) {
   return new Date(y, m - 1, 1).toLocaleString('en-US', { month: 'long', year: 'numeric' });
 }
 
+function prevMonthLabel(monthYear: string) {
+  const [y, m] = monthYear.split('-').map(Number);
+  const d = new Date(y, m - 1, 1);
+  d.setMonth(d.getMonth() - 1);
+  return d.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+}
+
 export default function PayrollReportPage() {
   const { slotEl } = useHeaderSlot();
   const { data: session } = useSession();
@@ -736,6 +751,9 @@ export default function PayrollReportPage() {
     : subtype === 'GrossPeriod' ? grossPeriodGroupBy(criteria)
     : subtype === 'Comparison' ? comparisonGroupBy(criteria)
     : meta.groupBy;
+  // Comparison's Excel is always a single flat table regardless of criteria (per SalaryReportsController.
+  // php:19334-19422 — one header block, one continuous employee loop, no per-branch sectioning even
+  // when the View is branch-sectioned) — unlike the View, which still sections by branch for Units.
   // Legacy's Excel export for BankTranfer is flat-stacked for EmployeeDetails/Units/LeavePolicyGroup
   // criteria and grouped-per-bank only for the Banks criteria (SalaryReportsController.php:
   // 4271-4517 vs 4518-4688) — unlike the View, which is always grouped. PDF stays flat for this
@@ -747,7 +765,7 @@ export default function PayrollReportPage() {
     : subtype === 'GrosssalaryNew' ? undefined
     : subtype === 'GrosssalarySummary' ? grosssalarySummaryGroupBy(criteria)
     : subtype === 'GrossPeriod' ? grossPeriodGroupBy(criteria)
-    : subtype === 'Comparison' ? comparisonGroupBy(criteria)
+    : subtype === 'Comparison' ? undefined
     : meta.groupBy;
   // Which subtypes have a real, wired-up "Include Resigned" / "Include Negative Salary" filter —
   // legacy's checkboxes only affect the report data itself for these subtypes; other subtypes render
@@ -773,6 +791,8 @@ export default function PayrollReportPage() {
     ? `${session?.user?.companyCode ?? ''}_GrossSalarySummaryReport${monthYear}`
     : subtype === 'GrossPeriod'
     ? `${session?.user?.companyCode ?? ''}_GrossSalaryPeriodWiseReport${monthYear} - ${toMonthYear}`
+    : subtype === 'Comparison'
+    ? `${session?.user?.companyCode ?? ''}_Salary Previous Month Comparison Report${monthYear}`
     : `payroll_report_${monthYear}`;
   const excelTitle = subtype === 'SummaryPayroll'
     ? `Payroll Summary Report - ${monthYear}`
@@ -784,6 +804,8 @@ export default function PayrollReportPage() {
     ? `Gross Salary Summary Reports for ${monthYear}`
     : subtype === 'GrossPeriod'
     ? `Gross Salary Period Wise - ${monthLabel(monthYear)} - ${monthLabel(toMonthYear)}`
+    : subtype === 'Comparison'
+    ? `Salary Previous Month Comparison ${prevMonthLabel(monthYear)} - ${monthLabel(monthYear)}`
     : undefined;
 
   // Shared by the View action and by Excel/PDF export — legacy's Excel/PDF buttons are independent
@@ -832,11 +854,33 @@ export default function PayrollReportPage() {
       // (Employee Details / Standard Salary / Actual Salary) — the flat HTML view instead
       // disambiguates the two sections with "(Standard)"/"(Actual)" suffixes on each column label
       // (see flattenItemColumns' 'grossDetailed' case), since a single <thead><tr> can't merge cells.
+      // Comparison's Excel reproduces legacy's merged 3-column super-header per metric group
+      // (SalaryReportsController.php:19091-19205) — one span per prev/current/diff triple, including
+      // one per dynamic item label. Legacy's own "Employee Details" super-header is oddly split into
+      // two merges (A3:D3 labeled, E3:J3 blank) — a visual artifact, not intentional design, so this
+      // uses one clean span across all the fixed columns instead of replicating the blank gap.
+      const comparisonItemLabels = itemCols
+        .filter((c) => c.key.endsWith('__previous'))
+        .map((c) => c.key.slice('item__'.length, -'__previous'.length));
       const superHeaders = meta.itemPivot === 'grossDetailed'
         ? [
             { label: 'Employee Details', span: (meta.slNo ? 1 : 0) + meta.columns.length },
             { label: 'Standard Salary', span: itemCols.filter((c) => c.key.startsWith('sa__') || c.key.startsWith('sd__') || c.key === 'gross_standard').length },
             { label: 'Actual Salary', span: itemCols.filter((c) => c.key.startsWith('aa__') || c.key.startsWith('ad__') || ['gross_actual', 'total_deduction', 'settlement_amount', 'net_salary'].includes(c.key)).length },
+          ]
+        : meta.itemPivot === 'comparison'
+        ? [
+            { label: 'Employee Details', span: (meta.slNo ? 1 : 0) + meta.columns.length },
+            { label: 'CTC (Standard)', span: 3 },
+            { label: 'Gross Salary (Standard)', span: 3 },
+            ...comparisonItemLabels.map((label) => ({ label, span: 3 })),
+            { label: 'Gross Salary (Actual)', span: 3 },
+            { label: 'Net Salary (Actual)', span: 3 },
+            { label: 'CTC (Actual)', span: 3 },
+            { label: 'Pay Days', span: 3 },
+            { label: 'Variable Additions (Count)', span: 3 },
+            { label: 'Variable Deductions (Count)', span: 3 },
+            { label: 'Bank Account', span: 3 },
           ]
         : undefined;
       if (kind === 'excel') {
