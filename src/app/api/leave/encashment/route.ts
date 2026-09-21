@@ -2,13 +2,17 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
 import { getEncashmentEligibility, RESTRICTED_ENCASHMENT_CAP_COMPANY_CODES } from '@/lib/leaveEncashment';
+import { toISODate } from '@/lib/settlement';
 import { NextRequest, NextResponse } from 'next/server';
-import type { RowDataPacket, ResultSetHeader } from 'mysql2';
+import type { RowDataPacket } from 'mysql2';
 
-// Ports LeaveEncashmentRequestController's addleave()/save() (apply, one row per leave type with
-// requested_days > 0) + listing (listallempsforencash "To be Encashed" tab / listallempsforverified
-// "Encashed" tab). Admin picks any employee; employee self-service (userGroup !== 1) is always
-// scoped to session.user.empFkey, same precedent as attendance/regularisation.
+// Ports LeaveEncashmentRequestController's listing (listallempsforencash "To be Encashed" tab /
+// listallempsforverified "Encashed" tab). Legacy has no manual-apply action for this feature —
+// every leave_encashment_master row is created exclusively by leave_encash_insert_prc via the
+// Generate button (see generate/route.ts); there is no addleave() POST or save() that inserts a
+// row from client-supplied balances. A prior version of this route had a POST handler that did
+// exactly that (a fabricated flow with no legacy equivalent, confirmed against the full controller
+// source) — removed by product decision rather than kept as a divergent "improvement".
 
 export async function GET(request: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -68,64 +72,13 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  return NextResponse.json({ data: rows });
-}
+  // mysql2 returns DATE columns as JS Date objects, which JSON.stringify serializes with a
+  // T00:00:00.000Z time/timezone component — approved_date is a date-only field, so strip that
+  // down to a plain YYYY-MM-DD string before it reaches the client.
+  const data = rows.map((r) => ({
+    ...r,
+    approved_date: r.approved_date != null ? toISODate(r.approved_date) : null,
+  }));
 
-export async function POST(request: NextRequest) {
-  const session = await getServerSession(authOptions);
-  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  if (session.user.userGroup !== 1 && !session.user.empFkey) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  const body = await request.json();
-  const { approverFkey, reason, items } = body as {
-    empFkey?: number; approverFkey?: number; reason?: string;
-    items: { salaryHeadItemFkey: number; encashDays: number; availableDays: number; requestedDays: number }[];
-  };
-  // Employee self-service can only ever apply for themselves — the emp_fkey comes from the
-  // session, not the request body, regardless of what a tampered payload sends.
-  const empFkey = session.user.userGroup === 1 ? body.empFkey : session.user.empFkey;
-  if (!empFkey || !Array.isArray(items) || items.length === 0) {
-    return NextResponse.json({ error: 'empFkey and at least one item are required' }, { status: 400 });
-  }
-
-  const pool = await getCompanyPool(session.user.companyCode);
-
-  const [[emp]] = await pool.execute<RowDataPacket[]>(
-    'SELECT first_name, last_name, branch_code FROM emp_details WHERE emp_pkey = ?',
-    [empFkey]
-  );
-  if (!emp) return NextResponse.json({ error: 'Employee not found' }, { status: 404 });
-
-  const [[finYear]] = await pool.execute<RowDataPacket[]>(
-    `SELECT fin_year FROM fin_year
-     WHERE branch_code = ? AND Year_status = 'OPEN' AND is_current_finyear = 'Y' AND status = 1
-     ORDER BY start_month DESC LIMIT 1`,
-    [emp.branch_code]
-  );
-
-  const empName = `${emp.first_name} ${emp.last_name ?? ''}`.trim();
-  const insertedIds: number[] = [];
-
-  for (const item of items) {
-    if (!item.requestedDays || item.requestedDays <= 0) continue; // matches legacy: only requested_days > 0 rows are inserted
-    const [result] = await pool.execute<ResultSetHeader>(
-      `INSERT INTO leave_encashment_master
-         (emp_fkey, emp_name, branch_code, salary_head_item_fkey, encash_days, available_days,
-          requested_days, created_by, approved_by, fin_year, remarks, is_approved)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'N')`,
-      [
-        empFkey, empName, emp.branch_code, item.salaryHeadItemFkey, item.encashDays, item.availableDays,
-        item.requestedDays, session.user.loginUserId, approverFkey ?? null, finYear?.fin_year ?? null, reason ?? null,
-      ]
-    );
-    insertedIds.push(result.insertId);
-  }
-
-  if (insertedIds.length === 0) {
-    return NextResponse.json({ error: 'No items had requestedDays > 0 — nothing was submitted' }, { status: 400 });
-  }
-
-  return NextResponse.json({ success: true, ids: insertedIds });
+  return NextResponse.json({ data });
 }

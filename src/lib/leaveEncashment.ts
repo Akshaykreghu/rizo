@@ -49,11 +49,17 @@ export async function getEncashmentEligibility(
 
 // Extracted from [id]/approve/route.ts so the single-row and bulk-approve routes share one
 // implementation of the update + leave_encash_prc call.
+// approvedDate: legacy's two live approval actions actually differ here — encashemp() (single-row,
+// controller.php:640) always stamps today via date("Y-m-d"), while verifyregisterentries() (the
+// checkbox "Encash" bulk action, controller.php:614) stamps the grid's selected filter month
+// instead. Callers pass the appropriate value; defaulting to CURDATE() matches encashemp()'s
+// single-row behavior when the caller has no month context.
 export async function approveEncashmentEntry(
   pool: Pool | PoolConnection,
   id: number,
   approvedDays: number | null,
-  userId: string
+  userId: string,
+  approvedDate?: string
 ): Promise<{ ok: true; procMessage: string | null } | { ok: false; error: string; status: number }> {
   const [[entry]] = await pool.execute<RowDataPacket[]>(
     `SELECT lem.leave_encashment_master_pkey, lem.emp_fkey, lem.is_approved, lem.requested_days, ed.branch_code
@@ -68,10 +74,10 @@ export async function approveEncashmentEntry(
 
   await pool.execute(
     `UPDATE leave_encashment_master
-     SET is_approved = 'Y', approved_by = '0', approved_date = CURDATE(), branch_code = ?,
+     SET is_approved = 'Y', approved_by = '0', approved_date = ?, branch_code = ?,
          modified_by = ?, modified_date = NOW(), approved_days = COALESCE(?, requested_days)
      WHERE leave_encashment_master_pkey = ?`,
-    [entry.branch_code, userId, approvedDays ?? null, id]
+    [approvedDate ?? new Date().toISOString().slice(0, 10), entry.branch_code, userId, approvedDays ?? null, id]
   );
 
   await pool.query('CALL leave_encash_prc(?, ?, ?, ?, @msg)', [
