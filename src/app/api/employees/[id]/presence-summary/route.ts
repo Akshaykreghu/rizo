@@ -1,6 +1,6 @@
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { getCompanyPool } from '@/lib/db';
+import { getCompanyPool, realInstant } from '@/lib/db';
 import { fieldsToArray, computeAttendanceTotals, computeLiveAttendance, getNaPeriodBounds, getAttPeriod, toISODate } from '@/lib/attendance';
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket } from 'mysql2';
@@ -125,7 +125,8 @@ export async function GET(
     const d = new Date(date + 'T00:00:00');
     return {
       date, day: d.getDate(), dow: d.getDay(), status: status || null,
-      punch_in: punch?.att_in_time ?? null, punch_out: punch?.att_out_time ?? null,
+      punch_in: realInstant(punch?.att_in_time)?.toISOString() ?? null,
+      punch_out: realInstant(punch?.att_out_time)?.toISOString() ?? null,
       worked_minutes: punch?.duration ?? null,
     };
   });

@@ -1,6 +1,6 @@
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { getCompanyPool } from '@/lib/db';
+import { getCompanyPool, realInstant } from '@/lib/db';
 import { NextResponse } from 'next/server';
 import type { RowDataPacket } from 'mysql2';
 
@@ -32,7 +32,7 @@ export async function GET() {
   let openIn: Date | null = null;
   for (const r of rows) {
     const dir = String(r.DIRECTION).toLowerCase();
-    const ts = new Date(r.LOGDATE as string);
+    const ts = realInstant(r.LOGDATE as Date)!;
     if (dir === 'in') {
       openIn = ts;
     } else if (dir === 'out' && openIn) {
@@ -42,6 +42,9 @@ export async function GET() {
   }
   const checkedIn = openIn !== null;
   if (checkedIn && openIn) {
+    // openIn is now a real, correctly-anchored instant (see realInstant()), so this is safe to
+    // diff directly against Date.now() — mixing a mislabeled DB read with a genuine wall-clock
+    // value here previously went negative and clamped to 0 on every still-checked-in view.
     elapsedSeconds += Math.max(0, (Date.now() - openIn.getTime()) / 1000);
   }
 
@@ -49,6 +52,6 @@ export async function GET() {
   return NextResponse.json({
     checkedIn,
     elapsedSeconds: Math.round(elapsedSeconds),
-    lastPunch: last ? { time: last.LOGDATE, direction: String(last.DIRECTION).toLowerCase() } : null,
+    lastPunch: last ? { time: realInstant(last.LOGDATE as Date)!.toISOString(), direction: String(last.DIRECTION).toLowerCase() } : null,
   });
 }

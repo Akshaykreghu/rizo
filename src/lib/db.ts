@@ -1,5 +1,25 @@
 import mysql from 'mysql2/promise';
 
+// Both pools below are deliberately pinned to timezone: '+00:00' so that plain DATE columns
+// round-trip correctly via toISODate()'s UTC-getter approach (lib/settlement.ts) — pointing this
+// at the DB server's real SYSTEM timezone instead (confirmed IST/+05:30 live: TIMEDIFF(NOW(),
+// UTC_TIMESTAMP()) = 05:30:00) would fix DATETIME columns but shift every plain DATE column back
+// by a day instead (a DATE has no time component, so mysql2 anchors it at UTC midnight; midnight
+// IST is 18:30 the previous day in UTC).
+//
+// The tradeoff: any column that carries genuine time-of-day meaning (a punch/log DATETIME, not a
+// bare DATE — e.g. device_attandance.LOGDATE, emp_detail_timeattandance.att_in_time/att_out_time)
+// was actually written as literal IST wall-clock (this DB's NOW() is IST, confirmed above), but
+// mysql2 reads its digits back mislabeled as UTC. Diffing two such mislabeled reads against EACH
+// OTHER still cancels out correctly, but comparing one against a genuine `Date.now()`/`new Date()`,
+// or letting it reach the client to be formatted as a wall-clock time, is off by exactly +5:30
+// unless corrected once here.
+const IST_MISLABEL_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+export function realInstant(dbDateTime: Date | null | undefined): Date | null {
+  if (!dbDateTime) return null;
+  return new Date(dbDateTime.getTime() - IST_MISLABEL_OFFSET_MS);
+}
+
 // Singleton pattern for Next.js hot-reload compatibility
 const globalForPools = global as typeof globalThis & {
   _controlPool?: mysql.Pool;
