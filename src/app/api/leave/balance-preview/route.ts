@@ -12,13 +12,22 @@ import type { RowDataPacket } from 'mysql2';
 export async function GET(request: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (session.user.userGroup !== 1 && !session.user.empFkey) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
 
   const { searchParams } = new URL(request.url);
-  const employee = searchParams.get('employee');
   const leaveType = searchParams.get('leaveType');
   const fromDate = searchParams.get('fromDate');
-  if (!employee || !leaveType || !fromDate) {
-    return NextResponse.json({ error: 'employee, leaveType and fromDate are required' }, { status: 400 });
+  if (!leaveType || !fromDate) {
+    return NextResponse.json({ error: 'leaveType and fromDate are required' }, { status: 400 });
+  }
+  // Self-service can only ever preview their own balance — never an arbitrary employee id from
+  // the query string, regardless of what a tampered request sends.
+  const isAdmin = session.user.userGroup === 1;
+  const employee = isAdmin ? searchParams.get('employee') : String(session.user.empFkey);
+  if (!employee) {
+    return NextResponse.json({ error: 'employee is required' }, { status: 400 });
   }
   // Employee self-service is scoped to their own emp_fkey, same precedent as every other ESS route.
   if (session.user.userGroup !== 1 && session.user.empFkey !== Number(employee)) {
@@ -31,7 +40,7 @@ export async function GET(request: NextRequest) {
 
   const [[policy]] = await pool.execute<RowDataPacket[]>(
     `SELECT lp.ALLOW_NEGETIVE, lp.exceptions, lp.minimum_service, lp.min_day_before_apply,
-            lp.minimum_leave, lp.maximum_leave, lp.leave_policy_type
+            lp.minimum_leave, lp.maximum_leave, lp.leave_policy_type, lp.document_mandatory, lp.REMARKS
      FROM leavepolicy lp
      JOIN emp_proff ep ON ep.LEAVEPOLICY_GROUP_ID = lp.LEAVEPOLICY_GROUP_ID
      WHERE ep.emp_fkey = ? AND lp.salary_head_item_fkey = ? AND lp.status = 1`,
@@ -90,5 +99,7 @@ export async function GET(request: NextRequest) {
     minServiceMessage,
     advanceNoticeOk,
     advanceNoticeMessage,
+    documentMandatory: policy.document_mandatory === 'Y',
+    remarks: policy.REMARKS || null,
   });
 }

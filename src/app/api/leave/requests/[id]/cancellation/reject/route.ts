@@ -6,9 +6,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket } from 'mysql2';
 
 // Rejects a pending cancellation request — reverts to the pre-cancellation status
-// (CancellationOfAuthorized -> Authorized, CancellationOfApproved -> Approved). Same actor
-// carve-out as .../cancellation/approve: ISAutherizedby owns CancellationOfAuthorized, APPROVEDBY
-// owns CancellationOfApproved.
+// (CancellationOfAuthorized -> Authorized, CancellationOfApproved -> Approved). Same reviewer
+// gate as .../cancellation/approve (see comment there): legacy's grandLeave() 'Reject' branch has
+// no admin-role check, only ISAutherizedby/APPROVEDBY == session emp_fkey.
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }

@@ -8,7 +8,8 @@ import { Download, Eye, Loader2, Calendar } from 'lucide-react';
 import { CriteriaFilterPanel } from '@/components/reports/CriteriaFilterPanel';
 import {
   exportReportToExcel, exportReportToPdf, exportSalarySlipsToExcel, exportSalarySlipsToPdf,
-  exportGroupedReportToExcel, exportGroupedReportToPdf, type ReportColumn, type SalarySlipCompanyInfo,
+  exportGroupedReportToExcel, exportGroupedReportToPdf, exportMonthlyCtcToExcel, exportPayrollCtcToExcel,
+  type ReportColumn, type SalarySlipCompanyInfo, type PayrollCtcExportRow,
 } from '@/lib/reportExport';
 import { cn, formatCurrency } from '@/lib/utils';
 import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
@@ -131,12 +132,84 @@ function SalarySlipCard({ slip }: { slip: SalarySlip }) {
   );
 }
 
+interface MonthlyCtcItem { label: string; amount: number; headType: string | null }
+interface MonthlyCtcCard {
+  emp_fkey: number;
+  emp_name: string;
+  employee_id: string | null;
+  branch_name: string | null;
+  departments: string | null;
+  desig: string | null;
+  items: MonthlyCtcItem[];
+  grand_total: number;
+}
+
+// Legacy's View rounds each item by head_type (monthlyctc.ctp:111-113): 'fixed'/'manually'/'limit'
+// round to 2dp and take the absolute value; everything else rounds to the nearest rupee. The Grand
+// Total is always the plain rounded sum of the raw (unrounded) amounts, not a sum of these displayed
+// per-item values.
+function monthlyCtcItemAmount(item: MonthlyCtcItem): number {
+  if (item.headType === 'fixed' || item.headType === 'manually' || item.headType === 'limit') {
+    return Math.round(Math.abs(item.amount) * 100) / 100;
+  }
+  return Math.round(item.amount);
+}
+
+// Mirrors legacy's per-employee card (monthlyctc.ctp:57-136) — a legend block, then a Salary
+// Components/Amount mini-table, then a Grand Total row. Not a table row like every other report on
+// this screen, same shape as Salary Slip's own card.
+function MonthlyCtcCardView({ card }: { card: MonthlyCtcCard }) {
+  return (
+    <div className="surface-card rounded-2xl overflow-hidden">
+      <div className="bg-slate-50 border-b border-slate-200 px-4 py-2.5">
+        <h3 className="text-[13.5px] font-semibold text-[#0F172A]">{card.emp_name}</h3>
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-1.5 px-4 py-3 text-[12.5px] border-b border-slate-100">
+        <div><span className="text-slate-500">EMP ID:</span> {card.employee_id || '—'}</div>
+        <div><span className="text-slate-500">Branch:</span> {card.branch_name || '—'}</div>
+        <div><span className="text-slate-500">Designation:</span> {card.desig || '—'}</div>
+        <div><span className="text-slate-500">Department:</span> {card.departments || '—'}</div>
+      </div>
+      <table className="w-full text-[13px]">
+        <thead className="bg-slate-100">
+          <tr>
+            <th className="text-left px-4 py-2 text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Salary</th>
+            <th className="text-right px-4 py-2 text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Amount</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {card.items.length === 0 && (
+            <tr><td colSpan={2} className="px-4 py-4 text-center text-slate-400">No employees found under this data</td></tr>
+          )}
+          {card.items.map((item, i) => (
+            <tr key={i}>
+              <td className="px-4 py-1.5 text-[#0F172A]">{item.label}</td>
+              <td className="px-4 py-1.5 text-right text-[#0F172A]">{formatCurrency(monthlyCtcItemAmount(item))}</td>
+            </tr>
+          ))}
+        </tbody>
+        <tfoot className="bg-slate-50 font-medium">
+          <tr>
+            <td className="px-4 py-2 text-[#0F172A]">Grand Total</td>
+            <td className="px-4 py-2 text-right text-[#0F172A]">{formatCurrency(card.grand_total)}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  );
+}
+
 const CURRENCY_KEYS = new Set([
   'monthly_ctc', 'gross_salary', 'total_deduction', 'net_salary', 'emp_anual_ctc', 'emp_derived_anualctc',
   'standard_total', 'variable_total', 'employer_total', 'other_total', 'total_gross', 'total_deductions',
   'total_net', 'current_net', 'previous_net', 'net_change', 'salary_amount',
   'current_gross', 'previous_gross', 'gross_change', 'current_deduction', 'previous_deduction', 'deduction_change',
   'current_ctc', 'previous_ctc', 'ctc_change', 'standard_gross_salary', 'settlement_amount', 'annual_ctc',
+  'previous_ctc_standard', 'current_ctc_standard', 'ctc_standard_change',
+  'previous_ctc_actual', 'current_ctc_actual', 'ctc_actual_change',
+  'previous_gross_standard', 'current_gross_standard', 'gross_standard_change',
+  'previous_gross_actual', 'current_gross_actual', 'gross_actual_change',
+  'previous_net_actual', 'current_net_actual', 'net_actual_change',
 ]);
 
 // Legacy renders every one of these subtypes grouped by branch (a separate <table> per branch,
@@ -160,6 +233,13 @@ interface SubtypeMeta {
   dateRange?: boolean;
   groupBy?: (row: Record<string, unknown>) => string;
   pdfAllowed?: boolean;
+  // Legacy's payroll_ctc.ctp View (and its PDF, which reuses the same template) reference
+  // $gross/$array_key/$standard_key/$variable_key/$stdctc_key/$actualctc_key — variables
+  // generatePayrollCTC() never sets (confirmed via grep: those $this->set() calls exist for ~15
+  // other report functions in this controller, not this one). Only the Excel branch, built
+  // directly off $arr_emp_details via raw PHPExcel calls, actually works. So PayrollCTC has no
+  // real on-screen View to port — Excel-only, View button hidden entirely (not just PDF).
+  viewAllowed?: boolean;
   // Excel-specific column set/order, used only when it needs to diverge from the on-screen grid —
   // e.g. SummaryPayroll's Excel export mirrors legacy's PHPExcel column order/labels exactly
   // (Sl No, no redundant Branch column since branch is already the group header, no Monthly CTC —
@@ -365,42 +445,57 @@ const SUBTYPE_META: Record<Subtype, SubtypeMeta> = {
     ],
   },
   Comparison: {
+    // Full rebuild across 5 phases (see reports.ts) — matches legacy's comparison_report.ctp: 5 real
+    // metric groups (Total Deduction/Total Salary are computed server-side but never shown as their
+    // own columns in legacy, only used internally for Net Salary, so they aren't exposed here
+    // either), the real per-item Standard-Addition pivot, the policy-dependent Pay Days formula, the
+    // three change-detection flag columns (Variable Additions/Deductions Count each show a count pair
+    // AND a same-row "No change"/"Change identified" flag — not a numeric diff; Bank Account is
+    // flag-only, no numeric values at all), and the row-level `status` column aggregating all of the
+    // above (comparison_report.ctp:334). Column order matches legacy exactly: Sl No, Employee ID,
+    // User ID, Employee Name, Joining Date, Branch, Department, Designation, Termination Date,
+    // Status, then the metric groups (SalaryReportsController.php:19212-19232).
+    // Grouping differs between View and Excel (see viewGroupBy/excelGroupBy in the page component):
+    // the View sections into separate per-branch tables for the Units criteria
+    // (comparison_report.ctp:79-175) — comparisonGroupBy below. Excel, despite also branching on
+    // needBranchWiseReport, writes ONE header block then a single continuous loop over every branch's
+    // employees (SalaryReportsController.php:19334-19422) — always one flat table regardless of
+    // criteria, same pattern as Grosssalary/GrosssalaryNew's Excel — so excelGroupBy stays unset for
+    // this subtype.
     label: 'Salary Previous Month Comparison',
     itemPivot: 'comparison',
-    groupBy: (r) => String(r.branch_name ?? ''),
+    slNo: true,
+    excelSlNo: true,
     columns: [
-      { key: 'employee_id', label: 'Employee ID' }, { key: 'emp_name', label: 'Employee' }, { key: 'branch_name', label: 'Branch' },
+      { key: 'employee_id', label: 'Employee ID' }, { key: 'login_user_id', label: 'User ID' }, { key: 'emp_name', label: 'Employee' },
+      { key: 'joining_date', label: 'Joining Date' }, { key: 'branch_name', label: 'Branch' },
       { key: 'departments', label: 'Department' }, { key: 'desig', label: 'Designation' },
-      { key: 'joining_date', label: 'Joining Date' }, { key: 'termination_date', label: 'Termination Date' },
-      { key: 'previous_ctc', label: 'Previous CTC' }, { key: 'current_ctc', label: 'Current CTC' }, { key: 'ctc_change', label: 'CTC Change' },
-      { key: 'previous_gross', label: 'Previous Gross' }, { key: 'current_gross', label: 'Current Gross' }, { key: 'gross_change', label: 'Gross Change' },
-      { key: 'previous_deduction', label: 'Previous Deductions' }, { key: 'current_deduction', label: 'Current Deductions' }, { key: 'deduction_change', label: 'Deductions Change' },
-      { key: 'previous_net', label: 'Previous Net' }, { key: 'current_net', label: 'Current Net' }, { key: 'net_change', label: 'Net Change' },
+      { key: 'termination_date', label: 'Termination Date' }, { key: 'status', label: 'Status' },
+      { key: 'previous_ctc_standard', label: 'Previous CTC (Standard)' }, { key: 'current_ctc_standard', label: 'Current CTC (Standard)' }, { key: 'ctc_standard_change', label: 'CTC (Standard) Change' },
+      { key: 'previous_gross_standard', label: 'Previous Gross Salary (Standard)' }, { key: 'current_gross_standard', label: 'Current Gross Salary (Standard)' }, { key: 'gross_standard_change', label: 'Gross Salary (Standard) Change' },
+      { key: 'previous_gross_actual', label: 'Previous Gross Salary (Actual)' }, { key: 'current_gross_actual', label: 'Current Gross Salary (Actual)' }, { key: 'gross_actual_change', label: 'Gross Salary (Actual) Change' },
+      { key: 'previous_net_actual', label: 'Previous Net Salary (Actual)' }, { key: 'current_net_actual', label: 'Current Net Salary (Actual)' }, { key: 'net_actual_change', label: 'Net Salary (Actual) Change' },
+      { key: 'previous_ctc_actual', label: 'Previous CTC (Actual)' }, { key: 'current_ctc_actual', label: 'Current CTC (Actual)' }, { key: 'ctc_actual_change', label: 'CTC (Actual) Change' },
       { key: 'previous_pay_days', label: 'Previous Pay Days' }, { key: 'current_pay_days', label: 'Current Pay Days' }, { key: 'pay_days_change', label: 'Pay Days Change' },
+      { key: 'previous_var_add_count', label: 'Previous Variable Additions (Count)' }, { key: 'current_var_add_count', label: 'Current Variable Additions (Count)' }, { key: 'var_add_status', label: 'Variable Additions Status' },
+      { key: 'previous_var_ded_count', label: 'Previous Variable Deductions (Count)' }, { key: 'current_var_ded_count', label: 'Current Variable Deductions (Count)' }, { key: 'var_ded_status', label: 'Variable Deductions Status' },
+      { key: 'previous_bank_details', label: 'Previous Bank Account' }, { key: 'current_bank_details', label: 'Current Bank Account' }, { key: 'bank_status', label: 'Bank Account Status' },
     ],
   },
   MonthlyCTCReport: {
+    // Legacy's real UI is a per-employee card layout (see MonthlyCtcCardView/isMonthlyCtc in the
+    // page component), not this screen's usual flat grid — columns stays empty; it's unused, this
+    // report is rendered/exported through its own dedicated path.
     label: 'Monthly CTC',
-    groupBy: (r) => String(r.branch_name ?? ''),
-    columns: [
-      { key: 'employee_id', label: 'Employee ID' }, { key: 'emp_name', label: 'Employee' }, { key: 'branch_name', label: 'Branch' },
-      { key: 'departments', label: 'Department' }, { key: 'desig', label: 'Designation' },
-      { key: 'salary_head', label: 'Salary Head' }, { key: 'salary_amount', label: 'Amount' },
-    ],
+    columns: [],
   },
   PayrollCTC: {
+    // Excel-only — legacy's own View/PDF for this report are dead code (see reports.ts's PayrollCTC
+    // comment); columns stays empty, this report is rendered/exported through its own dedicated
+    // path (exportPayrollCtcToExcel), same pattern as Monthly CTC's card layout.
     label: 'Payroll CTC Report',
-    itemPivot: 'plain',
-    groupBy: (r) => String(r.branch_name ?? ''),
-    columns: [
-      { key: 'employee_id', label: 'Employee ID' }, { key: 'emp_name', label: 'Employee' }, { key: 'branch_name', label: 'Branch' },
-      { key: 'departments', label: 'Department' }, { key: 'desig', label: 'Designation' }, { key: 'gender', label: 'Gender' },
-      { key: 'present_days', label: 'Present Days' }, { key: 'leave_days', label: 'Leave Days' }, { key: 'lop_days', label: 'LOP Days' },
-      { key: 'weekoff_total', label: 'Week Off' }, { key: 'holiday_total', label: 'Holiday' },
-      { key: 'standard_total', label: 'Standard' }, { key: 'variable_total', label: 'Variable' },
-      { key: 'employer_total', label: 'Employer Contribution' }, { key: 'other_total', label: 'Other/Ad-hoc' },
-      { key: 'total_deduction', label: 'Deductions' }, { key: 'net_salary', label: 'Net Salary' },
-    ],
+    viewAllowed: false,
+    columns: [],
   },
 };
 
@@ -484,6 +579,14 @@ function grosssalarySummaryGroupBy(criteria: Record<string, string[]>): ((row: R
 // Gross Salary Period Wise's grouping is the same on View and Excel (report_period.ctp is grouped
 // identically to its Excel branch): Units criteria sections by branch, EmployeeDetails is flat.
 function grossPeriodGroupBy(criteria: Record<string, string[]>): ((row: Record<string, unknown>) => string) | undefined {
+  if (criteria.Units?.length) return (r) => String(r.branch_name ?? '');
+  return undefined;
+}
+
+// Salary Previous Month Comparison groups identically on View and Excel (needBranchWiseReport is
+// read the same way by both — comparison_report.ctp:79 and SalaryReportsController.php:19078):
+// Units criteria branch-groups, EmployeeDetails is flat.
+function comparisonGroupBy(criteria: Record<string, string[]>): ((row: Record<string, unknown>) => string) | undefined {
   if (criteria.Units?.length) return (r) => String(r.branch_name ?? '');
   return undefined;
 }
@@ -653,6 +756,13 @@ function monthLabel(monthYear: string) {
   return new Date(y, m - 1, 1).toLocaleString('en-US', { month: 'long', year: 'numeric' });
 }
 
+function prevMonthLabel(monthYear: string) {
+  const [y, m] = monthYear.split('-').map(Number);
+  const d = new Date(y, m - 1, 1);
+  d.setMonth(d.getMonth() - 1);
+  return d.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+}
+
 export default function PayrollReportPage() {
   const { slotEl } = useHeaderSlot();
   const { data: session } = useSession();
@@ -664,6 +774,7 @@ export default function PayrollReportPage() {
   const [includeNegative, setIncludeNegative] = useState(false);
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
   const [slips, setSlips] = useState<SalarySlip[]>([]);
+  const [ctcCards, setCtcCards] = useState<MonthlyCtcCard[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   // Legacy's "Banks" criteria under BankTranfer switches the whole report into the narrower "Bank
@@ -672,6 +783,12 @@ export default function PayrollReportPage() {
   const isBankStatementMode = subtype === 'BankTranfer' && !!criteria.Banks?.length;
   const meta = isBankStatementMode ? BANK_STATEMENT_META : SUBTYPE_META[subtype];
   const isSlip = subtype === 'Salaryslip';
+  const isMonthlyCtc = subtype === 'MonthlyCTCReport';
+  const isPayrollCtc = subtype === 'PayrollCTC';
+  // Units criteria draws a "Branch Name:" legend before each branch's first card, matching legacy's
+  // needBranchWiseReport flag (monthlyctc.ctp:38-43, identically in its Excel branch) — flat,
+  // sequential cards otherwise.
+  const monthlyCtcGroupByBranch = !!criteria.Units?.length;
   // Company letterhead for the Salary Slip PDF header (mirrors legacy's salaryslip_not_exempted.ctp
   // header block) — only fetched when actually needed.
   const { data: companyInfo } = useQuery<SalarySlipCompanyInfo>({
@@ -706,7 +823,11 @@ export default function PayrollReportPage() {
     : subtype === 'GrosssalaryNew' ? grosssalaryNewViewGroupBy(criteria)
     : subtype === 'GrosssalarySummary' ? grosssalarySummaryGroupBy(criteria)
     : subtype === 'GrossPeriod' ? grossPeriodGroupBy(criteria)
+    : subtype === 'Comparison' ? comparisonGroupBy(criteria)
     : meta.groupBy;
+  // Comparison's Excel is always a single flat table regardless of criteria (per SalaryReportsController.
+  // php:19334-19422 — one header block, one continuous employee loop, no per-branch sectioning even
+  // when the View is branch-sectioned) — unlike the View, which still sections by branch for Units.
   // Legacy's Excel export for BankTranfer is flat-stacked for EmployeeDetails/Units/LeavePolicyGroup
   // criteria and grouped-per-bank only for the Banks criteria (SalaryReportsController.php:
   // 4271-4517 vs 4518-4688) — unlike the View, which is always grouped. PDF stays flat for this
@@ -718,14 +839,15 @@ export default function PayrollReportPage() {
     : subtype === 'GrosssalaryNew' ? undefined
     : subtype === 'GrosssalarySummary' ? grosssalarySummaryGroupBy(criteria)
     : subtype === 'GrossPeriod' ? grossPeriodGroupBy(criteria)
+    : subtype === 'Comparison' ? undefined
     : meta.groupBy;
   // Which subtypes have a real, wired-up "Include Resigned" / "Include Negative Salary" filter —
   // legacy's checkboxes only affect the report data itself for these subtypes; other subtypes render
   // the shared employee-picker's own resigned toggle (via EmployeeChecklist) but nothing report-level.
   // BankTranfer's Banks criteria hides both (legacy: loadcriteriaitems.ctp:88, `criteria !== 'Banks'`).
-  const hasResignedFilter = subtype === 'SummaryPayroll' || subtype === 'salary' || subtype === 'Grosssalary' || subtype === 'GrosssalaryNew' || subtype === 'GrosssalarySummary' || subtype === 'GrossPeriod'
+  const hasResignedFilter = subtype === 'SummaryPayroll' || subtype === 'salary' || subtype === 'Grosssalary' || subtype === 'GrosssalaryNew' || subtype === 'GrosssalarySummary' || subtype === 'GrossPeriod' || subtype === 'Comparison' || subtype === 'MonthlyCTCReport' || subtype === 'PayrollCTC'
     || (subtype === 'BankTranfer' && !isBankStatementMode);
-  const hasNegativeFilter = subtype === 'SummaryPayroll' || subtype === 'Grosssalary' || subtype === 'GrosssalaryNew' || subtype === 'GrosssalarySummary' || subtype === 'GrossPeriod'
+  const hasNegativeFilter = subtype === 'SummaryPayroll' || subtype === 'Grosssalary' || subtype === 'GrosssalaryNew' || subtype === 'GrosssalarySummary' || subtype === 'GrossPeriod' || subtype === 'Comparison' || subtype === 'MonthlyCTCReport' || subtype === 'PayrollCTC'
     || (subtype === 'BankTranfer' && !isBankStatementMode);
   // These subtypes' Excel filename/title mirror legacy's PHPExcel output exactly — every other
   // subtype keeps the existing generic pattern.
@@ -743,6 +865,8 @@ export default function PayrollReportPage() {
     ? `${session?.user?.companyCode ?? ''}_GrossSalarySummaryReport${monthYear}`
     : subtype === 'GrossPeriod'
     ? `${session?.user?.companyCode ?? ''}_GrossSalaryPeriodWiseReport${monthYear} - ${toMonthYear}`
+    : subtype === 'Comparison'
+    ? `${session?.user?.companyCode ?? ''}_Salary Previous Month Comparison Report${monthYear}`
     : `payroll_report_${monthYear}`;
   const excelTitle = subtype === 'SummaryPayroll'
     ? `Payroll Summary Report - ${monthYear}`
@@ -754,6 +878,8 @@ export default function PayrollReportPage() {
     ? `Gross Salary Summary Reports for ${monthYear}`
     : subtype === 'GrossPeriod'
     ? `Gross Salary Period Wise - ${monthLabel(monthYear)} - ${monthLabel(toMonthYear)}`
+    : subtype === 'Comparison'
+    ? `Salary Previous Month Comparison ${prevMonthLabel(monthYear)} - ${monthLabel(monthYear)}`
     : undefined;
 
   // Shared by the View action and by Excel/PDF export — legacy's Excel/PDF buttons are independent
@@ -777,7 +903,12 @@ export default function PayrollReportPage() {
 
   const generate = useMutation({
     mutationFn: fetchReportRows,
-    onSuccess: (r) => { isSlip ? setSlips(r as unknown as SalarySlip[]) : setRows(r); setError(null); },
+    onSuccess: (r) => {
+      if (isSlip) setSlips(r as unknown as SalarySlip[]);
+      else if (isMonthlyCtc) setCtcCards(r as unknown as MonthlyCtcCard[]);
+      else setRows(r);
+      setError(null);
+    },
     onError: (err: Error) => setError(err.message),
   });
 
@@ -788,6 +919,23 @@ export default function PayrollReportPage() {
         const slipData = r as unknown as SalarySlip[];
         if (kind === 'excel') exportSalarySlipsToExcel(slipData, session?.user?.companyCode ?? '', monthLabel(monthYear), `salary_slip_${monthYear}`);
         else exportSalarySlipsToPdf(slipData, monthLabel(monthYear), `salary_slip_${monthYear}`, companyInfo, session?.user?.name ?? undefined);
+        return;
+      }
+      if (isMonthlyCtc) {
+        // No PDF for this subtype — legacy hides the button too (showreport.ctp:403 exclusion list).
+        exportMonthlyCtcToExcel(
+          r as unknown as MonthlyCtcCard[], monthlyCtcGroupByBranch, monthLabel(monthYear),
+          `${session?.user?.companyCode ?? ''}_Monthly CTC ${monthYear}`, session?.user?.name ?? ''
+        );
+        return;
+      }
+      if (isPayrollCtc) {
+        // Excel-only — no View, no PDF (see viewAllowed:false above / reports.ts's PayrollCTC comment
+        // for why legacy's own View/PDF are dead code for this report).
+        exportPayrollCtcToExcel(
+          r as unknown as PayrollCtcExportRow[], monthYear,
+          `${session?.user?.companyCode ?? ''}_PayrollCTCReport${monthYear}`, session?.user?.name ?? ''
+        );
         return;
       }
       const { rows: expRows, columns: itemCols } = flattenItemColumns(r, meta.itemPivot);
@@ -802,11 +950,33 @@ export default function PayrollReportPage() {
       // (Employee Details / Standard Salary / Actual Salary) — the flat HTML view instead
       // disambiguates the two sections with "(Standard)"/"(Actual)" suffixes on each column label
       // (see flattenItemColumns' 'grossDetailed' case), since a single <thead><tr> can't merge cells.
+      // Comparison's Excel reproduces legacy's merged 3-column super-header per metric group
+      // (SalaryReportsController.php:19091-19205) — one span per prev/current/diff triple, including
+      // one per dynamic item label. Legacy's own "Employee Details" super-header is oddly split into
+      // two merges (A3:D3 labeled, E3:J3 blank) — a visual artifact, not intentional design, so this
+      // uses one clean span across all the fixed columns instead of replicating the blank gap.
+      const comparisonItemLabels = itemCols
+        .filter((c) => c.key.endsWith('__previous'))
+        .map((c) => c.key.slice('item__'.length, -'__previous'.length));
       const superHeaders = meta.itemPivot === 'grossDetailed'
         ? [
             { label: 'Employee Details', span: (meta.slNo ? 1 : 0) + meta.columns.length },
             { label: 'Standard Salary', span: itemCols.filter((c) => c.key.startsWith('sa__') || c.key.startsWith('sd__') || c.key === 'gross_standard').length },
             { label: 'Actual Salary', span: itemCols.filter((c) => c.key.startsWith('aa__') || c.key.startsWith('ad__') || ['gross_actual', 'total_deduction', 'settlement_amount', 'net_salary'].includes(c.key)).length },
+          ]
+        : meta.itemPivot === 'comparison'
+        ? [
+            { label: 'Employee Details', span: (meta.slNo ? 1 : 0) + meta.columns.length },
+            { label: 'CTC (Standard)', span: 3 },
+            { label: 'Gross Salary (Standard)', span: 3 },
+            ...comparisonItemLabels.map((label) => ({ label, span: 3 })),
+            { label: 'Gross Salary (Actual)', span: 3 },
+            { label: 'Net Salary (Actual)', span: 3 },
+            { label: 'CTC (Actual)', span: 3 },
+            { label: 'Pay Days', span: 3 },
+            { label: 'Variable Additions (Count)', span: 3 },
+            { label: 'Variable Deductions (Count)', span: 3 },
+            { label: 'Bank Account', span: 3 },
           ]
         : undefined;
       if (kind === 'excel') {
@@ -822,7 +992,7 @@ export default function PayrollReportPage() {
 
   // Any filter change invalidates the currently displayed View results — without this, changing the
   // month/criteria/checkboxes after a successful View would leave the previous run's rows on screen.
-  const resetResults = () => { setRows([]); setSlips([]); setError(null); generate.reset(); };
+  const resetResults = () => { setRows([]); setSlips([]); setCtcCards([]); setError(null); generate.reset(); };
 
   return (
     <div>
@@ -880,14 +1050,16 @@ export default function PayrollReportPage() {
           />
         </div>
         <div className="flex justify-end items-center gap-2">
-          <button
-            onClick={() => generate.mutate()}
-            disabled={generate.isPending || !monthYear || !hasCriteria}
-            title="View Report"
-            className={cn(BTN_BASE, 'bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)] text-white')}
-          >
-            {generate.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Eye className="w-4 h-4" />}
-          </button>
+          {meta.viewAllowed !== false && (
+            <button
+              onClick={() => generate.mutate()}
+              disabled={generate.isPending || !monthYear || !hasCriteria}
+              title="View Report"
+              className={cn(BTN_BASE, 'bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)] text-white')}
+            >
+              {generate.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Eye className="w-4 h-4" />}
+            </button>
+          )}
           <button
             onClick={() => exportReport.mutate('excel')}
             disabled={exportReport.isPending || !monthYear || !hasCriteria}
@@ -908,11 +1080,33 @@ export default function PayrollReportPage() {
         {error && <p className="text-[12.5px] text-[color:var(--color-danger)]">{error}</p>}
       </div>
 
+      {meta.viewAllowed === false ? null : (
+      <>
       {generate.isSuccess && (
         <h2 className="text-[13px] font-semibold text-[#0F172A] mb-2">Report Results</h2>
       )}
 
-      {isSlip ? (
+      {isMonthlyCtc ? (
+        <div className="space-y-4">
+          {ctcCards.length === 0 && (
+            <div className="surface-card rounded-xl px-4 py-8 text-center text-[12.5px] text-slate-400">
+              {generate.isPending
+                ? 'Loading...'
+                : generate.isSuccess
+                  ? 'No records found for the selected criteria.'
+                  : 'Choose at least one criteria value and click Generate.'}
+            </div>
+          )}
+          {monthlyCtcGroupByBranch
+            ? groupRows(ctcCards as unknown as Record<string, unknown>[], (r) => String(r.branch_name ?? '')).map((group) => (
+                <div key={group.key} className="space-y-4">
+                  <h3 className="text-[13px] font-semibold text-[#0F172A]">{group.key}</h3>
+                  {(group.rows as unknown as MonthlyCtcCard[]).map((card) => <MonthlyCtcCardView key={card.emp_fkey} card={card} />)}
+                </div>
+              ))
+            : ctcCards.map((card) => <MonthlyCtcCardView key={card.emp_fkey} card={card} />)}
+        </div>
+      ) : isSlip ? (
         <div className="space-y-4">
           {slips.length === 0 && (
             <div className="surface-card rounded-xl px-4 py-8 text-center text-[12.5px] text-slate-400">
@@ -1000,6 +1194,8 @@ export default function PayrollReportPage() {
             )}
           </table>
         </div>
+      )}
+      </>
       )}
     </div>
   );

@@ -12,9 +12,11 @@ import { EssPagination } from '@/components/ess/EssPagination';
 // actually supports:
 // - No receipt-image upload on expenses — the existing admin POST /api/expenses hardcodes
 //   image to '' regardless of what's sent; adding real upload support is a separate feature.
-// - No manual Authorized-By/Approved-By pickers — /api/expenses and /api/leave/requests already
-//   auto-resolve the authorizer/approver from the hierarchy (getAuthorizerApprover), so the
-//   employee doesn't pick anyone.
+// - Expenses has no manual Authorized-By/Approved-By picker — /api/expenses auto-resolves the
+//   authorizer/approver from the hierarchy (getAuthorizerApprover) server-side. Leave requests
+//   are different: POST /api/leave/requests does NOT auto-resolve (it only falls back to the
+//   applicant's own empFkey as authorizer, and leaves approver null, when not supplied) — so the
+//   Apply Leave form below has real Authorize By / Approve By pickers, same as legacy's.
 // - Salary Advance shows the CURRENT MONTH's pending advance only, because GET /api/advances
 //   (lib/advances.ts listAdvances) hardcodes is_credited='N' + defaults to the current month —
 //   that's a real constraint of the existing admin feature, not something added for ESS.
@@ -701,10 +703,22 @@ interface LeaveRow {
 }
 interface LeaveType { salaryHeadItemFkey: number; name: string; occurance: string; allowNegative: boolean; maxLeave: number }
 
+// Human-readable overrides for statuses whose raw enum value reads poorly as-is.
+const STATUS_TEXT_LABEL: Record<string, string> = {
+  CancellationOfAuthorized: 'Cancellation of Authorized',
+  CancellationOfApproved: 'Cancellation of Approved',
+  CancelledByAdmin: 'Cancelled by Admin',
+  'Can not Apply 0 days': 'Rejected — No Leave Days Available',
+};
+
 function StatusBadge({ status }: { status: string }) {
-  const cfg: Record<string, [string, string]> = { Applied: [BRAND, '#e0f2fe'], Authorized: ['#7c3aed', '#f5f3ff'], Approved: ['#16a34a', '#f0fdf4'], Rejected: ['#dc2626', '#fef2f2'], Cancelled: ['#94a3b8', '#f1f5f9'] };
+  const cfg: Record<string, [string, string]> = {
+    Applied: [BRAND, '#e0f2fe'], Authorized: ['#7c3aed', '#f5f3ff'], Approved: ['#16a34a', '#f0fdf4'],
+    Rejected: ['#dc2626', '#fef2f2'], Cancelled: ['#94a3b8', '#f1f5f9'], CancelledByAdmin: ['#94a3b8', '#f1f5f9'],
+    CancellationOfAuthorized: ['#86198f', '#fdf4ff'], CancellationOfApproved: ['#86198f', '#fdf4ff'],
+  };
   const [color, bg] = cfg[status] || [BRAND, '#e0f2fe'];
-  return <span style={{ padding: '2px 8px', borderRadius: 20, fontSize: 9, fontWeight: 800, textTransform: 'uppercase', color, background: bg }}>{status}</span>;
+  return <span style={{ padding: '2px 8px', borderRadius: 20, fontSize: 9, fontWeight: 800, textTransform: 'uppercase', color, background: bg }}>{STATUS_TEXT_LABEL[status] ?? status}</span>;
 }
 const STATUS_STRIPE: Record<string, string> = { Applied: BRAND, Authorized: '#7c3aed', Approved: '#16a34a', Rejected: '#dc2626', Cancelled: '#94a3b8' };
 
@@ -723,11 +737,94 @@ interface LeaveBalancePreview {
   balance: number; allowNegative: boolean; minLeaveLimit: number; maxLeaveLimit: number;
   minServiceOk: boolean; minServiceMessage: string | null;
   advanceNoticeOk: boolean; advanceNoticeMessage: string | null;
+  documentMandatory: boolean; remarks: string | null;
+}
+
+// These modals are bespoke fixed-overlay divs (not the shared components/ui/Modal, which already
+// locks scroll) — without this, the mouse wheel still scrolls the page behind the overlay while a
+// modal is open, same pattern components/ui/Modal.tsx uses.
+function useLockBodyScroll() {
+  useEffect(() => {
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = prevOverflow; };
+  }, []);
+}
+
+// Searchable dropdown for Authorize By / Approve By — mirrors legacy's select2-searching behaviour
+// (typing filters the candidate list returned by leave_auth_apr_person_fn) rather than a plain
+// <select>, since the candidate list can be long depending on the hierarchy configuration.
+function PersonPicker({
+  label, required, options, value, query, onQueryChange, onSelect, inp, lbl,
+}: {
+  label: string;
+  required?: boolean;
+  options: { empFkey: number; name: string }[];
+  value: string;
+  query: string;
+  onQueryChange: (q: string) => void;
+  onSelect: (empFkey: string) => void;
+  inp: React.CSSProperties;
+  lbl: React.CSSProperties;
+}) {
+  const [open, setOpen] = useState(false);
+  const selected = options.find((o) => String(o.empFkey) === value);
+  const filtered = query
+    ? options.filter((o) => o.name.toLowerCase().includes(query.toLowerCase()))
+    : options;
+
+  // The modal body scrolls independently of the page; a plain onBlur close doesn't fire when the
+  // user scrolls that body without moving focus away, leaving the dropdown floating over unrelated
+  // fields. Closing on any scroll within the modal (capture phase, since the scroll container itself
+  // doesn't bubble 'scroll') fixes that.
+  useEffect(() => {
+    if (!open) return;
+    const close = () => setOpen(false);
+    window.addEventListener('scroll', close, true);
+    return () => window.removeEventListener('scroll', close, true);
+  }, [open]);
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <label style={lbl}>{label} {required && <span style={{ color: '#dc2626' }}>*</span>}</label>
+      <input
+        type="text"
+        style={inp}
+        placeholder="Search employee…"
+        value={open ? query : (selected?.name ?? '')}
+        onFocus={() => { onQueryChange(''); setOpen(true); }}
+        onChange={(e) => onQueryChange(e.target.value)}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+      />
+      {open && (
+        <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 4, background: 'var(--bg-card)', border: '1.5px solid var(--border)', borderRadius: 8, maxHeight: 200, overflowY: 'auto', zIndex: 20, boxShadow: '0 8px 24px rgba(0,0,0,0.15)' }}>
+          {filtered.length === 0 && <div style={{ padding: '8px 12px', fontSize: 12.5, color: 'var(--text-muted)' }}>No matches</div>}
+          {filtered.map((o) => (
+            <div
+              key={o.empFkey}
+              onMouseDown={() => { onSelect(String(o.empFkey)); setOpen(false); }}
+              style={{ padding: '8px 12px', fontSize: 12.5, cursor: 'pointer', background: String(o.empFkey) === value ? `${BRAND}12` : 'transparent', color: 'var(--text-primary)' }}
+            >
+              {o.name}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: number; defaultTypeId?: number | null; onClose: () => void; onSaved: () => void }) {
+  useLockBodyScroll();
   const [types, setTypes] = useState<LeaveType[]>([]);
-  const [approvers, setApprovers] = useState<{ authorizer: { name: string | null } | null; approver: { name: string | null } | null }>({ authorizer: null, approver: null });
+  const [authorizerOptions, setAuthorizerOptions] = useState<{ empFkey: number; name: string }[]>([]);
+  const [approverOptions, setApproverOptions] = useState<{ empFkey: number; name: string }[]>([]);
+  const [authorizerFkey, setAuthorizerFkey] = useState('');
+  const [approverFkey, setApproverFkey] = useState('');
+  const [authorizerQuery, setAuthorizerQuery] = useState('');
+  const [approverQuery, setApproverQuery] = useState('');
+  const [file, setFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<LeaveBalancePreview | null>(null);
@@ -736,7 +833,15 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
 
   useEffect(() => {
     fetch(`/api/leave/types?employee=${empId}`).then((r) => (r.ok ? r.json() : { data: [] })).then((d) => setTypes(d.data || []));
-    fetch(`/api/leave/authorizers?employee=${empId}`).then((r) => (r.ok ? r.json() : null)).then((d) => d && setApprovers(d));
+    // leave_auth_apr_person_fn can return MULTIPLE eligible people per role (comma-list) — when the
+    // hierarchy only configures exactly one, auto-select it so the common case needs no extra click.
+    fetch(`/api/leave/authorizers?employee=${empId}`).then((r) => (r.ok ? r.json() : null)).then((d) => {
+      if (!d) return;
+      setAuthorizerOptions(d.authorizers || []);
+      setApproverOptions(d.approvers || []);
+      if (d.authorizers?.length === 1) setAuthorizerFkey(String(d.authorizers[0].empFkey));
+      if (d.approvers?.length === 1) setApproverFkey(String(d.approvers[0].empFkey));
+    });
   }, [empId]);
 
   // Real per-type balance + minimum-service/advance-notice eligibility, from the same endpoint
@@ -754,11 +859,25 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
     setSaving(true);
     setError(null);
     try {
+      let fileName: string | undefined;
+      let fileType: string | undefined;
+      if (file) {
+        setUploading(true);
+        const fd = new FormData();
+        fd.append('file', file);
+        const upRes = await fetch('/api/upload', { method: 'POST', body: fd });
+        const upBody = await upRes.json();
+        setUploading(false);
+        if (!upRes.ok) throw new Error(upBody.error || 'Failed to upload document');
+        fileName = upBody.path;
+        fileType = file.type;
+      }
       const res = await fetch('/api/leave/requests', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           salaryHeadItemFkey: Number(form.leave_type_id), fromDate: form.from_date, fromHalf: Number(form.from_half),
           toDate: form.to_date, toHalf: Number(form.to_half), reason: form.reason, contactNo: form.contact_no, contactPerson: form.contact_person,
+          authorizerFkey: Number(authorizerFkey), approverFkey: Number(approverFkey), fileName, fileType,
         }),
       });
       const body = await res.json();
@@ -767,6 +886,7 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to apply');
     } finally {
+      setUploading(false);
       setSaving(false);
     }
   }
@@ -778,6 +898,9 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
     if (!form.leave_type_id) { setError('Please select a leave type.'); return; }
     if (!form.from_date || !form.to_date) { setError('Please choose a From and To date.'); return; }
     if (!form.reason.trim()) { setError('Please enter a reason for your leave.'); return; }
+    if (!authorizerFkey) { setError('Please select who should Authorize this leave.'); return; }
+    if (!approverFkey) { setError('Please select who should Approve this leave.'); return; }
+    if (preview?.documentMandatory && !file) { setError('A supporting document is required for this leave type.'); return; }
     // Genuine policy ineligibility (not served yet / applied too late) — hard block, same as
     // legacy's own Apply Leave form.
     if (preview && !preview.minServiceOk) { setError(preview.minServiceMessage); return; }
@@ -856,15 +979,34 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
               <input style={inp} value={form.contact_no} onChange={(e) => setForm((f) => ({ ...f, contact_no: e.target.value }))} />
             </div>
           </div>
-          <div style={{ display: 'flex', gap: 16, marginBottom: 14, fontSize: 12, color: 'var(--text-muted)' }}>
-            <span>Authorizer: <strong style={{ color: 'var(--text-primary)' }}>{approvers.authorizer?.name || 'Not configured'}</strong></span>
-            <span>Approver: <strong style={{ color: 'var(--text-primary)' }}>{approvers.approver?.name || 'Not configured'}</strong></span>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}>
+            <PersonPicker
+              label="Authorize By" required inp={inp} lbl={lbl}
+              options={authorizerOptions} value={authorizerFkey} query={authorizerQuery}
+              onQueryChange={setAuthorizerQuery} onSelect={setAuthorizerFkey}
+            />
+            <PersonPicker
+              label="Approve By" required inp={inp} lbl={lbl}
+              options={approverOptions} value={approverFkey} query={approverQuery}
+              onQueryChange={setApproverQuery} onSelect={setApproverFkey}
+            />
+          </div>
+          <div style={{ marginBottom: 14 }}>
+            <label style={lbl}>
+              Supporting Document {preview?.documentMandatory && <span style={{ color: '#dc2626' }}>*</span>}
+            </label>
+            <input
+              type="file"
+              style={inp}
+              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+            />
+            {preview?.remarks && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>{preview.remarks}</div>}
           </div>
           {error && <div style={{ marginBottom: 12, fontSize: 12, color: '#dc2626' }}>{error}</div>}
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
             <button type="button" onClick={onClose} style={{ padding: '8px 18px', borderRadius: 8, border: '1.5px solid var(--border)', background: 'var(--bg-page)', color: 'var(--text-muted)', fontWeight: 700, cursor: 'pointer', fontSize: 13 }}>Cancel</button>
             <button type="submit" disabled={saving} style={{ padding: '8px 22px', borderRadius: 8, border: 'none', background: BRAND, color: '#fff', fontWeight: 800, cursor: 'pointer', fontSize: 13, opacity: saving ? 0.7 : 1 }}>
-              {saving ? 'Submitting…' : 'Submit Leave'}
+              {uploading ? 'Uploading…' : saving ? 'Submitting…' : 'Submit Leave'}
             </button>
           </div>
         </form>

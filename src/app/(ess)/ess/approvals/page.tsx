@@ -84,22 +84,39 @@ function fmt(d: string) {
   return new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
-function RemarkModal({ row, action, onClose, onDone }: { row: LeaveRow; action: 'authorize' | 'approve' | 'reject'; onClose: () => void; onDone: () => void }) {
+type Action = 'authorize' | 'approve' | 'reject' | 'confirmCancellation' | 'rejectCancellation';
+
+const ACTION_ENDPOINT: Record<Action, string> = {
+  authorize: 'authorize',
+  approve: 'approve',
+  reject: 'reject',
+  confirmCancellation: 'cancellation/approve',
+  rejectCancellation: 'cancellation/reject',
+};
+
+function RemarkModal({ row, action, onClose, onDone }: { row: LeaveRow; action: Action; onClose: () => void; onDone: () => void }) {
   const [remark, setRemark] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const labels = { authorize: 'Authorize', approve: 'Approve', reject: 'Reject' };
-  const colors = { authorize: '#1d4ed8', approve: '#16a34a', reject: '#dc2626' };
+  const labels: Record<Action, string> = {
+    authorize: 'Authorize', approve: 'Approve', reject: 'Reject',
+    confirmCancellation: 'Confirm Cancellation', rejectCancellation: 'Reject Cancellation',
+  };
+  const colors: Record<Action, string> = {
+    authorize: '#1d4ed8', approve: '#16a34a', reject: '#dc2626',
+    confirmCancellation: '#dc2626', rejectCancellation: '#1d4ed8',
+  };
+  const needsRemark = action === 'reject';
 
   async function submit() {
-    if (action === 'reject' && !remark.trim()) return;
+    if (needsRemark && !remark.trim()) return;
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/leave/requests/${row.LEAVEENTRYID}/${action}`, {
+      const res = await fetch(`/api/leave/requests/${row.LEAVEENTRYID}/${ACTION_ENDPOINT[action]}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(action === 'reject' ? { remarks: remark } : { remarks: remark }),
+        body: JSON.stringify({ remarks: remark }),
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error || 'Action failed');
@@ -119,17 +136,17 @@ function RemarkModal({ row, action, onClose, onDone }: { row: LeaveRow; action: 
           {row.first_name} {row.last_name} · {row.leave_type} · {row.FROMDATE.slice(0, 10)} – {row.TODATE.slice(0, 10)} ({row.leave_days}d)
         </p>
         <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 6 }}>
-          {action === 'reject' ? 'Reason for rejection *' : 'Remarks (optional)'}
+          {needsRemark ? 'Reason for rejection *' : 'Remarks (optional)'}
         </label>
         <textarea
           value={remark} onChange={(e) => setRemark(e.target.value)} rows={3}
           style={{ width: '100%', boxSizing: 'border-box', padding: '8px 10px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg-page)', color: 'var(--text-primary)', fontSize: 13, resize: 'vertical' }}
-          placeholder={action === 'reject' ? 'Enter reason...' : 'Add a remark...'}
+          placeholder={needsRemark ? 'Enter reason...' : 'Add a remark...'}
         />
         {error && <div style={{ marginTop: 8, fontSize: 12, color: '#dc2626' }}>{error}</div>}
         <div style={{ display: 'flex', gap: 10, marginTop: 16, justifyContent: 'flex-end' }}>
           <button onClick={onClose} style={btnSm('var(--bg-page)', 'var(--text-muted)')}>Cancel</button>
-          <button onClick={submit} disabled={loading || (action === 'reject' && !remark.trim())} style={btnSm(colors[action], '#fff')}>{loading ? '…' : labels[action]}</button>
+          <button onClick={submit} disabled={loading || (needsRemark && !remark.trim())} style={btnSm(colors[action], '#fff')}>{loading ? '…' : labels[action]}</button>
         </div>
       </div>
     </div>

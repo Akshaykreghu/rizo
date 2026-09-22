@@ -369,8 +369,8 @@ export interface PayrollReportParams {
   monthYear: string; // 'YYYY-MM' — used by all subtypes except GrossPeriod
   toMonthYear?: string; // 'YYYY-MM' — GrossPeriod only, range end (monthYear is the range start)
   criteria: CriteriaSelections;
-  includeResigned?: boolean; // SummaryPayroll/salary/Grosssalary/BankTranfer/GrosssalaryNew/GrosssalarySummary/GrossPeriod — "Include Resigned" checkbox
-  includeNegative?: boolean; // SummaryPayroll/Grosssalary/BankTranfer/GrosssalaryNew/GrosssalarySummary/GrossPeriod — "Include Negative Salary" checkbox
+  includeResigned?: boolean; // SummaryPayroll/salary/Grosssalary/BankTranfer/GrosssalaryNew/GrosssalarySummary/GrossPeriod/Comparison/MonthlyCTCReport/PayrollCTC — "Include Resigned" checkbox
+  includeNegative?: boolean; // SummaryPayroll/Grosssalary/BankTranfer/GrosssalaryNew/GrosssalarySummary/GrossPeriod/Comparison/MonthlyCTCReport/PayrollCTC — "Include Negative Salary" checkbox
 }
 
 function prevMonth(monthYear: string): string {
@@ -379,38 +379,83 @@ function prevMonth(monthYear: string): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
-// Legacy's GrosssalaryNew/PayrollCTC/Comparison views pivot each employee's real salary-head items
-// (Basic, HRA, Conveyance, etc — varies per company/employee) into their own columns, alongside the
-// fixed aggregate totals already ported. Fetches the Addition-side items actually processed this
-// month from `emp_salary_slip` (the same source the aggregate standard/variable totals already draw
-// from via head_pkey category — this is that same data at per-item grain instead of summed).
-// Deliberately does NOT also pivot a parallel "Standard Salary" (structure-value) column set the way
-// legacy's HTML does for these 3 reports — documented simplification, not silently dropped. (The
-// plain `Grosssalary` report DOES get the full Standard+Actual pivot — see getSalaryHeadKeys/
-// getGrossPivot below — because legacy's actual Net Salary computation for that report depends on
-// it, unlike these three, which read a pre-aggregated total from payroll_master.)
-async function getItemWiseAdditions(pool: Pool, payrollMasterPkeys: number[]): Promise<Map<number, SalarySlipLineItem[]>> {
-  const map = new Map<number, SalarySlipLineItem[]>();
-  if (payrollMasterPkeys.length === 0) return map;
-  const [rows] = await pool.query<RowDataPacket[]>(
-    `SELECT ess.payroll_master_fkey, ess.salary_head_item_desc, ess.salary_amount, ess.structure_det_value
+// Salary Previous Month Comparison's own "Standard Addition" item pivot (SalaryReportsController.php:
+// 18109-18120, 18336-18348) — structure_det_value (not salary_amount), restricted to
+// salary_heads.head_fkey IN (1,4,5), with NO item_part
+// filter at all, and ONE value per employee per label per month (legacy takes the first/only DISTINCT
+// row, not a sum — these head categories don't repeat per employee in practice). The column label set
+// is the union of labels appearing in EITHER month (legacy's `arr_items`), not just this employee's
+// own labels, so every row gets the same zero-filled column set.
+async function getComparisonItemLabels(pool: Pool, monthA: string, monthB: string): Promise<string[]> {
+  const [rows] = await pool.execute<RowDataPacket[]>(
+    `SELECT DISTINCT TRIM(ess.salary_head_item_desc) AS label, shi.salary_head_item_order1 AS ord
      FROM emp_salary_slip ess
      JOIN salary_head_items shi ON shi.salary_head_item_pkey = ess.salary_head_item_fkey
-     WHERE ess.payroll_master_fkey IN (?) AND ess.item_part = 'Direct' AND ess.head_operator = 'Addition'
-       AND ess.end_date_effective IS NULL
-     ORDER BY shi.salary_head_item_order1`,
-    [payrollMasterPkeys]
+     WHERE ess.end_date_effective IS NULL AND ess.month_year IN (?, ?)
+       AND shi.head_fkey IN (1,4,5) AND ess.structure_det_value IS NOT NULL AND ess.structure_det_value <> 0
+     ORDER BY ord`,
+    [monthA, monthB]
+  );
+  return (rows as RowDataPacket[]).map((r) => String(r.label));
+}
+
+async function getComparisonItemValues(pool: Pool, empFkeys: number[], month: string): Promise<Map<number, Map<string, number>>> {
+  const map = new Map<number, Map<string, number>>();
+  if (empFkeys.length === 0) return map;
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT ess.emp_fkey, TRIM(ess.salary_head_item_desc) AS label, MAX(ess.structure_det_value) AS value
+     FROM emp_salary_slip ess
+     JOIN salary_head_items shi ON shi.salary_head_item_pkey = ess.salary_head_item_fkey
+     WHERE ess.emp_fkey IN (?) AND ess.end_date_effective IS NULL AND ess.month_year = ?
+       AND shi.head_fkey IN (1,4,5)
+     GROUP BY ess.emp_fkey, ess.salary_head_item_desc`,
+    [empFkeys, month]
   );
   for (const r of rows as RowDataPacket[]) {
-    const list = map.get(r.payroll_master_fkey) ?? [];
-    list.push({
-      label: String(r.salary_head_item_desc).trim(),
-      amount: Math.round(Number(r.salary_amount)),
-      rate: Math.round(Number(r.structure_det_value ?? r.salary_amount)),
-    });
-    map.set(r.payroll_master_fkey, list);
+    let m = map.get(r.emp_fkey);
+    if (!m) { m = new Map(); map.set(r.emp_fkey, m); }
+    m.set(String(r.label), Number(r.value));
   }
   return map;
+}
+
+// Salary Previous Month Comparison's Pay Days is NOT payroll_master.days_presant — legacy computes
+// it per a company-wide attendance policy read off emp_salary_structure.prorate_code (getprodataDesc,
+// SalaryReportsController.php:12826-12868, as actually consumed by comparison_report.ctp:298-332):
+//   - '1' (Calendar Days, the default when no structure row exists) — attendance_register's
+//     presant_total + leave_total + holiday_total + weekoff_total for that employee+month.
+//   - '2' (Working Days) — (payroll_master.days_presant + payroll_master.days_leave) +
+//     emp_salary_slip.leave_total (the view adds this on top of getprodataDesc's own present figure,
+//     which already includes days_leave once — legacy double-counts leave here; replicated as-is).
+//   - anything else (Fixed Days) — a flat 30, regardless of any actual attendance data.
+// prorate_code itself isn't month-specific, so one lookup per employee covers both months being
+// compared.
+async function getProrateCodes(pool: Pool, empFkeys: number[]): Promise<Map<number, string>> {
+  const map = new Map<number, string>();
+  if (empFkeys.length === 0) return map;
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT emp_fkey, prorate_code FROM emp_salary_structure WHERE emp_fkey IN (?) AND end_date_effective IS NULL`,
+    [empFkeys]
+  );
+  for (const r of rows as RowDataPacket[]) {
+    if (!map.has(r.emp_fkey)) map.set(r.emp_fkey, r.prorate_code != null ? String(r.prorate_code) : '1');
+  }
+  return map;
+}
+
+interface PayDaysInputs { arPresent: number; arLeave: number; arHoliday: number; arWeekoff: number; essLeaveTotal: number; pmDaysPresant: number; pmDaysLeave: number }
+
+function computePayDays(prorateCode: string | undefined, d: PayDaysInputs): number {
+  if (prorateCode === '2') return d.pmDaysPresant + d.pmDaysLeave + d.essLeaveTotal; // Working Days
+  if (!prorateCode || prorateCode === '1') return d.arPresent + d.arLeave + d.arHoliday + d.arWeekoff; // Calendar Days
+  return 30; // Fixed Days
+}
+
+// Matches legacy's bank-details cleanup (comparison_report.ctp:488/493): collapse runs of repeated
+// commas (e.g. from blank bank-detail segments) down to one, then trim a leading/trailing comma.
+function cleanBankDetails(raw: string | null | undefined): string {
+  if (!raw) return '';
+  return raw.replace(/,(\s*,)+/g, ',').replace(/^,|,$/g, '');
 }
 
 export interface GrossPivotItem { label: string; amount: number }
@@ -436,6 +481,118 @@ async function getSalaryHeadKeys(pool: Pool, monthYear: string): Promise<{ addit
     (r.head_operator === 'Addition' ? additionLabels : deductionLabels).push(String(r.label));
   }
   return { additionLabels, deductionLabels };
+}
+
+export interface PayrollCtcItem { label: string; amount: number; rate: number }
+interface PayrollCtcKeyItem { fkey: number; label: string }
+interface PayrollCtcKeys {
+  standardAdditions: PayrollCtcKeyItem[];
+  standardDeductions: PayrollCtcKeyItem[];
+  variable: PayrollCtcKeyItem[];
+  employer: PayrollCtcKeyItem[];
+  actualAddition: PayrollCtcKeyItem[];
+  actualDeduction: PayrollCtcKeyItem[];
+}
+
+// Mirrors PayrollCTC's 5 *_keys queries (SalaryReportsController.php:22611-22646) — each
+// independently scoped to the month only (not the selected criteria), same discipline as
+// getSalaryHeadKeys, so every row gets the same zero-filled column set. Standard/Variable/Employer
+// keep whichever head_operator each item actually has (split client-side); Actual Addition/
+// Deduction bake the operator into the query itself, matching legacy's two separate queries.
+async function getPayrollCtcKeys(pool: Pool, monthYear: string): Promise<PayrollCtcKeys> {
+  const [standardRows] = await pool.execute<RowDataPacket[]>(
+    `SELECT TRIM(ectc.salary_head_item_desc) AS label, ectc.head_operator AS operator, ectc.salary_head_item_fkey AS fkey
+     FROM emp_salary_slip ectc
+     LEFT JOIN salary_head_items salhead ON salhead.salary_head_item_pkey = ectc.salary_head_item_fkey
+     LEFT JOIN salary_heads ON salary_heads.head_pkey = salhead.head_fkey
+     WHERE ectc.item_part = 'Direct' AND ectc.end_date_effective IS NULL AND ectc.month_year = ? AND salary_heads.head_pkey IN (1,5)
+     GROUP BY ectc.salary_head_item_desc, ectc.head_operator, ectc.salary_head_item_fkey, salhead.salary_head_item_order1
+     ORDER BY salhead.salary_head_item_order1 ASC`,
+    [monthYear]
+  );
+  const [variableRows] = await pool.execute<RowDataPacket[]>(
+    `SELECT TRIM(ectc.salary_head_item_desc) AS label, ectc.salary_head_item_fkey AS fkey
+     FROM emp_salary_slip ectc
+     LEFT JOIN salary_head_items salhead ON salhead.salary_head_item_pkey = ectc.salary_head_item_fkey
+     LEFT JOIN salary_heads ON salary_heads.head_pkey = salhead.head_fkey
+     WHERE ectc.item_part = 'Direct' AND ectc.end_date_effective IS NULL AND ectc.month_year = ? AND salary_heads.head_pkey IN (2,7,9)
+     GROUP BY ectc.salary_head_item_desc, ectc.salary_head_item_fkey, salhead.salary_head_item_order1
+     ORDER BY salhead.salary_head_item_order1 ASC`,
+    [monthYear]
+  );
+  const [employerRows] = await pool.execute<RowDataPacket[]>(
+    `SELECT TRIM(ectc.salary_head_item_desc) AS label, ectc.salary_head_item_fkey AS fkey
+     FROM emp_salary_slip ectc
+     LEFT JOIN salary_head_items salhead ON salhead.salary_head_item_pkey = ectc.salary_head_item_fkey
+     LEFT JOIN salary_heads ON salary_heads.head_pkey = salhead.head_fkey
+     WHERE ectc.item_part = 'Indirect' AND ectc.end_date_effective IS NULL AND ectc.month_year = ? AND salary_heads.head_pkey = 4
+     GROUP BY ectc.salary_head_item_desc, ectc.salary_head_item_fkey, salhead.salary_head_item_order1
+     ORDER BY salhead.salary_head_item_order1 ASC`,
+    [monthYear]
+  );
+  const [actualAdditionRows] = await pool.execute<RowDataPacket[]>(
+    `SELECT TRIM(ectc.salary_head_item_desc) AS label, ectc.salary_head_item_fkey AS fkey
+     FROM emp_salary_slip ectc
+     LEFT JOIN salary_head_items salhead ON salhead.salary_head_item_pkey = ectc.salary_head_item_fkey
+     LEFT JOIN salary_heads ON salary_heads.head_pkey = salhead.head_fkey
+     WHERE ectc.item_part = 'Direct' AND ectc.end_date_effective IS NULL AND ectc.month_year = ?
+       AND (ectc.head_type = 'Manually' OR ectc.head_type = 'Fixed')
+       AND (salary_heads.head_pkey NOT IN (1,5,2,7,9) OR salary_heads.head_pkey IS NULL)
+       AND ectc.head_operator = 'Addition'
+     GROUP BY ectc.salary_head_item_desc, ectc.salary_head_item_fkey, salhead.salary_head_item_order1
+     ORDER BY salhead.salary_head_item_order1 ASC`,
+    [monthYear]
+  );
+  const [actualDeductionRows] = await pool.execute<RowDataPacket[]>(
+    `SELECT TRIM(ectc.salary_head_item_desc) AS label, ectc.salary_head_item_fkey AS fkey
+     FROM emp_salary_slip ectc
+     LEFT JOIN salary_head_items salhead ON salhead.salary_head_item_pkey = ectc.salary_head_item_fkey
+     LEFT JOIN salary_heads ON salary_heads.head_pkey = salhead.head_fkey
+     WHERE ectc.item_part = 'Direct' AND ectc.end_date_effective IS NULL AND ectc.month_year = ?
+       AND (ectc.head_type = 'Manually' OR ectc.head_type = 'Fixed')
+       AND (salary_heads.head_pkey NOT IN (1,5,2,7,9) OR salary_heads.head_pkey IS NULL)
+       AND ectc.head_operator = 'Deduction'
+     GROUP BY ectc.salary_head_item_desc, ectc.salary_head_item_fkey, salhead.salary_head_item_order1
+     ORDER BY salhead.salary_head_item_order1 ASC`,
+    [monthYear]
+  );
+  const toKey = (r: RowDataPacket): PayrollCtcKeyItem => ({ fkey: Number(r.fkey), label: String(r.label) });
+  return {
+    standardAdditions: (standardRows as RowDataPacket[]).filter((r) => r.operator === 'Addition').map(toKey),
+    standardDeductions: (standardRows as RowDataPacket[]).filter((r) => r.operator === 'Deduction').map(toKey),
+    variable: (variableRows as RowDataPacket[]).map(toKey),
+    employer: (employerRows as RowDataPacket[]).map(toKey),
+    actualAddition: (actualAdditionRows as RowDataPacket[]).map(toKey),
+    actualDeduction: (actualDeductionRows as RowDataPacket[]).map(toKey),
+  };
+}
+
+// Per-employee, per-head-item {amount, rate} lookup — mirrors legacy's per-employee $salary_lookup
+// (SalaryReportsController.php:22793-22819), except batched across all matching employees in one
+// query instead of one query per employee. Deliberately no item_part/head_operator filter here (the
+// filtering already happened when building the key lists above); this is a raw fkey->value lookup.
+async function getPayrollCtcValues(pool: Pool, empFkeys: number[], monthYear: string): Promise<Map<number, Map<number, { amount: number; rate: number }>>> {
+  const map = new Map<number, Map<number, { amount: number; rate: number }>>();
+  if (empFkeys.length === 0) return map;
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT ess.emp_fkey, ess.salary_head_item_fkey AS fkey, ess.salary_amount, ess.structure_det_value
+     FROM emp_salary_slip ess
+     WHERE ess.emp_fkey IN (?) AND ess.month_year = ? AND ess.end_date_effective IS NULL`,
+    [empFkeys, monthYear]
+  );
+  for (const r of rows as RowDataPacket[]) {
+    let m = map.get(r.emp_fkey);
+    if (!m) { m = new Map(); map.set(r.emp_fkey, m); }
+    m.set(Number(r.fkey), { amount: Number(r.salary_amount ?? 0), rate: Number(r.structure_det_value ?? 0) });
+  }
+  return map;
+}
+
+function buildPayrollCtcItems(keys: PayrollCtcKeyItem[], values: Map<number, { amount: number; rate: number }> | undefined): PayrollCtcItem[] {
+  return keys.map((k) => {
+    const v = values?.get(k.fkey);
+    return { label: k.label, amount: v?.amount ?? 0, rate: v?.rate ?? 0 };
+  });
 }
 
 interface GrossPivotAmounts { standard: number; actual: number }
@@ -1054,124 +1211,308 @@ export async function generatePayrollReport(pool: Pool, params: PayrollReportPar
   }
 
   if (params.subtype === 'Comparison') {
-    // Mirrors GenerateSalaryComparison() — compares the selected month against the prior
-    // calendar month, computed server-side (legacy: DateTime::modify('-1 month')), not a
-    // user-picked second date. Legacy's real comparison_report.ctp compares ~10 metric groups
-    // (CTC Standard/Actual, Gross Salary Standard/Actual, per-salary-head amounts, Pay Days,
-    // Variable Additions/Deductions counts, Bank Account) as prev/current/diff triplets — this
-    // port covers the metrics directly available as payroll_master columns (CTC, Gross Salary,
-    // Total Deduction, Net Salary, Pay Days), each as prev/current/diff. Per-salary-head dynamic
-    // comparison columns (a pivoted column per distinct salary head company-wide) and the
-    // Variable Additions/Deductions Count / Bank Account comparisons are NOT built — those would
-    // need a genuinely different data source (counts of variable-pay upload rows; a bank-account
-    // string diff) unrelated to the salary-head pivot below, so they're flagged here as a real,
-    // smaller follow-up rather than silently claimed as done. Per-salary-head prev/current/diff
-    // IS built below (`items`), reusing `getItemWiseAdditions()` for both months and merging by
-    // label — the one dynamic-pivot piece this report genuinely needed.
+    // Mirrors GenerateSalaryComparison() (SalaryReportsController.php:18068-19008) — compares the
+    // selected month against the prior calendar month, computed server-side (legacy: DateTime::
+    // modify('-1 month')), not a user-picked second date. Legacy's comparison_report.ctp shows FIVE
+    // separate metric groups, not one undifferentiated CTC/Gross/Net triplet — Phase 1 of a
+    // multi-phase rebuild (see conversation) fixes these at the source:
+    //   - CTC (Standard) = SUM(ABS(structure_det_value)), Addition-only, NOT filtered by item_part.
+    //   - CTC (Actual) = same but salary_amount, also not filtered by item_part.
+    //   - Gross Salary (Standard) = SUM(ROUND(structure_det_value)) where head_fkey=1, item_part='Direct'.
+    //   - Gross Salary (Actual) = same but salary_amount.
+    //   - Net Salary (Actual) = total_salary − total_deduction (both re-summed from emp_salary_slip,
+    //     item_part='Direct') — NEVER payroll_master.net_salary, which legacy doesn't even read here.
+    // Total Deduction/Total Salary are computed but not shown as their own columns in legacy (only
+    // used internally for Net Salary), so they aren't exposed here either.
+    // Phase 2 fixed the per-item pivot: getComparisonItemLabels/getComparisonItemValues below source
+    // structure_det_value restricted to head_fkey IN (1,4,5), one value per employee per label per
+    // month (not the old, wrong salary_amount/no-head-filter source this report used to share with
+    // GrosssalaryNew — that source is a genuinely different, and correct, pivot for that report;
+    // Comparison just needed its own).
+    // Phase 3 fixed Pay Days: see getProrateCodes/computePayDays below for the Calendar/Working/
+    // Fixed Days policy formula (was a flat payroll_master.days_presant).
+    // Phase 4 added the three change-detection flag columns (Variable Additions/Deductions Count,
+    // Bank Account — each a count/string pair plus its own "No change"/"Change identified" flag).
+    // Phase 5 (final) added the row-level `status` field aggregating every metric above
+    // (comparison_report.ctp:334) and fixes View/Excel grouping to match legacy exactly: branch-
+    // grouped only for the Units criteria (`needBranchWiseReport`, confirmed identical between the
+    // View at comparison_report.ctp:79 and the Excel branch at SalaryReportsController.php:19078),
+    // flat for EmployeeDetails — see comparisonGroupBy in page.tsx (this rebuild is now complete).
     const prior = prevMonth(params.monthYear);
+    const statusCondition = params.includeResigned ? 'ed.status IN (1,2)' : 'ed.status = 1';
+    const negativeCondition = params.includeNegative ? '' : ' AND pm.net_salary >= 0';
     const { conditions, args } = buildCriteriaConditions(params.criteria, {
       Units: 'pm.branch_code', EmployeeDetails: 'pm.emp_fkey',
     });
+    // Each metric group needs the same shape of correlated subquery run once per month — built as
+    // parameterized SQL fragments (never string-interpolating the month) so the two invocations of
+    // each expr just contribute their own '?' placeholders, bound in the same order via monthArgs.
+    const monthArgs: string[] = [];
+    const bind = (month: string) => { monthArgs.push(month); return '?'; };
+    const ctcStandardExpr = (month: string) =>
+      `(SELECT SUM(ROUND(ABS(ess.structure_det_value))) FROM emp_salary_slip ess
+          WHERE ess.emp_fkey = pm.emp_fkey AND ess.month_year = ${bind(month)} AND ess.end_date_effective IS NULL
+            AND ess.head_operator = 'Addition')`;
+    const ctcActualExpr = (month: string) =>
+      `(SELECT SUM(ROUND(ABS(ess.salary_amount))) FROM emp_salary_slip ess
+          WHERE ess.emp_fkey = pm.emp_fkey AND ess.month_year = ${bind(month)} AND ess.end_date_effective IS NULL
+            AND ess.head_operator = 'Addition')`;
+    const grossStandardExpr = (month: string) =>
+      `(SELECT SUM(ROUND(ess.structure_det_value)) FROM emp_salary_slip ess
+          WHERE ess.emp_fkey = pm.emp_fkey AND ess.month_year = ${bind(month)} AND ess.end_date_effective IS NULL
+            AND ess.item_part = 'Direct'
+            AND ess.salary_head_item_fkey IN (SELECT salary_head_item_pkey FROM salary_head_items WHERE head_fkey = 1))`;
+    const grossActualExpr = (month: string) =>
+      `(SELECT SUM(ROUND(ess.salary_amount)) FROM emp_salary_slip ess
+          WHERE ess.emp_fkey = pm.emp_fkey AND ess.month_year = ${bind(month)} AND ess.end_date_effective IS NULL
+            AND ess.item_part = 'Direct'
+            AND ess.salary_head_item_fkey IN (SELECT salary_head_item_pkey FROM salary_head_items WHERE head_fkey = 1))`;
+    const totalAdditionExpr = (month: string) =>
+      `(SELECT SUM(ROUND(ABS(ess.salary_amount))) FROM emp_salary_slip ess
+          WHERE ess.emp_fkey = pm.emp_fkey AND ess.month_year = ${bind(month)} AND ess.end_date_effective IS NULL
+            AND ess.item_part = 'Direct' AND ess.head_operator = 'Addition')`;
+    const totalDeductionExpr = (month: string) =>
+      `(SELECT SUM(ROUND(ABS(ess.salary_amount))) FROM emp_salary_slip ess
+          WHERE ess.emp_fkey = pm.emp_fkey AND ess.month_year = ${bind(month)} AND ess.end_date_effective IS NULL
+            AND ess.item_part = 'Direct' AND ess.head_operator = 'Deduction')`;
+    const arExpr = (field: string, month: string) =>
+      `(SELECT ar.${field} FROM attendance_register ar WHERE ar.emp_fkey = pm.emp_fkey AND ar.month_year = ${bind(month)} LIMIT 1)`;
+    const essLeaveExpr = (month: string) =>
+      `(SELECT ess.leave_total FROM emp_salary_slip ess WHERE ess.emp_fkey = pm.emp_fkey AND ess.month_year = ${bind(month)}
+          AND ess.item_part = 'Direct' AND ess.end_date_effective IS NULL LIMIT 1)`;
+    // operator is always one of the two literal strings below (never user input) — safe to
+    // interpolate directly.
+    const variableCountExpr = (operator: 'Addition' | 'Deduction', month: string) =>
+      `(SELECT COUNT(*) FROM emp_salary_slip ess
+          LEFT JOIN salary_head_items shi ON shi.salary_head_item_pkey = ess.salary_head_item_fkey
+          WHERE ess.emp_fkey = pm.emp_fkey AND ess.month_year = ${bind(month)} AND ess.end_date_effective IS NULL
+            AND ess.item_part = 'Direct' AND ess.salary_amount <> 0 AND ess.head_operator = '${operator}'
+            AND shi.head_fkey IN (SELECT head_pkey FROM salary_heads WHERE head_occurance = 'VARIABLE' AND status = 1))`;
+    const selectExtra = `
+              ${ctcStandardExpr(prior)} AS previous_ctc_standard, ${ctcStandardExpr(params.monthYear)} AS current_ctc_standard,
+              ${ctcActualExpr(prior)} AS previous_ctc_actual, ${ctcActualExpr(params.monthYear)} AS current_ctc_actual,
+              ${grossStandardExpr(prior)} AS previous_gross_standard, ${grossStandardExpr(params.monthYear)} AS current_gross_standard,
+              ${grossActualExpr(prior)} AS previous_gross_actual, ${grossActualExpr(params.monthYear)} AS current_gross_actual,
+              ${totalAdditionExpr(prior)} AS previous_total_addition, ${totalAdditionExpr(params.monthYear)} AS current_total_addition,
+              ${totalDeductionExpr(prior)} AS previous_total_deduction, ${totalDeductionExpr(params.monthYear)} AS current_total_deduction,
+              ${arExpr('presant_total', prior)} AS previous_ar_present, ${arExpr('presant_total', params.monthYear)} AS current_ar_present,
+              ${arExpr('leave_total', prior)} AS previous_ar_leave, ${arExpr('leave_total', params.monthYear)} AS current_ar_leave,
+              ${arExpr('holiday_total', prior)} AS previous_ar_holiday, ${arExpr('holiday_total', params.monthYear)} AS current_ar_holiday,
+              ${arExpr('weekoff_total', prior)} AS previous_ar_weekoff, ${arExpr('weekoff_total', params.monthYear)} AS current_ar_weekoff,
+              ${essLeaveExpr(prior)} AS previous_ess_leave, ${essLeaveExpr(params.monthYear)} AS current_ess_leave,
+              ${variableCountExpr('Addition', prior)} AS previous_var_add_count, ${variableCountExpr('Addition', params.monthYear)} AS current_var_add_count,
+              ${variableCountExpr('Deduction', prior)} AS previous_var_ded_count, ${variableCountExpr('Deduction', params.monthYear)} AS current_var_ded_count,
+              pm.days_presant AS current_pm_days_presant, pm.days_leave AS current_pm_days_leave`;
     const [rows] = await pool.execute<RowDataPacket[]>(
-      `SELECT pm.payroll_master_pkey, prev.payroll_master_pkey AS prev_payroll_master_pkey,
-              pm.emp_fkey, pm.emp_name, ep.emp_company_id AS employee_id, pm.branch_name,
-              pm.departments, pm.desig, ed.status,
+      `SELECT pm.payroll_master_pkey,
+              pm.emp_fkey, pm.emp_name, ep.emp_company_id AS employee_id, uc.user_id AS login_user_id,
+              pm.branch_name, pm.departments, pm.desig, ed.status,
               DATE_FORMAT(i.joining_date, '%Y-%m-%d') AS joining_date,
-              DATE_FORMAT(tm.last_approved_working_date, '%Y-%m-%d') AS termination_date,
-              pm.gross_salary AS current_gross, prev.gross_salary AS previous_gross,
-              (pm.gross_salary - COALESCE(prev.gross_salary, 0)) AS gross_change,
-              pm.total_deduction AS current_deduction, prev.total_deduction AS previous_deduction,
-              (pm.total_deduction - COALESCE(prev.total_deduction, 0)) AS deduction_change,
-              pm.net_salary AS current_net, prev.net_salary AS previous_net,
-              (pm.net_salary - COALESCE(prev.net_salary, 0)) AS net_change,
-              pm.monthly_ctc AS current_ctc, prev.monthly_ctc AS previous_ctc,
-              (pm.monthly_ctc - COALESCE(prev.monthly_ctc, 0)) AS ctc_change,
-              pm.days_presant AS current_pay_days, prev.days_presant AS previous_pay_days,
-              (pm.days_presant - COALESCE(prev.days_presant, 0)) AS pay_days_change
+              DATE_FORMAT(tm.last_approved_working_date, '%Y-%m-%d') AS termination_date,${selectExtra},
+              prev.days_presant AS previous_pm_days_presant, prev.days_leave AS previous_pm_days_leave,
+              pm.bank_details AS current_bank_details_raw, prev.bank_details AS previous_bank_details_raw
        FROM payroll_master pm
        LEFT JOIN payroll_master prev ON prev.emp_fkey = pm.emp_fkey AND prev.month_year = ?
          AND prev.action IN ('Approved','Processed')
        LEFT JOIN emp_proff ep ON ep.emp_fkey = pm.emp_fkey
        LEFT JOIN emp_details ed ON ed.emp_pkey = pm.emp_fkey
+       LEFT JOIN user_credentials uc ON uc.emp_fkey = pm.emp_fkey
        LEFT JOIN employee_info i ON i.emp_pkey = pm.emp_fkey
        LEFT JOIN termination tm ON tm.emp_fkey = pm.emp_fkey AND tm.status = 1
-       WHERE pm.month_year = ? AND pm.action IN ('Approved','Processed') AND ${conditions.join(' AND ')}
+       WHERE pm.month_year = ? AND pm.action IN ('Approved','Processed') AND ${statusCondition}${negativeCondition}
+         AND ${conditions.join(' AND ')}
        ORDER BY pm.emp_name`,
-      [prior, params.monthYear, ...args]
+      [...monthArgs, prior, params.monthYear, ...args]
     );
 
-    const currentItems = await getItemWiseAdditions(pool, rows.map((r) => r.payroll_master_pkey));
-    const prevItems = await getItemWiseAdditions(pool, rows.filter((r) => r.prev_payroll_master_pkey).map((r) => r.prev_payroll_master_pkey));
+    const empFkeys = rows.map((r) => r.emp_fkey);
+    const [itemLabels, currentItemValues, prevItemValues, prorateCodes] = await Promise.all([
+      getComparisonItemLabels(pool, prior, params.monthYear),
+      getComparisonItemValues(pool, empFkeys, params.monthYear),
+      getComparisonItemValues(pool, empFkeys, prior),
+      getProrateCodes(pool, empFkeys),
+    ]);
 
     return rows.map((row) => {
-      const curr = currentItems.get(row.payroll_master_pkey) ?? [];
-      const prev = prevItems.get(row.prev_payroll_master_pkey) ?? [];
-      const labels: string[] = [];
-      for (const item of curr) if (!labels.includes(item.label)) labels.push(item.label);
-      for (const item of prev) if (!labels.includes(item.label)) labels.push(item.label);
-      const items = labels.map((label) => {
-        const currentAmount = curr.find((i) => i.label === label)?.amount ?? 0;
-        const previousAmount = prev.find((i) => i.label === label)?.amount ?? 0;
-        return { label, current: currentAmount, previous: previousAmount, change: currentAmount - previousAmount };
+      const curr = currentItemValues.get(row.emp_fkey);
+      const prev = prevItemValues.get(row.emp_fkey);
+      const items = itemLabels.map((label) => {
+        const currentAmount = Math.round(Math.abs(curr?.get(label) ?? 0));
+        const previousAmount = Math.round(Math.abs(prev?.get(label) ?? 0));
+        return { label, current: currentAmount, previous: previousAmount, change: Math.abs(currentAmount - previousAmount) };
       });
-      return { ...row, items };
+      const previousNetActual = Number(row.previous_total_addition ?? 0) - Number(row.previous_total_deduction ?? 0);
+      const currentNetActual = Number(row.current_total_addition ?? 0) - Number(row.current_total_deduction ?? 0);
+
+      const prorateCode = prorateCodes.get(row.emp_fkey);
+      const previousPayDays = computePayDays(prorateCode, {
+        arPresent: Number(row.previous_ar_present ?? 0), arLeave: Number(row.previous_ar_leave ?? 0),
+        arHoliday: Number(row.previous_ar_holiday ?? 0), arWeekoff: Number(row.previous_ar_weekoff ?? 0),
+        essLeaveTotal: Number(row.previous_ess_leave ?? 0),
+        pmDaysPresant: Number(row.previous_pm_days_presant ?? 0), pmDaysLeave: Number(row.previous_pm_days_leave ?? 0),
+      });
+      const currentPayDays = computePayDays(prorateCode, {
+        arPresent: Number(row.current_ar_present ?? 0), arLeave: Number(row.current_ar_leave ?? 0),
+        arHoliday: Number(row.current_ar_holiday ?? 0), arWeekoff: Number(row.current_ar_weekoff ?? 0),
+        essLeaveTotal: Number(row.current_ess_leave ?? 0),
+        pmDaysPresant: Number(row.current_pm_days_presant ?? 0), pmDaysLeave: Number(row.current_pm_days_leave ?? 0),
+      });
+
+      const previousVarAddCount = Number(row.previous_var_add_count ?? 0);
+      const currentVarAddCount = Number(row.current_var_add_count ?? 0);
+      const previousVarDedCount = Number(row.previous_var_ded_count ?? 0);
+      const currentVarDedCount = Number(row.current_var_ded_count ?? 0);
+      const previousBankDetails = cleanBankDetails(row.previous_bank_details_raw as string | null);
+      const currentBankDetails = cleanBankDetails(row.current_bank_details_raw as string | null);
+
+      // Row-level Status (comparison_report.ctp:334) — "No change" only if every metric below
+      // matches between months; a single mismatch anywhere flags "Change identified".
+      const noChange = previousVarAddCount === currentVarAddCount
+        && previousVarDedCount === currentVarDedCount
+        && previousBankDetails === currentBankDetails
+        && Number(row.previous_ctc_standard ?? 0) === Number(row.current_ctc_standard ?? 0)
+        && Number(row.previous_gross_standard ?? 0) === Number(row.current_gross_standard ?? 0)
+        && items.every((item) => item.current === item.previous)
+        && Number(row.previous_gross_actual ?? 0) === Number(row.current_gross_actual ?? 0)
+        && previousNetActual === currentNetActual
+        && Number(row.previous_ctc_actual ?? 0) === Number(row.current_ctc_actual ?? 0)
+        && previousPayDays === currentPayDays;
+
+      return {
+        ...row,
+        status: noChange ? 'No change' : 'Change identified',
+        previous_net_actual: previousNetActual, current_net_actual: currentNetActual,
+        net_actual_change: Math.abs(currentNetActual - previousNetActual),
+        ctc_standard_change: Math.abs(Number(row.current_ctc_standard ?? 0) - Number(row.previous_ctc_standard ?? 0)),
+        ctc_actual_change: Math.abs(Number(row.current_ctc_actual ?? 0) - Number(row.previous_ctc_actual ?? 0)),
+        gross_standard_change: Math.abs(Number(row.current_gross_standard ?? 0) - Number(row.previous_gross_standard ?? 0)),
+        gross_actual_change: Math.abs(Number(row.current_gross_actual ?? 0) - Number(row.previous_gross_actual ?? 0)),
+        previous_pay_days: previousPayDays, current_pay_days: currentPayDays,
+        pay_days_change: Math.abs(currentPayDays - previousPayDays),
+        previous_var_add_count: previousVarAddCount, current_var_add_count: currentVarAddCount,
+        var_add_status: previousVarAddCount === currentVarAddCount ? 'No change' : 'Change identified',
+        previous_var_ded_count: previousVarDedCount, current_var_ded_count: currentVarDedCount,
+        var_ded_status: previousVarDedCount === currentVarDedCount ? 'No change' : 'Change identified',
+        previous_bank_details: previousBankDetails, current_bank_details: currentBankDetails,
+        bank_status: previousBankDetails === currentBankDetails ? 'No change' : 'Change identified',
+        items,
+      };
     });
   }
 
   if (params.subtype === 'MonthlyCTCReport') {
-    // Mirrors generateEmpMonthlyCTCReport() — per-employee, per-salary-head-item detail (a long
-    // format breakdown, not a pivoted summary), sourced from emp_salary_slip.
+    // Mirrors generateEmpMonthlyCTCReport() (SalaryReportsController.php:12948-13369). Unlike every
+    // other report on this screen, legacy's real UI here (monthlyctc.ctp + its own Excel branch) is
+    // a per-employee CARD layout — a legend block (Name/EMP ID/Branch/Designation/Department), a
+    // "Salary Components / Amount" mini-table of Addition-only items, and a per-employee Grand
+    // Total — not a flat pivoted table, matching the Salary Slip report's shape rather than this
+    // screen's usual SUBTYPE_META-driven grid (see MonthlyCtcCard in page.tsx). Also legacy-specific
+    // to this report: only Addition-side items are shown at all (this is a CTC report — no
+    // deductions), zero-amount items are skipped, and no item_part='Direct' filter is applied
+    // (every other report on this screen filters to Direct — this one genuinely doesn't).
+    const statusCondition = params.includeResigned ? 'ed.status IN (1,2)' : 'ed.status = 1';
+    const negativeCondition = params.includeNegative ? '' : ' AND pm.net_salary >= 0';
     const { conditions, args } = buildCriteriaConditions(params.criteria, {
       Units: 'pm.branch_code', EmployeeDetails: 'pm.emp_fkey',
     });
     const [rows] = await pool.execute<RowDataPacket[]>(
-      `SELECT pm.emp_fkey, pm.emp_name, ep.emp_company_id AS employee_id, pm.branch_name,
-              pm.departments, pm.desig, pm.month_year,
-              shi.item AS salary_head, ess.salary_amount
-       FROM emp_salary_slip ess
-       JOIN payroll_master pm ON pm.payroll_master_pkey = ess.payroll_master_fkey
-       JOIN salary_head_items shi ON shi.salary_head_item_pkey = ess.salary_head_item_fkey
+      `SELECT pm.payroll_master_pkey, pm.emp_fkey,
+              CASE WHEN ed.status = 2 THEN CONCAT(ed.first_name, ' ', ed.last_name, ' (Resigned)')
+                   ELSE CONCAT(ed.first_name, ' ', ed.last_name) END AS emp_name,
+              ep.emp_company_id AS employee_id, pm.branch_name, pm.departments, pm.desig
+       FROM payroll_master pm
+       JOIN emp_details ed ON ed.emp_pkey = pm.emp_fkey
        LEFT JOIN emp_proff ep ON ep.emp_fkey = pm.emp_fkey
-       WHERE ess.month_year = ? AND ess.end_date_effective IS NULL
-         AND pm.action IN ('Approved','Processed') AND ${conditions.join(' AND ')}
-       ORDER BY pm.emp_name, shi.salary_head_item_order1`,
+       WHERE pm.month_year = ? AND pm.action IN ('Approved','Processed') AND ${statusCondition}${negativeCondition}
+         AND EXISTS (SELECT 1 FROM emp_salary_slip ess WHERE ess.payroll_master_fkey = pm.payroll_master_pkey
+                       AND ess.head_operator = 'Addition' AND ess.salary_amount <> 0 AND ess.end_date_effective IS NULL)
+         AND ${conditions.join(' AND ')}
+       ORDER BY pm.branch_name, emp_name`,
       [params.monthYear, ...args]
     );
-    return rows;
+
+    const pkeys = rows.map((r) => r.payroll_master_pkey);
+    const itemsMap = new Map<number, { label: string; amount: number; headType: string | null }[]>();
+    if (pkeys.length > 0) {
+      const [itemRows] = await pool.query<RowDataPacket[]>(
+        `SELECT ess.payroll_master_fkey, TRIM(ess.salary_head_item_desc) AS label, ess.salary_amount, ess.head_type
+         FROM emp_salary_slip ess
+         LEFT JOIN salary_head_items shi ON shi.salary_head_item_pkey = ess.salary_head_item_fkey
+         WHERE ess.payroll_master_fkey IN (?) AND ess.head_operator = 'Addition' AND ess.salary_amount <> 0
+           AND ess.end_date_effective IS NULL
+         ORDER BY shi.salary_head_item_order1`,
+        [pkeys]
+      );
+      for (const r of itemRows as RowDataPacket[]) {
+        const list = itemsMap.get(r.payroll_master_fkey) ?? [];
+        list.push({ label: String(r.label), amount: Number(r.salary_amount), headType: r.head_type ? String(r.head_type).toLowerCase() : null });
+        itemsMap.set(r.payroll_master_fkey, list);
+      }
+    }
+
+    return rows.map((row) => {
+      const items = itemsMap.get(row.payroll_master_pkey) ?? [];
+      const grandTotal = Math.round(items.reduce((s, i) => s + i.amount, 0));
+      return { ...row, items, grand_total: grandTotal };
+    });
   }
 
   if (params.subtype === 'PayrollCTC') {
-    // Mirrors generatePayrollCTC() — the most granular CTC breakdown of the module: per-employee
-    // totals categorized by salary_heads.head_pkey (1,5=Standard; 2,7,9=Variable; 4=Employer
-    // Contributions; everything else=Other/Ad-hoc), confirmed live via real emp_salary_slip data.
+    // Mirrors generatePayrollCTC() (SalaryReportsController.php:22569-23327). Legacy's own on-screen
+    // View/PDF for this report are dead code (payroll_ctc.ctp expects $gross/$array_key/$standard_key/
+    // $variable_key/$stdctc_key/$actualctc_key — variables generatePayrollCTC() never $this->set(),
+    // confirmed by grep against every other report function in this controller, which all do) — only
+    // the Excel branch (built directly off $arr_emp_details via raw PHPExcel calls, lines 23048-23254)
+    // actually works, so this is Excel-only (see viewAllowed:false in page.tsx). Each employee is
+    // categorized into 5 item groups, each independently scoped to the month (not the selected
+    // criteria, so the column set is stable across rows — same discipline as getSalaryHeadKeys):
+    // Standard (head_pkey IN (1,5), split Addition/Deduction), Variable (head_pkey IN (2,7,9), not
+    // split), Employer Contribution (item_part='Indirect' AND head_pkey=4, not split), Actual
+    // Addition/Deduction (item_part='Direct' AND head_type IN ('Manually','Fixed') AND head_pkey NOT
+    // IN (1,2,5,7,9) OR NULL, split by head_operator — deliberately allows no head classification at
+    // all, unlike every other pivot on this screen which inner-joins salary_heads).
+    const statusCondition = params.includeResigned ? 'ed.status IN (1,2)' : 'ed.status = 1';
+    const negativeCondition = params.includeNegative ? '' : ' AND pm.net_salary >= 0';
     const { conditions, args } = buildCriteriaConditions(params.criteria, {
-      Units: 'pm.branch_code', EmployeeDetails: 'pm.emp_fkey',
+      Units: 'ed.branch_code', EmployeeDetails: 'ar.emp_fkey',
     });
     const [rows] = await pool.execute<RowDataPacket[]>(
-      `SELECT MAX(pm.payroll_master_pkey) AS payroll_master_pkey, pm.emp_fkey, pm.emp_name, ep.emp_company_id AS employee_id, pm.branch_name,
-              pm.departments, pm.desig, pm.month_year, ed.classification AS gender,
-              MAX(pm.days_presant) AS present_days, MAX(pm.loss_of_pay) AS lop_days, MAX(pm.days_leave) AS leave_days,
-              MAX(ar.weekoff_total) AS weekoff_total, MAX(ar.holiday_total) AS holiday_total,
-              COALESCE(SUM(CASE WHEN sh.head_pkey IN (1,5) THEN ess.salary_amount END), 0) AS standard_total,
-              COALESCE(SUM(CASE WHEN sh.head_pkey IN (2,7,9) THEN ess.salary_amount END), 0) AS variable_total,
-              COALESCE(SUM(CASE WHEN sh.head_pkey = 4 THEN ess.salary_amount END), 0) AS employer_total,
-              COALESCE(SUM(CASE WHEN sh.head_pkey NOT IN (1,2,4,5,7,9) THEN ess.salary_amount END), 0) AS other_total,
-              MAX(pm.total_deduction) AS total_deduction, MAX(pm.net_salary) AS net_salary
-       FROM emp_salary_slip ess
-       JOIN payroll_master pm ON pm.payroll_master_pkey = ess.payroll_master_fkey
-       JOIN salary_head_items shi ON shi.salary_head_item_pkey = ess.salary_head_item_fkey
-       JOIN salary_heads sh ON sh.head_pkey = shi.head_fkey
-       LEFT JOIN emp_proff ep ON ep.emp_fkey = pm.emp_fkey
-       LEFT JOIN emp_details ed ON ed.emp_pkey = pm.emp_fkey
-       LEFT JOIN attendance_register ar ON ar.emp_fkey = pm.emp_fkey AND ar.month_year = pm.month_year
-       WHERE ess.month_year = ? AND ess.end_date_effective IS NULL
-         AND pm.action IN ('Approved','Processed') AND ${conditions.join(' AND ')}
-       GROUP BY pm.emp_fkey, pm.emp_name, ep.emp_company_id, pm.branch_name, pm.departments, pm.desig, pm.month_year, ed.classification
-       ORDER BY pm.emp_name`,
+      `SELECT ar.emp_fkey, ei.employee_id AS employee_id, uc.user_id AS login_user_id,
+              CASE WHEN ed.status = 2 THEN CONCAT(ei.EmpName, ' (Resigned)') ELSE ei.EmpName END AS emp_name,
+              CASE WHEN ed.classification = 'male' THEN 'Male' WHEN ed.classification = 'female' THEN 'Female'
+                   WHEN ed.classification = 'Other' THEN 'Transgender' ELSE ed.classification END AS gender,
+              ar.month_year AS month_year, ei.designation AS desig, ei.department AS departments, ei.branch AS branch_name,
+              DATE_FORMAT(ei.joining_date, '%d-%m-%Y') AS joining_date,
+              DATE_FORMAT(tm.last_approved_working_date, '%d-%m-%Y') AS termination_date,
+              ar.presant_total AS present_days, ROUND(ot.total_duration / 60, 2) AS overtime_hours,
+              ar.lop_total AS lop_days, ar.leave_total AS leave_days, ar.weekoff_total AS weekoff_total, ar.holiday_total AS holiday_total
+       FROM attendance_register ar
+       LEFT JOIN emp_details ed ON ar.emp_fkey = ed.emp_pkey
+       LEFT JOIN employee_info ei ON ed.emp_pkey = ei.emp_pkey
+       LEFT JOIN emp_ot_master ot ON ar.emp_fkey = ot.emp_fkey AND DATE_FORMAT(ot.month, '%Y-%m') = LEFT(ar.month_year, 7)
+       LEFT JOIN termination tm ON ar.emp_fkey = tm.emp_fkey AND tm.status = 1
+       LEFT JOIN payroll_master pm ON pm.emp_fkey = ar.emp_fkey AND pm.month_year = ar.month_year
+       LEFT JOIN user_credentials uc ON uc.emp_fkey = ar.emp_fkey
+       WHERE ar.isdelete = 'N' AND ar.month_year = ? AND ar.record_status = '1' AND pm.action IN ('Approved','Processed')
+         AND ${statusCondition}${negativeCondition} AND ${conditions.join(' AND ')}
+       ORDER BY ei.EmpName`,
       [params.monthYear, ...args]
     );
-    const itemMap = await getItemWiseAdditions(pool, rows.map((r) => r.payroll_master_pkey));
-    return rows.map((row) => ({ ...row, items: itemMap.get(row.payroll_master_pkey) ?? [] }));
+    const keys = await getPayrollCtcKeys(pool, params.monthYear);
+    const empFkeys = rows.map((r) => r.emp_fkey as number);
+    const valuesMap = await getPayrollCtcValues(pool, empFkeys, params.monthYear);
+    return rows.map((row) => {
+      const empValues = valuesMap.get(row.emp_fkey as number);
+      return {
+        ...row,
+        standard_additions: buildPayrollCtcItems(keys.standardAdditions, empValues),
+        standard_deductions: buildPayrollCtcItems(keys.standardDeductions, empValues),
+        variable_result: buildPayrollCtcItems(keys.variable, empValues),
+        employer_result: buildPayrollCtcItems(keys.employer, empValues),
+        actual_addition_result: buildPayrollCtcItems(keys.actualAddition, empValues),
+        actual_deduction_result: buildPayrollCtcItems(keys.actualDeduction, empValues),
+      };
+    });
   }
 
   // SummaryPayroll (default)

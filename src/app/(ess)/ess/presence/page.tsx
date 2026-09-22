@@ -14,9 +14,10 @@ import AppTabs from '@/components/ess/AppTabs';
 //   Rizo's 4-stat leave-card breakdown isn't reconstructable from real data.
 // - No shift-override control on the day-detail popup — that's an admin/payroll concern
 //   (PUT /api/attendance/daily-shift doesn't exist here), so the popup is read-only.
-// - Authorizer/Approver are shown read-only (auto-resolved via /api/leave/authorizers from the
-//   real reporting hierarchy) rather than manual dropdowns, matching the same choice made for
-//   Requests/Approvals.
+// - Authorizer/Approver are searchable dropdowns backed by /api/leave/authorizers (which wraps
+//   leave_auth_apr_person_fn) — that function can return several eligible emp_pkeys as a comma
+//   list, matching legacy's addeditleave_new.ctp where Approve By is a select2-searchable dropdown
+//   (Authorize By a searchable typeahead) rather than a single fixed person.
 // - No inline "Pending Approvals" section — that's the dedicated Approvals page; duplicating it
 //   here would just be the same data in two places.
 

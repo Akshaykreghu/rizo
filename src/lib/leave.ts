@@ -83,21 +83,30 @@ export async function getLeaveBalance(
 }
 
 // Wraps leave_auth_apr_person_fn (confirmed live: pcompany_code, plogin_emp_fkey, paction -> varchar
-// emp_pkey, or a comma-list per legacy's convention — surfaced as-is, single value in observed data).
+// emp_pkey, OR a comma-joined list of eligible emp_pkeys — confirmed live, e.g. apr='67,2' for one
+// employee — matching legacy's own `emp_pkey IN ($emp_ids)` convention in getusers()/addeditleave_new.
+// A single scalar (Number(...)) silently breaks (NaN) whenever more than one candidate is eligible,
+// so this returns every candidate id; callers pick one, same as legacy's searchable Approve By dropdown.
+function parseEmpIdList(raw: unknown): number[] {
+  if (raw == null) return [];
+  return String(raw)
+    .split(',')
+    .map((s) => Number(s.trim()))
+    .filter((n) => Number.isFinite(n) && n > 0);
+}
+
 export async function getAuthorizerApprover(
   pool: Pool,
   companyCode: string,
   empFkey: number
-): Promise<{ authorizerFkey: number | null; approverFkey: number | null }> {
+): Promise<{ authorizerIds: number[]; approverIds: number[] }> {
   const [[row]] = await pool.query<RowDataPacket[]>(
     `SELECT leave_auth_apr_person_fn(?, ?, 'auth') AS auth_id, leave_auth_apr_person_fn(?, ?, 'apr') AS apr_id`,
     [companyCode, empFkey, companyCode, empFkey]
   );
-  const authId = Number(row?.auth_id);
-  const aprId = Number(row?.apr_id);
   return {
-    authorizerFkey: Number.isFinite(authId) && authId > 0 ? authId : null,
-    approverFkey: Number.isFinite(aprId) && aprId > 0 ? aprId : null,
+    authorizerIds: parseEmpIdList(row?.auth_id),
+    approverIds: parseEmpIdList(row?.apr_id),
   };
 }
 
@@ -339,4 +348,113 @@ export function isLeaveTransactionFailure(status: string): boolean {
   return status.toLowerCase().startsWith('can not apply');
 }
 
-export { toISODate };
+// Ported from `Leave_balance_upload_fn()` (confirmed live via SHOW CREATE FUNCTION on
+// mypayrol_mpm121) for the new Leave Balance Upload feature (EmpleaveuploadController — a
+// different, unrouted-in-legacy controller from EmployeeLeaveUploadController's leave *request*
+// upload above). The stored function processes the ENTIRE staging table with no parameters;
+// this port takes companyCode purely as documentation of the calling convention (only called for
+// RESTRICTED_BALANCE_COMPANIES) — it still processes every unprocessed (status=1) row in the
+// caller's own company pool, matching the function's own signature/scope, not just one employee.
+export async function applyLeaveBalanceUpload(pool: Pool, companyCode: string): Promise<void> {
+  void companyCode;
+  const [pending] = await pool.query<RowDataPacket[]>(
+    `SELECT leave_balance_upload_pky, empid, leave_type, leave_balance
+     FROM leave_balance_upload WHERE status = 1 ORDER BY empid DESC`
+  );
+
+  for (const row of pending) {
+    const uploadPky = row.leave_balance_upload_pky as number;
+    const salaryHeadItemFkey = Number(row.leave_type);
+    const uploadedBalance = Number(row.leave_balance);
+
+    const [[emp]] = await pool.execute<RowDataPacket[]>(
+      `SELECT ed.emp_pkey, ed.branch_code
+       FROM emp_proff ep JOIN emp_details ed ON ed.emp_pkey = ep.emp_fkey
+       WHERE ep.emp_company_id = ?`,
+      [row.empid]
+    );
+    if (!emp?.emp_pkey) {
+      await pool.execute('UPDATE leave_balance_upload SET status = 0 WHERE leave_balance_upload_pky = ?', [uploadPky]);
+      continue;
+    }
+    const empFkey = Number(emp.emp_pkey);
+
+    const [[shi]] = await pool.execute<RowDataPacket[]>(
+      'SELECT leave_cycle_start_month FROM salary_head_items WHERE salary_head_item_pkey = ?',
+      [salaryHeadItemFkey]
+    );
+    const cycleStartMonth = Number(shi?.leave_cycle_start_month ?? 0);
+
+    let finYear: string;
+    let cycleStart: string;
+    let cycleEnd: string;
+    const currentYear = new Date().getFullYear();
+    if (cycleStartMonth > 0) {
+      // Cycle runs pfinyear-vstart_from-01 to (pfinyear+1)-vstart_from-01 minus 1 day, per the
+      // live function body — pfinyear here is simply the current calendar year.
+      const startMonthStr = String(cycleStartMonth).padStart(2, '0');
+      cycleStart = `${currentYear}-${startMonthStr}-01`;
+      const endYear = currentYear + 1;
+      const nextCycleStart = new Date(`${endYear}-${startMonthStr}-01T00:00:00Z`);
+      nextCycleStart.setUTCDate(nextCycleStart.getUTCDate() - 1);
+      cycleEnd = nextCycleStart.toISOString().slice(0, 10);
+      finYear = String(currentYear);
+    } else {
+      const [[fy]] = await pool.execute<RowDataPacket[]>(
+        `SELECT fin_year, start_month, end_month FROM fin_year
+         WHERE CURDATE() BETWEEN start_month AND end_month AND vattr1 = 0 AND is_current_finyear = 'Y'
+           AND branch_code = ?`,
+        [emp.branch_code]
+      );
+      if (!fy) {
+        await pool.execute('UPDATE leave_balance_upload SET status = 0 WHERE leave_balance_upload_pky = ?', [uploadPky]);
+        continue;
+      }
+      finYear = String(fy.fin_year);
+      cycleStart = toISODate(fy.start_month as string | Date) ?? '';
+      cycleEnd = toISODate(fy.end_month as string | Date) ?? '';
+    }
+
+    const [[policy]] = await pool.execute<RowDataPacket[]>(
+      `SELECT lp.LEAVEPOLICYID FROM leavepolicy lp
+       JOIN emp_proff ep ON ep.LEAVEPOLICY_GROUP_ID = lp.LEAVEPOLICY_GROUP_ID
+       WHERE ep.emp_fkey = ? AND lp.salary_head_item_fkey = ? AND lp.status = 1`,
+      [empFkey, salaryHeadItemFkey]
+    );
+    if (!policy) {
+      await pool.execute('UPDATE leave_balance_upload SET status = 0 WHERE leave_balance_upload_pky = ?', [uploadPky]);
+      continue;
+    }
+
+    const [[yearlyRow]] = await pool.query<RowDataPacket[]>(
+      'SELECT leave_balance_inthe_year_fn(?, ?, ?) AS bal',
+      [empFkey, salaryHeadItemFkey, finYear]
+    );
+    const yearlyBalance = Number(yearlyRow?.bal ?? 0);
+    const carryForwarded = uploadedBalance - yearlyBalance;
+
+    const [[existing]] = await pool.execute<RowDataPacket[]>(
+      `SELECT emp_leave_balance_year_pkey FROM emp_leave_balance_year
+       WHERE emp_fkey = ? AND salary_head_item_fkey = ? AND fin_year = ? AND status = 1`,
+      [empFkey, salaryHeadItemFkey, finYear]
+    );
+
+    if (existing) {
+      await pool.execute(
+        'UPDATE emp_leave_balance_year SET status = 0 WHERE emp_leave_balance_year_pkey = ?',
+        [existing.emp_leave_balance_year_pkey]
+      );
+    }
+    await pool.execute(
+      `INSERT INTO emp_leave_balance_year
+         (emp_fkey, salary_head_item_fkey, leave_cycle_start_date, leave_cycle_end_date, fin_year,
+          carry_forwarded, data_source, status, creation_date, created_time)
+       VALUES (?, ?, ?, ?, ?, ?, 'upload', 1, NOW(), NOW())`,
+      [empFkey, salaryHeadItemFkey, cycleStart, cycleEnd, finYear, carryForwarded]
+    );
+
+    await pool.execute('UPDATE leave_balance_upload SET status = 0 WHERE leave_balance_upload_pky = ?', [uploadPky]);
+  }
+}
+
+export { RESTRICTED_BALANCE_COMPANIES, toISODate };

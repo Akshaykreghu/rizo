@@ -111,11 +111,11 @@ export async function POST(request: NextRequest) {
   const body = await request.json();
   const {
     salaryHeadItemFkey, fromDate, fromHalf, toDate, toHalf,
-    reason, contactNo, contactPerson, authorizerFkey, approverFkey,
+    reason, contactNo, contactPerson, authorizerFkey, approverFkey, fileName, fileType,
   } = body as {
     empFkey?: number; salaryHeadItemFkey: number; fromDate: string; fromHalf: number;
     toDate: string; toHalf: number; reason?: string; contactNo?: string; contactPerson?: string;
-    authorizerFkey?: number; approverFkey?: number;
+    authorizerFkey?: number; approverFkey?: number; fileName?: string; fileType?: string;
   };
   // Employee self-service can only ever apply for themselves — the emp_fkey comes from the
   // session, not the request body, regardless of what a tampered payload sends.
@@ -142,6 +142,19 @@ export async function POST(request: NextRequest) {
   const conflict = await checkAttendanceConflict(pool, empFkey, fromDate, toDate);
   if (conflict) return NextResponse.json({ error: conflict }, { status: 409 });
 
+  // Ported from GetLeaveBalanceNew's document_mandatory flag (leavepolicy.document_mandatory) —
+  // addeditleave_new.ctp only enforces this client-side (disables submit / marks the file input
+  // required); re-checked here server-side since a client-only check can't be trusted.
+  const [[docPolicy]] = await pool.execute<RowDataPacket[]>(
+    `SELECT document_mandatory FROM leavepolicy
+     WHERE salary_head_item_fkey = ? AND status = 1
+       AND LEAVEPOLICY_GROUP_ID IN (SELECT LEAVEPOLICY_GROUP_ID FROM emp_proff WHERE emp_fkey = ?)`,
+    [salaryHeadItemFkey, empFkey]
+  );
+  if (docPolicy?.document_mandatory === 'Y' && !fileName) {
+    return NextResponse.json({ error: 'A supporting document is required for this leave type' }, { status: 400 });
+  }
+
   // ISAutherizedby is NOT NULL with no default (same gotcha Phase 3 hit for attendance-side leave
   // writes) — fall back to 0 for an admin-only session with no employee record, matching that precedent.
   const isAutherizedby = authorizerFkey ?? session.user.empFkey ?? 0;
@@ -158,13 +171,14 @@ export async function POST(request: NextRequest) {
     `INSERT INTO leaveentries
        (salary_head_item_fkey, applied_date, LEAVESTATUS, EMP_fkey, FROMDATE, FROMHALF, TODATE, TOHALF,
         ISAutherizedby, APPROVEDBY, ISAutherized, Autherized_date, ISAPPROVED, APPROVED_date,
-        Reason, contact_No, contact_person, leave_days)
-     VALUES (?, CURDATE(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ${isAdmin ? 'CURDATE()' : 'NULL'}, ?, ${isAdmin ? 'CURDATE()' : 'NULL'}, ?, ?, ?, ?)`,
+        Reason, contact_No, contact_person, leave_days, file_name, file_type)
+     VALUES (?, CURDATE(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ${isAdmin ? 'CURDATE()' : 'NULL'}, ?, ${isAdmin ? 'CURDATE()' : 'NULL'}, ?, ?, ?, ?, ?, ?)`,
     [
       salaryHeadItemFkey, initialStatus, empFkey, fromDate, fromHalf, toDate, toHalf,
       isAutherizedby, approvedBy,
       isAdmin ? 1 : 0, isAdmin ? 1 : 0,
       reason ?? null, contactNo ?? null, contactPerson ?? null, leaveDays,
+      fileName ?? null, fileType ?? null,
     ]
   );
   const leaveEntryId = result.insertId;

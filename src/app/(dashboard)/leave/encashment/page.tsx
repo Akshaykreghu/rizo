@@ -1,22 +1,17 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { EmployeeSearch } from '@/components/employees/EmployeeSearch';
+import { BranchSearch } from '@/components/employees/BranchSearch';
+import { LeaveTypeSearch } from '@/components/employees/LeaveTypeSearch';
 import { useSetupOptions } from '@/lib/setupOptions';
-import { Plus, Check, X, RefreshCw, Ban } from 'lucide-react';
+import { Check, RefreshCw, Ban } from 'lucide-react';
 import type { ColumnDef } from '@tanstack/react-table';
 import { cn } from '@/lib/utils';
 import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
 import { DataTable } from '@/components/data-table/DataTable';
-
-interface BalanceRow {
-  salaryHeadItemFkey: number;
-  name: string;
-  isLeaveEncash: boolean;
-  balance: number;
-}
 
 interface EncashRow {
   leave_encashment_master_pkey: number;
@@ -64,22 +59,27 @@ export default function LeaveEncashmentPage() {
   const [filterItem, setFilterItem] = useState('');
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [overrides, setOverrides] = useState<Record<number, number>>({});
-  const [message, setMessage] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
-  const [showApply, setShowApply] = useState(false);
-  const [empFkey, setEmpFkey] = useState('');
-  const [reason, setReason] = useState('');
-  const [requested, setRequested] = useState<Record<number, string>>({});
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 4000);
+    return () => clearTimeout(t);
+  }, [toast]);
 
   const { data: branches = [] } = useSetupOptions('setup/branches', 'branch_code', (r) => String(r.branch_name));
-  const { data: itemOptions = [] } = useSetupOptions('setup/leave-types', 'salary_head_item_pkey', (r) => String(r.item));
-
-  const { data: balancesData } = useQuery<{ data: BalanceRow[] }>({
-    queryKey: ['leave', 'balances', empFkey],
-    queryFn: () => fetch(`/api/leave/balances?employee=${empFkey}`).then((r) => r.json()),
-    enabled: !!empFkey,
+  // Leave Type options depend on Employee: no employee selected -> every leave type (branch alone
+  // doesn't narrow leave types, only which employees are pickable); one employee selected -> only
+  // that employee's own leavepolicy leave types.
+  const { data: allItemOptions = [] } = useSetupOptions('setup/leave-types', 'salary_head_item_pkey', (r) => String(r.item));
+  const { data: empTypesData } = useQuery<{ data: { salaryHeadItemFkey: number; name: string }[] }>({
+    queryKey: ['leave', 'types', filterEmp],
+    queryFn: () => fetch(`/api/leave/types?employee=${filterEmp}`).then((r) => r.json()),
+    enabled: !!filterEmp,
   });
-  const encashableTypes = (balancesData?.data ?? []).filter((t) => t.isLeaveEncash);
+  const itemOptions = filterEmp
+    ? (empTypesData?.data ?? []).map((t) => ({ value: String(t.salaryHeadItemFkey), label: t.name }))
+    : allItemOptions;
 
   const queryKey = ['leave', 'encashment', tab, branch, month, filterEmp, filterItem];
   const { data, isLoading } = useQuery<{ data: EncashRow[] }>({
@@ -93,37 +93,6 @@ export default function LeaveEncashmentPage() {
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['leave', 'encashment'] });
 
-  const apply = useMutation({
-    mutationFn: () =>
-      fetch('/api/leave/encashment', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          empFkey: Number(empFkey),
-          reason,
-          items: encashableTypes.map((t) => ({
-            salaryHeadItemFkey: t.salaryHeadItemFkey,
-            encashDays: t.balance,
-            availableDays: t.balance,
-            requestedDays: Number(requested[t.salaryHeadItemFkey] ?? 0),
-          })),
-        }),
-      }).then(async (r) => {
-        const b = await r.json();
-        if (!r.ok) throw new Error(b.error ?? 'Failed to submit');
-        return b;
-      }),
-    onSuccess: (b) => {
-      setMessage(`Encashment request(s) submitted (${b.ids.length})`);
-      setShowApply(false);
-      setEmpFkey('');
-      setRequested({});
-      setReason('');
-      invalidate();
-    },
-    onError: (err: Error) => setMessage(err.message),
-  });
-
   const generate = useMutation({
     mutationFn: () =>
       fetch('/api/leave/encashment/generate', {
@@ -135,8 +104,8 @@ export default function LeaveEncashmentPage() {
         if (!r.ok) throw new Error(b.error ?? 'Generate failed');
         return b;
       }),
-    onSuccess: (b) => { setMessage(b.procMessage || 'Generated'); invalidate(); },
-    onError: (err: Error) => setMessage(err.message),
+    onSuccess: (b) => { setToast({ message: b.procMessage || 'Generated successfully', type: 'success' }); invalidate(); },
+    onError: (err: Error) => setToast({ message: err.message, type: 'error' }),
   });
 
   const approveOne = useMutation({
@@ -150,19 +119,8 @@ export default function LeaveEncashmentPage() {
         if (!r.ok) throw new Error(b.error ?? 'Approve failed');
         return b;
       }),
-    onSuccess: (b) => { setMessage(b.procMessage ?? 'Encashed'); invalidate(); },
-    onError: (err: Error) => setMessage(err.message),
-  });
-
-  const cancelOne = useMutation({
-    mutationFn: (id: number) =>
-      fetch(`/api/leave/encashment/${id}/cancel`, { method: 'POST' }).then(async (r) => {
-        const b = await r.json();
-        if (!r.ok) throw new Error(b.error ?? 'Cancel failed');
-        return b;
-      }),
-    onSuccess: () => { setMessage('Request cancelled'); invalidate(); },
-    onError: (err: Error) => setMessage(err.message),
+    onSuccess: (b) => { setToast({ message: b.procMessage ?? 'Encashed successfully', type: 'success' }); invalidate(); },
+    onError: (err: Error) => setToast({ message: err.message, type: 'error' }),
   });
 
   const bulkApprove = useMutation({
@@ -173,10 +131,11 @@ export default function LeaveEncashmentPage() {
         body: JSON.stringify({
           ids: Array.from(selected),
           approvedDaysById: Object.fromEntries(Array.from(selected).map((id) => [id, overrides[id] ?? rows.find((r) => r.leave_encashment_master_pkey === id)?.requested_days ?? 0])),
+          month,
         }),
       }).then((r) => r.json()),
     onSuccess: (b) => {
-      setMessage(`Encashed ${b.succeeded.length} of ${selected.size}`);
+      setToast({ message: `Encashed successfully (${b.succeeded.length} of ${selected.size})`, type: 'success' });
       setSelected(new Set());
       invalidate();
     },
@@ -190,7 +149,7 @@ export default function LeaveEncashmentPage() {
         body: JSON.stringify({ ids: Array.from(selected) }),
       }).then((r) => r.json()),
     onSuccess: () => {
-      setMessage(`Cancelled ${selected.size} request(s)`);
+      setToast({ message: `Cancelled ${selected.size} request(s)`, type: 'success' });
       setSelected(new Set());
       invalidate();
     },
@@ -233,74 +192,70 @@ export default function LeaveEncashmentPage() {
           ),
         } as ColumnDef<EncashRow, unknown>]
       : []),
-    { accessorKey: 'emp_name', header: 'Employee', cell: ({ getValue }) => <span className="font-medium text-[#0F172A]">{String(getValue())}</span> },
+    { accessorKey: 'emp_company_id', header: 'Employee ID' },
+    { accessorKey: 'emp_name', header: 'Name', cell: ({ getValue }) => <span className="font-medium text-[#0F172A]">{String(getValue())}</span> },
     { accessorKey: 'leave_type', header: 'Leave Type' },
-    tab === 'pending'
-      ? { accessorKey: 'available_days', header: 'Eligible' }
-      : { id: 'approvedDate', header: 'Approved Date', cell: ({ row }) => row.original.approved_date ?? '—' },
     ...(tab === 'pending'
-      ? [{
-          id: 'encashingNow',
-          header: 'Encashing Now',
-          cell: ({ row }: { row: { original: EncashRow } }) => {
-            const r = row.original;
-            const locked = !!r.action && PAYROLL_LOCKED.includes(r.action);
-            const cap = r.leaveLimit != null ? Math.max(0, r.leaveLimit - r.alreadyEncashed) : r.available_days;
-            const max = Math.min(cap, r.available_days);
-            const value = overrides[r.leave_encashment_master_pkey] ?? r.requested_days;
-            return (
-              <input
-                type="number"
-                min={0}
-                max={max}
-                step={0.5}
-                disabled={locked || max <= 0}
-                value={value}
-                onClick={(e) => e.stopPropagation()}
-                onChange={(e) => {
-                  const v = Math.min(max, Math.max(0, Number(e.target.value) || 0));
-                  setOverrides((prev) => ({ ...prev, [r.leave_encashment_master_pkey]: v }));
-                }}
-                className={cn(INPUT_CLASS, 'w-20')}
-              />
-            );
-          },
-        } as ColumnDef<EncashRow, unknown>]
-      : [{ accessorKey: 'approved_days', header: 'Approved Days' } as ColumnDef<EncashRow, unknown>]),
-    { id: 'payroll', header: 'Payroll', cell: ({ row }) => row.original.action ?? '—' },
-    {
-      id: 'actions',
-      header: '',
-      meta: { className: 'w-20' },
-      cell: ({ row }) => {
-        if (tab !== 'pending') return null;
-        const r = row.original;
-        const locked = !!r.action && PAYROLL_LOCKED.includes(r.action);
-        return (
-          <div className="flex items-center gap-1">
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                const approvedDays = overrides[r.leave_encashment_master_pkey] ?? r.requested_days;
-                approveOne.mutate({ id: r.leave_encashment_master_pkey, approvedDays });
-              }}
-              disabled={locked}
-              title="Encash"
-              className="p-1.5 rounded-lg text-slate-400 hover:text-[color:var(--color-success-dark)] hover:bg-[color:var(--color-success-soft)] transition-colors duration-150 disabled:opacity-40"
-            >
-              <Check className="w-3.5 h-3.5" />
-            </button>
-            <button
-              onClick={(e) => { e.stopPropagation(); cancelOne.mutate(r.leave_encashment_master_pkey); }}
-              title="Cancel"
-              className="p-1.5 rounded-lg text-slate-400 hover:text-[color:var(--color-danger-dark)] hover:bg-[color:var(--color-danger-soft)] transition-colors duration-150"
-            >
-              <Ban className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        );
-      },
-    },
+      ? [
+          // Field-for-field match to addleave.ctp's datagrid (addleave.ctp:594-654): "Available
+          // Leaves" is the policy's overall encash_days limit, "Applicable Days" is this specific
+          // request's eligible amount (available_days) — two distinct columns, not one.
+          { accessorKey: 'encash_days', header: 'Available Leaves' } as ColumnDef<EncashRow, unknown>,
+          { accessorKey: 'available_days', header: 'Applicable Days' } as ColumnDef<EncashRow, unknown>,
+          {
+            id: 'encashingNow',
+            header: 'Encashing Now',
+            cell: ({ row }: { row: { original: EncashRow } }) => {
+              const r = row.original;
+              const locked = !!r.action && PAYROLL_LOCKED.includes(r.action);
+              // Mirrors addleave.ctp's edit()/formatter exactly: when a leaveLimit/cap exists
+              // (non-restricted company), the max is (leaveLimit - alreadyEncashed) and the row is
+              // only encashable while canEncash && no payroll action && that cap > 0. When there's
+              // no cap to enforce (restricted company, or no policy limit), the input is capped at
+              // the row's own eligible amount and stays enabled — matching the ctp's else branch.
+              const hasCap = r.leaveLimit != null;
+              const cap = hasCap ? Math.max(0, r.leaveLimit! - r.alreadyEncashed) : r.available_days;
+              const max = Math.min(cap, r.available_days);
+              const canEncashRow = r.available_days > 0 && !locked && (!hasCap || (r.canEncash && cap > 0));
+              const value = overrides[r.leave_encashment_master_pkey] ?? r.requested_days;
+              return (
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="number"
+                    min={0}
+                    max={max}
+                    step={0.5}
+                    disabled={!canEncashRow}
+                    value={value}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={(e) => {
+                      const v = Math.min(max, Math.max(0, Number(e.target.value) || 0));
+                      setOverrides((prev) => ({ ...prev, [r.leave_encashment_master_pkey]: v }));
+                    }}
+                    className={cn(INPUT_CLASS, 'w-20')}
+                  />
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const approvedDays = overrides[r.leave_encashment_master_pkey] ?? r.requested_days;
+                      approveOne.mutate({ id: r.leave_encashment_master_pkey, approvedDays });
+                    }}
+                    disabled={!canEncashRow}
+                    className={cn(BTN_BASE, 'py-1 px-2.5 text-[11.5px]', canEncashRow ? 'bg-[color:var(--color-success-soft)] text-[color:var(--color-success-dark)] hover:opacity-80' : 'bg-slate-100 text-slate-400')}
+                  >
+                    Encash
+                  </button>
+                </div>
+              );
+            },
+          } as ColumnDef<EncashRow, unknown>,
+        ]
+      : [
+          // "Encashed" tab columns match listallempsforverified()'s grid (addleave.ctp:692-734):
+          // Employee ID/Name/Leave Type (above) + Month (approved_date) + Encashed Leaves (approved_days).
+          { id: 'month', header: 'Month', cell: ({ row }) => row.original.approved_date ?? '—' } as ColumnDef<EncashRow, unknown>,
+          { accessorKey: 'approved_days', header: 'Encashed Leaves' } as ColumnDef<EncashRow, unknown>,
+        ]),
   ];
 
   return (
@@ -318,37 +273,37 @@ export default function LeaveEncashmentPage() {
           slotEl
         )}
 
-      <div className="flex items-center justify-end mb-4">
-        <button
-          onClick={() => setShowApply(true)}
-          className={cn(BTN_BASE, 'bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)] text-white')}
-        >
-          <Plus className="w-3.5 h-3.5" /> New Request
-        </button>
-      </div>
-
       <div className="surface-card rounded-xl px-4 py-2.5 mb-4 flex flex-wrap items-end gap-3">
-        <div>
-          <label className="block text-[11.5px] font-medium text-slate-500 mb-1">Month</label>
-          <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className={INPUT_CLASS} />
-        </div>
-        <div>
+        <div className="min-w-[200px]">
           <label className="block text-[11.5px] font-medium text-slate-500 mb-1">Branch</label>
-          <select value={branch} onChange={(e) => setBranch(e.target.value)} className={cn(INPUT_CLASS, 'min-w-[160px]')}>
-            <option value="">All branches</option>
-            {branches.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
-        </div>
-        <div>
-          <label className="block text-[11.5px] font-medium text-slate-500 mb-1">Leave Type</label>
-          <select value={filterItem} onChange={(e) => setFilterItem(e.target.value)} className={cn(INPUT_CLASS, 'min-w-[160px]')}>
-            <option value="">All types</option>
-            {itemOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
+          <BranchSearch
+            value={branch}
+            onChange={(v) => {
+              setBranch(v);
+              // Changing branch may drop the previously-selected employee out of scope — clear both
+              // the employee and leave-type filters so they don't silently keep a stale selection.
+              setFilterEmp('');
+              setFilterItem('');
+            }}
+            branches={branches}
+          />
         </div>
         <div className="min-w-[220px]">
           <label className="block text-[11.5px] font-medium text-slate-500 mb-1">Employee</label>
-          <EmployeeSearch value={filterEmp} onChange={setFilterEmp} placeholder="All employees" />
+          <EmployeeSearch
+            value={filterEmp}
+            onChange={(v) => { setFilterEmp(v); setFilterItem(''); }}
+            branch={branch || undefined}
+            emptyLabel="All employees"
+          />
+        </div>
+        <div className="min-w-[200px]">
+          <label className="block text-[11.5px] font-medium text-slate-500 mb-1">Leave Type</label>
+          <LeaveTypeSearch value={filterItem} onChange={setFilterItem} types={itemOptions} />
+        </div>
+        <div>
+          <label className="block text-[11.5px] font-medium text-slate-500 mb-1">Month</label>
+          <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className={INPUT_CLASS} />
         </div>
         {tab === 'pending' && (
           <button
@@ -356,7 +311,7 @@ export default function LeaveEncashmentPage() {
             disabled={generate.isPending}
             className={cn(BTN_BASE, 'bg-white border border-slate-200 text-[#0F172A] hover:bg-slate-50')}
           >
-            <RefreshCw className="w-3.5 h-3.5" /> Generate
+            <RefreshCw className="w-3.5 h-3.5" /> Process
           </button>
         )}
         {tab === 'pending' && selected.size > 0 && (
@@ -377,7 +332,6 @@ export default function LeaveEncashmentPage() {
             </button>
           </>
         )}
-        {message && <span className="text-[12.5px] text-slate-500">{message}</span>}
       </div>
 
       <div className="sticky top-0 z-20 glass-card-strong rounded-xl px-3 py-2 flex items-center mb-4">
@@ -401,53 +355,14 @@ export default function LeaveEncashmentPage() {
 
       <DataTable data={rows} columns={columns} pageSize={10} pageSizeOptions={[10, 20, 30, 50]} isLoading={isLoading} />
 
-      {showApply && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/25 backdrop-blur-[2px] p-4 animate-fade-in" onClick={() => setShowApply(false)}>
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="relative bg-white rounded-[20px] border border-black/[0.06] shadow-[0_25px_70px_-15px_rgba(0,0,0,0.25)] p-6 w-full max-w-md animate-modal-in"
-          >
-            <div className="flex items-center justify-between mb-5">
-              <h2 className="text-[19px] font-semibold text-[#0F172A] tracking-tight">New Encashment Request</h2>
-              <button onClick={() => setShowApply(false)} aria-label="Close" className="p-1 rounded-full hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors duration-150">
-                <X className="w-4.5 h-4.5" />
-              </button>
-            </div>
-            <div className="space-y-3">
-              <div>
-                <label className="block text-[12px] font-medium text-slate-600 mb-1.5">Employee</label>
-                <EmployeeSearch value={empFkey} onChange={setEmpFkey} />
-              </div>
-              {encashableTypes.length === 0 && empFkey && (
-                <p className="text-[12px] text-slate-400">No encashable leave types configured for this employee&apos;s policy.</p>
-              )}
-              {encashableTypes.map((t) => (
-                <div key={t.salaryHeadItemFkey} className="flex items-center justify-between gap-2">
-                  <span className="text-[13px] text-[#0F172A]">{t.name} <span className="text-slate-400 text-[11px]">(balance: {t.balance})</span></span>
-                  <input
-                    type="number"
-                    min={0}
-                    max={t.balance}
-                    step={0.5}
-                    value={requested[t.salaryHeadItemFkey] ?? ''}
-                    onChange={(e) => setRequested((r) => ({ ...r, [t.salaryHeadItemFkey]: e.target.value }))}
-                    className={cn(INPUT_CLASS, 'w-24')}
-                  />
-                </div>
-              ))}
-              <div>
-                <label className="block text-[12px] font-medium text-slate-600 mb-1.5">Reason</label>
-                <input type="text" value={reason} onChange={(e) => setReason(e.target.value)} className={cn(INPUT_CLASS, 'w-full')} />
-              </div>
-            </div>
-            <button
-              onClick={() => apply.mutate()}
-              disabled={!empFkey || encashableTypes.every((t) => !Number(requested[t.salaryHeadItemFkey])) || apply.isPending}
-              className={cn(BTN_BASE, 'w-full justify-center mt-4 bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)] text-white')}
-            >
-              {apply.isPending ? 'Submitting…' : 'Submit'}
-            </button>
-          </div>
+      {toast && (
+        <div
+          className={cn(
+            'fixed bottom-10 right-4 z-[60] min-w-[20rem] max-w-md px-5 py-3.5 rounded-xl shadow-lg text-sm font-medium text-white',
+            toast.type === 'success' ? 'bg-[color:var(--color-success)]' : 'bg-[color:var(--color-danger)]'
+          )}
+        >
+          {toast.message}
         </div>
       )}
     </div>

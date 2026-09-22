@@ -81,7 +81,7 @@ export function EmployeeSearch({ value, onChange, placeholder, emptyLabel, branc
         )}
       />
       {open && options.length > 0 && (
-        <div className="absolute z-20 mt-1.5 w-full bg-white border border-slate-200 rounded-lg shadow-lg max-h-64 overflow-y-auto scroll-fade">
+        <div className="absolute z-30 mt-1.5 w-full bg-white border border-slate-200 rounded-lg shadow-lg max-h-64 overflow-y-auto scroll-fade">
           {options.map((emp) => (
             <button
               key={emp.emp_pkey}

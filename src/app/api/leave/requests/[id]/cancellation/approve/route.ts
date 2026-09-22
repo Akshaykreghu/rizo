@@ -5,11 +5,12 @@ import { isLeaveTransactionFailure, runLeaveTransaction, toISODate } from '@/lib
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket } from 'mysql2';
 
-// Confirms a pending cancellation request (CancellationOfAuthorized/CancellationOfApproved -> Cancelled).
-// Same actor who'd handle the underlying Applied/Authorized transition reviews its cancellation too
-// (legacy manageempleave()'s $myrole 1/2 split: ISAutherizedby owns CancellationOfAuthorized,
-// APPROVEDBY owns CancellationOfApproved) — matches the self-access carve-out already on
-// authorize/approve/reject, which this route was missing.
+// Ported from grandLeave()'s 'Cancelled'/'Approve Cancellation' branches — legacy has NO admin-role
+// gate on this action at all; it's driven purely by whichever employee's session emp_fkey matches
+// the request's ISAutherizedby (for CancellationOfAuthorized) or APPROVEDBY (for CancellationOfApproved),
+// same as index()'s own queue query. Admin-only was a bug — it silently blocked the actual hierarchy
+// authorizer/approver, who is often not an admin user — matches the self-access carve-out already
+// on authorize/approve/reject, which this route was missing.
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
