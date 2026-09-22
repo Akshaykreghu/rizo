@@ -3,6 +3,9 @@
 import { useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import { RequiredMark } from '@/components/ui/RequiredMark';
+import { SearchableSelect } from '@/components/ui/SearchableSelect';
+
+const SELECT_BUTTON_CLASS = 'w-full px-2.5 py-1.5 border border-gray-300 rounded-lg text-sm';
 
 export interface RepeatableFieldDef {
   key: string;
@@ -85,16 +88,13 @@ export function RepeatableRows({ fields, rows, pkeyField, onAdd, onRemove, addLa
               {f.label}{f.required && <RequiredMark />}
             </label>
             {f.type === 'select' ? (
-              <select
-                className="w-full px-2.5 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              <SearchableSelect
                 value={draft[f.key]}
-                onChange={(e) => setDraft((prev) => ({ ...prev, [f.key]: e.target.value }))}
-              >
-                <option value="">Select</option>
-                {f.options?.map((o) => (
-                  <option key={o.value} value={o.value}>{o.label}</option>
-                ))}
-              </select>
+                onChange={(v) => setDraft((prev) => ({ ...prev, [f.key]: v }))}
+                options={f.options ?? []}
+                placeholder="Select"
+                buttonClassName={SELECT_BUTTON_CLASS}
+              />
             ) : (
               <input
                 type={f.type === 'number' ? 'number' : f.type === 'date' ? 'date' : 'text'}

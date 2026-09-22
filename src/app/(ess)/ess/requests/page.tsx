@@ -692,7 +692,6 @@ function LoanTab() {
 // ── LEAVE ─────────────────────────────────────────────────────────────────────
 // Moved here from the Presence page — leave application/tracking is a request-and-approve
 // workflow like the other three tabs, whereas Presence is purely attendance history/analytics.
-interface Balance { salaryHeadItemFkey: number; name: string; occurance: string; allowNegative: boolean; maxLeave: number; isLeaveEncash: boolean; balance: number }
 interface LeaveRow {
   LEAVEENTRYID: number; leave_type: string; FROMDATE: string; FROMHALF: number; TODATE: string; TOHALF: number;
   leave_days: number; LEAVESTATUS: string; applied_date: string;
@@ -1115,7 +1114,6 @@ function LeaveDetailModal({ leave: r, onClose, onCancelled }: { leave: LeaveRow;
 }
 
 function LeaveTab({ empId }: { empId: number }) {
-  const [balances, setBalances] = useState<Balance[]>([]);
   const [leaves, setLeaves] = useState<LeaveRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [applyOpen, setApplyOpen] = useState(false);
@@ -1127,10 +1125,8 @@ function LeaveTab({ empId }: { empId: number }) {
   const [selectedMonth, setSelectedMonth] = useState(nowMonth);
 
   const load = useCallback(() => {
-    Promise.all([
-      fetch('/api/leave/balances').then((r) => (r.ok ? r.json() : { data: [] })),
-      fetch('/api/leave/requests').then((r) => (r.ok ? r.json() : { data: [] })),
-    ]).then(([b, l]) => { setBalances(b.data || []); setLeaves(l.data || []); setPage(1); }).finally(() => setLoading(false));
+    fetch('/api/leave/requests').then((r) => (r.ok ? r.json() : { data: [] }))
+      .then((l) => { setLeaves(l.data || []); setPage(1); }).finally(() => setLoading(false));
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -1157,21 +1153,6 @@ function LeaveTab({ empId }: { empId: number }) {
         <div style={{ padding: 30, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>Loading…</div>
       ) : (
         <>
-          {balances.length > 0 && (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(108px, 1fr))', gap: 10, marginBottom: 24 }}>
-              {balances.map((b) => (
-                <div key={b.salaryHeadItemFkey} style={{ ...card, padding: '12px 10px', textAlign: 'center' }}>
-                  {b.occurance && (
-                    <div style={{ width: 32, height: 32, borderRadius: 9, background: `${BRAND}14`, color: BRAND, fontSize: 10, fontWeight: 900, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 8px' }}>{b.occurance}</div>
-                  )}
-                  <div style={{ fontSize: 19, fontWeight: 900, color: b.balance >= 0 ? 'var(--text-primary)' : '#dc2626', lineHeight: 1.1 }}>{b.balance}</div>
-                  <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 3, lineHeight: 1.25 }}>{b.name}</div>
-                  {b.isLeaveEncash && <div style={{ fontSize: 8.5, color: '#0891b2', fontWeight: 700, marginTop: 4 }}>Encashable</div>}
-                </div>
-              ))}
-            </div>
-          )}
-
           <div style={{ ...card, overflow: 'hidden' }}>
             <div style={{ padding: '14px 18px 10px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
               <div>

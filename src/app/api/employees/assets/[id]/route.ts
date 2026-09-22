@@ -5,6 +5,42 @@ import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket } from 'mysql2';
 import { futureDateError } from '@/lib/validation';
 
+// Every employee who has ever held this same physical asset (asset_management row), not just the
+// caller's own allocation — matches legacy's own "Asset History" view. Self-access is scoped to
+// only ever look up history for an allocation the caller currently holds themselves (or admin),
+// not an arbitrary allocate_pkey, so an employee can't probe other people's allocation history by
+// guessing ids unrelated to any asset they've actually had.
+export async function GET(
+  _request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const session = await getServerSession(authOptions);
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const { id } = await params;
+  const pool = await getCompanyPool(session.user.companyCode);
+
+  const [[allocation]] = await pool.execute<RowDataPacket[]>(
+    'SELECT asset, emp_fkey FROM asset_allocate WHERE allocate_pkey = ?',
+    [id]
+  );
+  if (!allocation) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  if (session.user.userGroup !== 1 && session.user.empFkey !== allocation.emp_fkey) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
+
+  const [rows] = await pool.execute<RowDataPacket[]>(
+    `SELECT a.allocate_pkey, e.first_name, e.last_name, e.emp_id,
+            a.allocated_date, a.retreived_date, a.status, a.description
+     FROM asset_allocate a
+     LEFT JOIN emp_details e ON e.emp_pkey = a.emp_fkey
+     WHERE a.asset = ? AND a.active = '1'
+     ORDER BY a.allocated_date DESC`,
+    [allocation.asset]
+  );
+  return NextResponse.json(rows);
+}
+
 export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }

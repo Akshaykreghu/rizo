@@ -22,15 +22,29 @@ export async function PATCH(
 
   const { id } = await params;
   const body = await request.json();
-  if (body.status !== 1 && body.status !== 0) {
-    return NextResponse.json(
-      { error: 'status must be 1 (active) or 0 (inactive) — status 2 (resigned) is set only by the Resignation workflow' },
-      { status: 400 }
-    );
+  const pool = await getCompanyPool(session.user.companyCode);
+
+  if (body.status !== undefined) {
+    if (body.status !== 1 && body.status !== 0) {
+      return NextResponse.json(
+        { error: 'status must be 1 (active) or 0 (inactive) — status 2 (resigned) is set only by the Resignation workflow' },
+        { status: 400 }
+      );
+    }
+    await pool.execute('UPDATE emp_details SET status = ? WHERE emp_pkey = ?', [body.status, id]);
   }
 
-  const pool = await getCompanyPool(session.user.companyCode);
-  await pool.execute('UPDATE emp_details SET status = ? WHERE emp_pkey = ?', [body.status, id]);
+  // Ports legacy Employee::updateEditable() — simplified from legacy's 3-checkbox (Personal/
+  // Other/Onboarding) section-level lock to a single record-wide lock, since this page isn't
+  // split into those same legacy form fragments. A record locks itself on onboarding (editable=0,
+  // see join/[id]/onboard/route.ts) until an admin explicitly flips this switch.
+  if (body.editable !== undefined) {
+    if (body.editable !== 1 && body.editable !== 0) {
+      return NextResponse.json({ error: 'editable must be 1 (unlocked) or 0 (locked)' }, { status: 400 });
+    }
+    await pool.execute('UPDATE emp_details SET editable = ? WHERE emp_pkey = ?', [body.editable, id]);
+  }
+
   return NextResponse.json({ success: true });
 }
 

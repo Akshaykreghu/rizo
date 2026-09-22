@@ -4,17 +4,19 @@ import { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowLeft, User, Briefcase, Wallet, Landmark, FileText, Plus, Trash2, Eye, RefreshCw,
-  AlertCircle, CheckCircle2, Users, Star,
+  AlertCircle, CheckCircle2, Users, Star, GraduationCap, History,
 } from 'lucide-react';
+import { RepeatableRows } from '@/components/employees/RepeatableRows';
 import { cn, formatDate } from '@/lib/utils';
 import { AvatarUpload } from '@/components/ui/AvatarUpload';
 import { RequiredMark } from '@/components/ui/RequiredMark';
+import { SearchableSelect } from '@/components/ui/SearchableSelect';
 import { EmployeeSearch } from '@/components/employees/EmployeeSearch';
 import { DocumentUploadField } from '@/components/employees/DocumentUploadField';
 import { useSetupOptions, useSetupRows } from '@/lib/setupOptions';
 import { EMP_TYPES } from '@/lib/employeeOptions';
 import {
-  dobError, ageAtDateError, panError, esiError, uanError, lwfError, accountNoError, pfNumberError,
+  dobError, ageAtDateError, aadhaarError, panError, esiError, uanError, lwfError, accountNoError, pfNumberError,
 } from '@/lib/validation';
 
 const DOCUMENT_TYPES = ['Aadhaar', 'PAN', 'Passport', 'Driving License', 'Voter ID', 'Educational Certificate', 'Offer Letter', 'Relieving Letter', 'Other'];
@@ -36,6 +38,8 @@ const TABS = [
   { key: 'bank', label: 'Bank Details', icon: Landmark, title: 'Bank Details', subtitle: 'Employee salary account information' },
   { key: 'documents', label: 'Documents', icon: FileText, title: 'Documents', subtitle: 'Identity and supporting documents' },
   { key: 'family', label: 'Family', icon: Users, title: 'Family & Nominee', subtitle: 'Family member and nominee details' },
+  { key: 'education', label: 'Education', icon: GraduationCap, title: 'Education', subtitle: 'Academic qualifications' },
+  { key: 'experience', label: 'Experience', icon: History, title: 'Work Experience', subtitle: 'Previous employment history' },
 ] as const;
 
 type TabKey = (typeof TABS)[number]['key'];
@@ -50,6 +54,14 @@ const FIELD_TAB: Record<string, TabKey> = {
 const EMPTY_DOC = { document_type: '', document_number: '', name: '', relation: '', nationality: '', valid_from: '', valid_till: '' };
 const FAMILY_RELATIONS = ['Self', 'Mother', 'Father', 'Sister', 'Brother', 'Cousin', 'Spouse', 'Other'];
 const EMPTY_FAMILY = { name: '', relation: '', gender: '', DOB: '', blood_group: '', nationality: '', contact_number: '', alternate_number: '', is_nominee: 'N', emergency_contact: 'N' };
+// Matches lib/validation.ts's dobError (18-years-minimum) check — caps the calendar itself at
+// that same boundary instead of only rejecting an underage pick after submit.
+const MAX_DOB = (() => {
+  const d = new Date();
+  d.setFullYear(d.getFullYear() - 18);
+  return d.toISOString().slice(0, 10);
+})();
+const TODAY = new Date().toISOString().slice(0, 10);
 
 interface NationalityOption { id: number; nationality: string; country_name: string }
 
@@ -84,6 +96,9 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
   const [formError, setFormError] = useState('');
   const [activeTab, setActiveTab] = useState<TabKey>('personal');
   const seeded = useRef(false);
+  // Legacy locks a record on onboarding (editable=0) until an admin explicitly unlocks it —
+  // default true so the form isn't briefly disabled while this employee's data is still loading.
+  const [editable, setEditableState] = useState(true);
 
   const [showDocForm, setShowDocForm] = useState(false);
   const [docDraft, setDocDraft] = useState(EMPTY_DOC);
@@ -110,6 +125,16 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
   const { data: family = [] } = useQuery<Record<string, unknown>[]>({
     queryKey: ['employee', id, 'family'],
     queryFn: () => fetch(`/api/employees/${id}/family`).then((r) => r.json()),
+  });
+
+  const { data: education = [] } = useQuery<Record<string, unknown>[]>({
+    queryKey: ['employee', id, 'education'],
+    queryFn: () => fetch(`/api/employees/${id}/education`).then((r) => r.json()),
+  });
+
+  const { data: experience = [] } = useQuery<Record<string, unknown>[]>({
+    queryKey: ['employee', id, 'experience'],
+    queryFn: () => fetch(`/api/employees/${id}/experience`).then((r) => r.json()),
   });
 
   const { data: nationalities = [] } = useSetupRows<NationalityOption>('setup/nationalities');
@@ -178,10 +203,27 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
       };
       setForm(initial);
       setSavedSnapshot(JSON.stringify(initial));
+      // Legacy treats any value > 0 as unlocked (its 1-7 range encodes which sections), not just
+      // exactly 1 — real historical records can carry those legacy values.
+      setEditableState(Number(data.employee.editable ?? 0) > 0);
     }
   }, [data]);
 
   const isDirty = savedSnapshot !== '' && JSON.stringify(form) !== savedSnapshot;
+
+  const editableToggle = useMutation({
+    mutationFn: async (next: boolean) => {
+      const res = await fetch(`/api/employees/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ editable: next ? 1 : 0 }),
+      });
+      if (!res.ok) throw new Error((await res.json()).error ?? 'Failed to update editable status');
+      return next;
+    },
+    onSuccess: (next) => setEditableState(next),
+    onError: (err) => setFormError(err instanceof Error ? err.message : String(err)),
+  });
 
   const update = useMutation({
     mutationFn: async () => {
@@ -264,20 +306,34 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
     }
   }
 
+  // Single source of truth for both live (on-type) and submit-time validation, so the two never
+  // drift apart — legacy's setup.ctp runs the same per-field checks on 'keyup blur', not just on
+  // submit, which is what these fields were missing before.
+  const fieldValidators: Record<string, (v: string) => string> = {
+    first_name: (v) => v.trim() ? '' : 'First name is required',
+    classification: (v) => v ? '' : 'Gender is required',
+    date_of_birth: (v) => v ? (dobError(v) ?? '') : 'Date of birth is required',
+    id_card: (v) => v ? (aadhaarError(v) ?? '') : 'Aadhaar/ID Card is required',
+    pan_no: (v) => panError(v) ?? '',
+    pf: (v) => pfNumberError(v) ?? '',
+    company_pf: (v) => uanError(v) ?? '',
+    esi: (v) => esiError(v) ?? '',
+    lwf_code: (v) => lwfError(v) ?? '',
+    account_no: (v) => accountNoError(v) ?? '',
+  };
+
+  // Legacy View/Employee/setup.ctp:1001-1037's "18 at joining" check is against a SECOND field
+  // (joining_date), not a per-field format error — surfaced as its own banner (formError),
+  // recomputed live whenever either date changes so it never goes stale mid-edit.
+  function recomputeAgeError(next: Record<string, string>) {
+    setFormError(next.joining_date ? (ageAtDateError(next.date_of_birth, next.joining_date) ?? '') : '');
+  }
+
   function validateAndSave() {
     const ageError = form.joining_date ? (ageAtDateError(form.date_of_birth, form.joining_date) ?? '') : '';
-    const errors: Record<string, string> = {
-      first_name: form.first_name?.trim() ? '' : 'First name is required',
-      classification: form.classification ? '' : 'Gender is required',
-      date_of_birth: form.date_of_birth ? (dobError(form.date_of_birth) ?? '') : 'Date of birth is required',
-      id_card: form.id_card ? '' : 'Aadhaar/ID Card is required',
-      pan_no: panError(form.pan_no ?? '') ?? '',
-      pf: pfNumberError(form.pf ?? '') ?? '',
-      company_pf: uanError(form.company_pf ?? '') ?? '',
-      esi: esiError(form.esi ?? '') ?? '',
-      lwf_code: lwfError(form.lwf_code ?? '') ?? '',
-      account_no: accountNoError(form.account_no ?? '') ?? '',
-    };
+    const errors = Object.fromEntries(
+      Object.entries(fieldValidators).map(([key, fn]) => [key, fn(form[key] ?? '')])
+    );
     setFormError(ageError);
     if (Object.values(errors).some(Boolean) || ageError) {
       setFieldErrors(errors);
@@ -289,21 +345,43 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
     update.mutate();
   }
 
+  function updateField(key: string, value: string) {
+    const next = { ...form, [key]: value };
+    setForm(next);
+    const validator = fieldValidators[key];
+    if (validator) setFieldErrors((prev) => ({ ...prev, [key]: validator(value) }));
+    if (key === 'date_of_birth' || key === 'joining_date') recomputeAgeError(next);
+  }
+
   function f(key: string) {
     return {
       value: form[key] ?? '',
-      onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
-        setForm((prev) => ({ ...prev, [key]: e.target.value })),
+      onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => updateField(key, e.target.value),
     };
   }
 
+  // Matches legacy's toggleCountryField()/toggleDisabilityTypes(): unchecking the parent
+  // clears its dependent fields too, so a stale value can't get submitted once its own
+  // control is hidden or disabled again.
   function checkbox(key: string, label: string) {
     return (
       <label key={key} className="flex items-center gap-2 text-sm text-slate-600">
         <input
           type="checkbox"
           checked={form[key] === 'Y'}
-          onChange={(e) => setForm((prev) => ({ ...prev, [key]: e.target.checked ? 'Y' : 'N' }))}
+          onChange={(e) => {
+            const checked = e.target.checked;
+            setForm((prev) => {
+              const next = { ...prev, [key]: checked ? 'Y' : 'N' };
+              if (key === 'international_worker' && !checked) next.country = '';
+              if (key === 'physical_handicap' && !checked) {
+                next.locomotive = 'N';
+                next.hearing = 'N';
+                next.visual = 'N';
+              }
+              return next;
+            });
+          }}
           className="accent-[color:var(--color-primary)]"
         />
         {label}
@@ -323,6 +401,34 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
   async function removeFamilyMember(pkey: number) {
     await fetch(`/api/employees/${id}/family/${pkey}`, { method: 'DELETE' });
     queryClient.invalidateQueries({ queryKey: ['employee', id, 'family'] });
+  }
+
+  async function addEducation(values: Record<string, string>) {
+    await fetch(`/api/employees/${id}/education`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(values),
+    });
+    queryClient.invalidateQueries({ queryKey: ['employee', id, 'education'] });
+  }
+
+  async function removeEducation(pkey: number) {
+    await fetch(`/api/employees/${id}/education/${pkey}`, { method: 'DELETE' });
+    queryClient.invalidateQueries({ queryKey: ['employee', id, 'education'] });
+  }
+
+  async function addExperience(values: Record<string, string>) {
+    await fetch(`/api/employees/${id}/experience`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(values),
+    });
+    queryClient.invalidateQueries({ queryKey: ['employee', id, 'experience'] });
+  }
+
+  async function removeExperience(pkey: number) {
+    await fetch(`/api/employees/${id}/experience/${pkey}`, { method: 'DELETE' });
+    queryClient.invalidateQueries({ queryKey: ['employee', id, 'experience'] });
   }
 
   function openAddFamily() {
@@ -402,6 +508,16 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
               <p className="text-[13px] text-slate-500 mt-0.5 truncate">{metaParts.join(' · ')}</p>
             </div>
           </div>
+          <label className="flex items-center gap-2 text-[13px] font-medium text-slate-600 flex-shrink-0 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={editable}
+              disabled={editableToggle.isPending}
+              onChange={(e) => editableToggle.mutate(e.target.checked)}
+              className="accent-[color:var(--color-primary)] w-4 h-4"
+            />
+            Editable
+          </label>
         </div>
         {formError && (
           <p className="flex items-center gap-1.5 text-xs text-[color:var(--color-danger)] mt-3">
@@ -436,6 +552,10 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
 
       {/* Scrollable tab content */}
       <div className="flex-1 overflow-y-auto scroll-fade px-6 py-6">
+        {/* Ports legacy's disableAllSections()/setSectionAccess() — a locked record (editable=0)
+            can't have any of its fields touched until the toggle above unlocks it. A native
+            fieldset cascades disabled to every descendant input without touching each field. */}
+        <fieldset disabled={!editable} className="m-0 p-0 border-0 min-w-0">
         {TABS.map((tab) => {
           if (tab.key !== activeTab) return null;
           const Icon = tab.icon;
@@ -464,16 +584,18 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                   </div>
                   <div>
                     <label className={LABEL_CLASS}>Date of Birth<RequiredMark /></label>
-                    <input type="date" className={cn(INPUT_CLASS, fieldErrors.date_of_birth && ERROR_INPUT_CLASS)} {...f('date_of_birth')} />
+                    <input type="date" max={MAX_DOB} className={cn(INPUT_CLASS, fieldErrors.date_of_birth && ERROR_INPUT_CLASS)} {...f('date_of_birth')} />
                     <FieldError>{fieldErrors.date_of_birth}</FieldError>
                   </div>
                   <div>
                     <label className={LABEL_CLASS}>Gender<RequiredMark /></label>
-                    <select className={cn(INPUT_CLASS, fieldErrors.classification && ERROR_INPUT_CLASS)} {...f('classification')}>
-                      <option value="">Select</option>
-                      <option value="male">Male</option>
-                      <option value="female">Female</option>
-                    </select>
+                    <SearchableSelect
+                      value={form.classification ?? ''}
+                      onChange={(v) => updateField('classification', v)}
+                      options={[{ value: 'male', label: 'Male' }, { value: 'female', label: 'Female' }]}
+                      placeholder="Select"
+                      buttonClassName={cn(INPUT_CLASS, fieldErrors.classification && ERROR_INPUT_CLASS)}
+                    />
                     <FieldError>{fieldErrors.classification}</FieldError>
                   </div>
                   <div>
@@ -486,18 +608,23 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                   </div>
                   <div>
                     <label className={LABEL_CLASS}>Blood Group</label>
-                    <select className={INPUT_CLASS} {...f('blood')}>
-                      <option value="">Select</option>
-                      {['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'].map((bg) => <option key={bg} value={bg}>{bg}</option>)}
-                    </select>
+                    <SearchableSelect
+                      value={form.blood ?? ''}
+                      onChange={(v) => updateField('blood', v)}
+                      options={['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'].map((bg) => ({ value: bg, label: bg }))}
+                      placeholder="Select"
+                      buttonClassName={INPUT_CLASS}
+                    />
                   </div>
                   <div>
                     <label className={LABEL_CLASS}>Marital Status</label>
-                    <select className={INPUT_CLASS} {...f('maritual_status')}>
-                      <option value="">Select</option>
-                      <option value="Single">Single</option>
-                      <option value="Married">Married</option>
-                    </select>
+                    <SearchableSelect
+                      value={form.maritual_status ?? ''}
+                      onChange={(v) => updateField('maritual_status', v)}
+                      options={[{ value: 'Single', label: 'Single' }, { value: 'Married', label: 'Married' }]}
+                      placeholder="Select"
+                      buttonClassName={INPUT_CLASS}
+                    />
                   </div>
                   <div>
                     <label className={LABEL_CLASS}>ID Card Number<RequiredMark /></label>
@@ -510,7 +637,7 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                       maxLength={15}
                       className={cn(INPUT_CLASS, fieldErrors.lwf_code && ERROR_INPUT_CLASS)}
                       {...f('lwf_code')}
-                      onChange={(e) => setForm((prev) => ({ ...prev, lwf_code: e.target.value.toUpperCase() }))}
+                      onChange={(e) => updateField('lwf_code', e.target.value.toUpperCase())}
                     />
                     <FieldError>{fieldErrors.lwf_code}</FieldError>
                   </div>
@@ -553,17 +680,20 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                   </div>
 
                   <div className="col-span-full flex flex-col gap-3 pt-1">
-                    {checkbox('international_worker', 'International Worker')}
-                    {form.international_worker === 'Y' && (
-                      <div className="max-w-xs">
-                        <label className={LABEL_CLASS}>Country of Origin</label>
-                        <select className={INPUT_CLASS} {...f('country')}>
-                          <option value="">Select country</option>
-                          {nationalities.map((n) => <option key={n.id} value={n.id}>{n.country_name}</option>)}
-                        </select>
+                    <div className="flex items-center gap-6 flex-wrap">
+                      <div className="flex items-center gap-3">
+                        {checkbox('international_worker', 'International Worker')}
+                        <SearchableSelect
+                          value={form.country ?? ''}
+                          onChange={(v) => updateField('country', v)}
+                          options={nationalities.map((n) => ({ value: String(n.id), label: n.country_name }))}
+                          placeholder="Country of origin"
+                          buttonClassName={cn(INPUT_CLASS, 'w-44 py-1.5 shrink-0')}
+                          disabled={form.international_worker !== 'Y'}
+                        />
                       </div>
-                    )}
-                    {checkbox('physical_handicap', 'Physical Handicap')}
+                      {checkbox('physical_handicap', 'Physical Handicap')}
+                    </div>
                     {form.physical_handicap === 'Y' && (
                       <div className="flex flex-wrap gap-4 pl-1">
                         {checkbox('locomotive', 'Locomotive')}
@@ -583,10 +713,13 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                   </div>
                   <div>
                     <label className={LABEL_CLASS}>Employment Type</label>
-                    <select className={INPUT_CLASS} {...f('emp_type')}>
-                      <option value="">Select</option>
-                      {EMP_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
-                    </select>
+                    <SearchableSelect
+                      value={form.emp_type ?? ''}
+                      onChange={(v) => updateField('emp_type', v)}
+                      options={EMP_TYPES.map((t) => ({ value: t, label: t }))}
+                      placeholder="Select"
+                      buttonClassName={INPUT_CLASS}
+                    />
                   </div>
                   {[
                     { key: 'emp_branch', label: 'Branch', opts: branches },
@@ -599,10 +732,13 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                   ].map(({ key, label, opts }) => (
                     <div key={key}>
                       <label className={LABEL_CLASS}>{label}</label>
-                      <select className={INPUT_CLASS} {...f(key)}>
-                        <option value="">Select {label.toLowerCase()}</option>
-                        {opts.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                      </select>
+                      <SearchableSelect
+                        value={form[key] ?? ''}
+                        onChange={(v) => updateField(key, v)}
+                        options={opts}
+                        placeholder={`Select ${label.toLowerCase()}`}
+                        buttonClassName={INPUT_CLASS}
+                      />
                     </div>
                   ))}
                   <div>
@@ -617,6 +753,40 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                     />
                   </div>
                 </div>
+              )}
+
+              {tab.key === 'education' && (
+                <RepeatableRows
+                  pkeyField="education_pkey"
+                  rows={education}
+                  addLabel="Add education"
+                  onAdd={addEducation}
+                  onRemove={removeEducation}
+                  fields={[
+                    { key: 'degree', label: 'Course', required: true },
+                    { key: 'university', label: 'University', required: true },
+                    { key: 'duration', label: 'Duration', required: true },
+                    { key: 'marks', label: 'Marks', required: true },
+                  ]}
+                />
+              )}
+
+              {tab.key === 'experience' && (
+                <RepeatableRows
+                  pkeyField="experience_pkey"
+                  rows={experience}
+                  addLabel="Add experience"
+                  onAdd={addExperience}
+                  onRemove={removeExperience}
+                  fields={[
+                    { key: 'company_name', label: 'Company', required: true },
+                    { key: 'designation', label: 'Designation', required: true },
+                    { key: 'department', label: 'Department', required: true },
+                    { key: 'from_date', label: 'From', type: 'date', required: true },
+                    { key: 'to_date', label: 'To', type: 'date', required: true },
+                    { key: 'salary', label: 'Salary', type: 'number', required: true },
+                  ]}
+                />
               )}
 
               {tab.key === 'statutory' && (
@@ -645,7 +815,7 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                       maxLength={10}
                       className={cn(INPUT_CLASS, fieldErrors.pan_no && ERROR_INPUT_CLASS)}
                       {...f('pan_no')}
-                      onChange={(e) => setForm((prev) => ({ ...prev, pan_no: e.target.value.toUpperCase() }))}
+                      onChange={(e) => updateField('pan_no', e.target.value.toUpperCase())}
                     />
                     {fieldErrors.pan_no ? <FieldError>{fieldErrors.pan_no}</FieldError> : <HelperText>Format: ABCDE1234F</HelperText>}
                   </div>
@@ -664,7 +834,7 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                     <input className={INPUT_CLASS} {...f('eps')} />
                   </div>
                   <div>
-                    <label className={LABEL_CLASS}>ESIC Number</label>
+                    <label className={LABEL_CLASS}>ESI Number</label>
                     <input maxLength={10} className={cn(INPUT_CLASS, fieldErrors.esi && ERROR_INPUT_CLASS)} {...f('esi')} />
                     {fieldErrors.esi ? <FieldError>{fieldErrors.esi}</FieldError> : <HelperText>10 digits</HelperText>}
                   </div>
@@ -782,14 +952,13 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-5 gap-y-4">
                         <div>
                           <label className={LABEL_CLASS}>Document Type<RequiredMark /></label>
-                          <select
-                            className={cn(INPUT_CLASS, docErrors.document_type && ERROR_INPUT_CLASS)}
+                          <SearchableSelect
                             value={docDraft.document_type}
-                            onChange={(e) => setDocDraft((p) => ({ ...p, document_type: e.target.value }))}
-                          >
-                            <option value="">Select type</option>
-                            {DOCUMENT_TYPES.map((d) => <option key={d} value={d}>{d}</option>)}
-                          </select>
+                            onChange={(v) => setDocDraft((p) => ({ ...p, document_type: v }))}
+                            options={DOCUMENT_TYPES.map((d) => ({ value: d, label: d }))}
+                            placeholder="Select type"
+                            buttonClassName={cn(INPUT_CLASS, docErrors.document_type && ERROR_INPUT_CLASS)}
+                          />
                           <FieldError>{docErrors.document_type}</FieldError>
                         </div>
                         <div>
@@ -949,34 +1118,31 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                         </div>
                         <div>
                           <label className={LABEL_CLASS}>Relation<RequiredMark /></label>
-                          <select
-                            className={cn(INPUT_CLASS, familyErrors.relation && ERROR_INPUT_CLASS)}
+                          <SearchableSelect
                             value={familyDraft.relation}
-                            onChange={(e) => setFamilyDraft((p) => ({ ...p, relation: e.target.value }))}
-                          >
-                            <option value="">Select relation</option>
-                            {FAMILY_RELATIONS.map((r) => <option key={r} value={r}>{r}</option>)}
-                          </select>
+                            onChange={(v) => setFamilyDraft((p) => ({ ...p, relation: v }))}
+                            options={FAMILY_RELATIONS.map((r) => ({ value: r, label: r }))}
+                            placeholder="Select relation"
+                            buttonClassName={cn(INPUT_CLASS, familyErrors.relation && ERROR_INPUT_CLASS)}
+                          />
                           <FieldError>{familyErrors.relation}</FieldError>
                         </div>
                         <div>
                           <label className={LABEL_CLASS}>Gender<RequiredMark /></label>
-                          <select
-                            className={cn(INPUT_CLASS, familyErrors.gender && ERROR_INPUT_CLASS)}
+                          <SearchableSelect
                             value={familyDraft.gender}
-                            onChange={(e) => setFamilyDraft((p) => ({ ...p, gender: e.target.value }))}
-                          >
-                            <option value="">Select gender</option>
-                            <option value="Male">Male</option>
-                            <option value="Female">Female</option>
-                            <option value="Other">Other</option>
-                          </select>
+                            onChange={(v) => setFamilyDraft((p) => ({ ...p, gender: v }))}
+                            options={[{ value: 'Male', label: 'Male' }, { value: 'Female', label: 'Female' }, { value: 'Other', label: 'Other' }]}
+                            placeholder="Select gender"
+                            buttonClassName={cn(INPUT_CLASS, familyErrors.gender && ERROR_INPUT_CLASS)}
+                          />
                           <FieldError>{familyErrors.gender}</FieldError>
                         </div>
                         <div>
                           <label className={LABEL_CLASS}>Date of Birth<RequiredMark /></label>
                           <input
                             type="date"
+                            max={TODAY}
                             className={cn(INPUT_CLASS, familyErrors.DOB && ERROR_INPUT_CLASS)}
                             value={familyDraft.DOB}
                             onChange={(e) => setFamilyDraft((p) => ({ ...p, DOB: e.target.value }))}
@@ -1064,6 +1230,7 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
             </div>
           );
         })}
+        </fieldset>
       </div>
 
       {/* Sticky footer */}

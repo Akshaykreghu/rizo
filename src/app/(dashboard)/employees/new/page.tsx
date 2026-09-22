@@ -8,10 +8,23 @@ import { EmployeeSearch } from '@/components/employees/EmployeeSearch';
 import { useSetupOptions } from '@/lib/setupOptions';
 import { EMP_TYPES } from '@/lib/employeeOptions';
 import {
-  dobError, panError, esiError, uanError, lwfError, accountNoError, pfNumberError,
+  dobError, aadhaarError, panError, esiError, uanError, lwfError, accountNoError, pfNumberError,
 } from '@/lib/validation';
 import { RequiredMark } from '@/components/ui/RequiredMark';
+import { SearchableSelect } from '@/components/ui/SearchableSelect';
 import { cn } from '@/lib/utils';
+
+// Matches the local .input class's box model (padding 0.5rem 0.75rem, border #d1d5db, radius
+// 0.5rem, text-sm) so the searchable dropdown trigger lines up with this form's plain inputs.
+const SELECT_BUTTON_CLASS = 'w-full px-3 py-2 border border-gray-300 rounded-lg text-sm';
+
+// Matches lib/validation.ts's dobError (18-years-minimum) check — caps the calendar itself at
+// that same boundary instead of only rejecting an underage pick after submit.
+const MAX_DOB = (() => {
+  const d = new Date();
+  d.setFullYear(d.getFullYear() - 18);
+  return d.toISOString().slice(0, 10);
+})();
 
 const EMPTY_FORM = {
   emp_id: '', first_name: '', last_name: '', date_of_birth: '',
@@ -36,19 +49,26 @@ export default function NewEmployeePage() {
   const { data: designations = [] } = useSetupOptions('setup/designations', 'desig_code', 'desig_name');
   const { data: grades = [] } = useSetupOptions('setup/grades', 'grade_code', 'grade_name');
 
+  // Single source of truth for both live (on-type) and submit-time validation, so the two never
+  // drift apart — legacy's setup.ctp runs the same per-field regex on 'keyup blur', not just on
+  // submit (liveValidate()), which is what these fields were missing before.
+  const fieldValidators: Partial<Record<keyof typeof EMPTY_FORM, (v: string) => string>> = {
+    first_name: (v) => v.trim() ? '' : 'First name is required',
+    classification: (v) => v ? '' : 'Gender is required',
+    date_of_birth: (v) => v ? (dobError(v) ?? '') : 'Date of birth is required',
+    id_card: (v) => v ? (aadhaarError(v) ?? '') : 'Aadhaar/ID Card is required',
+    pan_no: (v) => panError(v) ?? '',
+    pf: (v) => pfNumberError(v) ?? '',
+    company_pf: (v) => uanError(v) ?? '',
+    esi: (v) => esiError(v) ?? '',
+    lwf_code: (v) => lwfError(v) ?? '',
+    account_no: (v) => accountNoError(v) ?? '',
+  };
+
   function validate(): boolean {
-    const errors = {
-      first_name: form.first_name.trim() ? '' : 'First name is required',
-      classification: form.classification ? '' : 'Gender is required',
-      date_of_birth: form.date_of_birth ? (dobError(form.date_of_birth) ?? '') : 'Date of birth is required',
-      id_card: form.id_card ? '' : 'Aadhaar/ID Card is required',
-      pan_no: panError(form.pan_no) ?? '',
-      pf: pfNumberError(form.pf) ?? '',
-      company_pf: uanError(form.company_pf) ?? '',
-      esi: esiError(form.esi) ?? '',
-      lwf_code: lwfError(form.lwf_code) ?? '',
-      account_no: accountNoError(form.account_no) ?? '',
-    };
+    const errors = Object.fromEntries(
+      Object.entries(fieldValidators).map(([key, fn]) => [key, fn(form[key as keyof typeof EMPTY_FORM])])
+    );
     if (Object.values(errors).some(Boolean)) {
       setFieldErrors(errors);
       return false;
@@ -78,11 +98,16 @@ export default function NewEmployeePage() {
     }
   }
 
+  function updateField(key: keyof typeof EMPTY_FORM, value: string) {
+    setForm((prev) => ({ ...prev, [key]: value }));
+    const validator = fieldValidators[key];
+    if (validator) setFieldErrors((prev) => ({ ...prev, [key]: validator(value) }));
+  }
+
   function f(key: keyof typeof EMPTY_FORM) {
     return {
       value: form[key],
-      onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
-        setForm((prev) => ({ ...prev, [key]: e.target.value })),
+      onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => updateField(key, e.target.value),
     };
   }
 
@@ -107,7 +132,7 @@ export default function NewEmployeePage() {
             </div>
             <div>
               <label className="label">Date of Birth <RequiredMark /></label>
-              <input type="date" className={cn('input', fieldErrors.date_of_birth && 'input-error')} {...f('date_of_birth')} />
+              <input type="date" max={MAX_DOB} className={cn('input', fieldErrors.date_of_birth && 'input-error')} {...f('date_of_birth')} />
               {fieldErrors.date_of_birth && <p className="field-error">{fieldErrors.date_of_birth}</p>}
             </div>
             <div>
@@ -129,29 +154,34 @@ export default function NewEmployeePage() {
             </div>
             <div>
               <label className="label">Gender <RequiredMark /></label>
-              <select className={cn('input', fieldErrors.classification && 'input-error')} {...f('classification')}>
-                <option value="">Select gender</option>
-                <option value="male">Male</option>
-                <option value="female">Female</option>
-              </select>
+              <SearchableSelect
+                value={form.classification ?? ''}
+                onChange={(v) => updateField('classification', v)}
+                options={[{ value: 'male', label: 'Male' }, { value: 'female', label: 'Female' }]}
+                placeholder="Select gender"
+                buttonClassName={cn(SELECT_BUTTON_CLASS, fieldErrors.classification && 'border-red-500')}
+              />
               {fieldErrors.classification && <p className="field-error">{fieldErrors.classification}</p>}
             </div>
             <div>
               <label className="label">Blood Group</label>
-              <select className="input" {...f('blood')}>
-                <option value="">Select blood group</option>
-                {['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'].map((bg) => (
-                  <option key={bg} value={bg}>{bg}</option>
-                ))}
-              </select>
+              <SearchableSelect
+                value={form.blood ?? ''}
+                onChange={(v) => updateField('blood', v)}
+                options={['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'].map((bg) => ({ value: bg, label: bg }))}
+                placeholder="Select blood group"
+                buttonClassName={SELECT_BUTTON_CLASS}
+              />
             </div>
             <div>
               <label className="label">Marital Status</label>
-              <select className="input" {...f('maritual_status')}>
-                <option value="">Select status</option>
-                <option value="Single">Single</option>
-                <option value="Married">Married</option>
-              </select>
+              <SearchableSelect
+                value={form.maritual_status ?? ''}
+                onChange={(v) => updateField('maritual_status', v)}
+                options={[{ value: 'Single', label: 'Single' }, { value: 'Married', label: 'Married' }]}
+                placeholder="Select status"
+                buttonClassName={SELECT_BUTTON_CLASS}
+              />
             </div>
             <div>
               <label className="label">ID Card Number <RequiredMark /></label>
@@ -164,7 +194,7 @@ export default function NewEmployeePage() {
                 maxLength={15}
                 className={cn('input', fieldErrors.lwf_code && 'input-error')}
                 {...f('lwf_code')}
-                onChange={(e) => setForm((prev) => ({ ...prev, lwf_code: e.target.value.toUpperCase() }))}
+                onChange={(e) => updateField('lwf_code', e.target.value.toUpperCase())}
               />
               {fieldErrors.lwf_code && <p className="field-error">{fieldErrors.lwf_code}</p>}
             </div>
@@ -187,38 +217,53 @@ export default function NewEmployeePage() {
             </div>
             <div>
               <label className="label">Employment Type</label>
-              <select className="input" {...f('emp_type')}>
-                <option value="">Select type</option>
-                {EMP_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
-              </select>
+              <SearchableSelect
+                value={form.emp_type ?? ''}
+                onChange={(v) => updateField('emp_type', v)}
+                options={EMP_TYPES.map((t) => ({ value: t, label: t }))}
+                placeholder="Select type"
+                buttonClassName={SELECT_BUTTON_CLASS}
+              />
             </div>
             <div>
               <label className="label">Branch</label>
-              <select className="input" {...f('emp_branch')}>
-                <option value="">Select branch</option>
-                {branches.map((b) => <option key={b.value} value={b.value}>{b.label}</option>)}
-              </select>
+              <SearchableSelect
+                value={form.emp_branch ?? ''}
+                onChange={(v) => updateField('emp_branch', v)}
+                options={branches}
+                placeholder="Select branch"
+                buttonClassName={SELECT_BUTTON_CLASS}
+              />
             </div>
             <div>
               <label className="label">Department</label>
-              <select className="input" {...f('emp_dept')}>
-                <option value="">Select department</option>
-                {departments.map((d) => <option key={d.value} value={d.value}>{d.label}</option>)}
-              </select>
+              <SearchableSelect
+                value={form.emp_dept ?? ''}
+                onChange={(v) => updateField('emp_dept', v)}
+                options={departments}
+                placeholder="Select department"
+                buttonClassName={SELECT_BUTTON_CLASS}
+              />
             </div>
             <div>
               <label className="label">Designation</label>
-              <select className="input" {...f('designation')}>
-                <option value="">Select designation</option>
-                {designations.map((d) => <option key={d.value} value={d.value}>{d.label}</option>)}
-              </select>
+              <SearchableSelect
+                value={form.designation ?? ''}
+                onChange={(v) => updateField('designation', v)}
+                options={designations}
+                placeholder="Select designation"
+                buttonClassName={SELECT_BUTTON_CLASS}
+              />
             </div>
             <div>
               <label className="label">Grade</label>
-              <select className="input" {...f('emp_grade')}>
-                <option value="">Select grade</option>
-                {grades.map((g) => <option key={g.value} value={g.value}>{g.label}</option>)}
-              </select>
+              <SearchableSelect
+                value={form.emp_grade ?? ''}
+                onChange={(v) => updateField('emp_grade', v)}
+                options={grades}
+                placeholder="Select grade"
+                buttonClassName={SELECT_BUTTON_CLASS}
+              />
             </div>
             <div>
               <label className="label">Probation Period (days)</label>
@@ -243,7 +288,7 @@ export default function NewEmployeePage() {
                 maxLength={10}
                 className={cn('input', fieldErrors.pan_no && 'input-error')}
                 {...f('pan_no')}
-                onChange={(e) => setForm((prev) => ({ ...prev, pan_no: e.target.value.toUpperCase() }))}
+                onChange={(e) => updateField('pan_no', e.target.value.toUpperCase())}
               />
               {fieldErrors.pan_no && <p className="field-error">{fieldErrors.pan_no}</p>}
             </div>
@@ -262,7 +307,7 @@ export default function NewEmployeePage() {
               <input className="input" {...f('eps')} />
             </div>
             <div>
-              <label className="label">ESIC Number</label>
+              <label className="label">ESI Number</label>
               <input maxLength={10} className={cn('input', fieldErrors.esi && 'input-error')} {...f('esi')} />
               {fieldErrors.esi && <p className="field-error">{fieldErrors.esi}</p>}
             </div>

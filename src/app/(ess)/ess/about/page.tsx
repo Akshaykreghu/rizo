@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useSession } from 'next-auth/react';
+import { mobileError, futureDateError } from '@/lib/validation';
+import { DocumentUploadField } from '@/components/employees/DocumentUploadField';
 
 // Read-only port of New Rizo's pages/ESS/ESSAbout.jsx. Self-service editing (the pencil icon /
 // inline ListEditor forms in the original) is intentionally not included in this pass — this
@@ -27,12 +29,7 @@ interface PersonalDoc {
   document_number: string | null;
   valid_from: string | null;
   valid_till: string | null;
-}
-interface GeneratedDoc {
-  document_pkey: number;
-  document_name: string;
-  creation_date: string;
-  content: string | null;
+  files: string | null;
 }
 interface EducationRow { education_pkey: number; degree: string; university: string; duration: string; marks: string }
 interface ExperienceRow { experience_pkey: number; company_name: string; department: string; designation: string; from_date: string; to_date: string | null }
@@ -57,6 +54,19 @@ function fmtMY(d?: Scalar) {
   if (isNaN(dt.getTime())) return String(d);
   return dt.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
 }
+// Matches lib/validation.ts's dobError (18-years-minimum) check — caps the calendar itself at
+// that same boundary instead of only rejecting an underage pick after submit.
+const MAX_DOB = (() => {
+  const d = new Date();
+  d.setFullYear(d.getFullYear() - 18);
+  return d.toISOString().slice(0, 10);
+})();
+// Matches lib/validation.ts's futureDateError check — blocks a future pick in the calendar itself
+// (Work Experience from/to, Family DOB) instead of only rejecting it after submit.
+const TODAY = new Date().toISOString().slice(0, 10);
+// Education duration only ever needs a year, not a full day/month/year pick — a plain year
+// dropdown (last 60 years through the current one) instead of a full date-of-day calendar.
+const YEAR_OPTIONS = Array.from({ length: 60 }, (_, i) => String(new Date().getFullYear() - i));
 function tenureStr(from?: Scalar, to?: Scalar) {
   if (from == null || from === '') return '';
   const s = new Date(from);
@@ -76,6 +86,15 @@ function eduEndYear(e: EducationRow) {
   if (!e.duration) return null;
   const m = String(e.duration).match(/(\d{4})\s*$/);
   return m ? m[1] : null;
+}
+// marks is stored exactly as typed (see addEducation) — a % suffix is optional there, but
+// anywhere it's just shown as a summary (the Career Journey timeline) it should always read as
+// a percentage regardless of whether the person included the symbol themselves.
+function marksWithPercent(v?: string | null) {
+  if (!v) return null;
+  const t = String(v).trim();
+  if (!t) return null;
+  return /%\s*$/.test(t) ? t : `${t}%`;
 }
 function docStatus(till?: string | null): 'no-expiry' | 'expired' | 'expiring' | 'valid' {
   if (!till) return 'no-expiry';
@@ -122,14 +141,19 @@ function G({ cols = 4, children }: { cols?: number; children: React.ReactNode })
 // field names (see /api/employees/[id] PUT) rather than New Rizo's own schema.
 const INP: React.CSSProperties = { width: '100%', padding: '7px 10px', fontSize: 12, borderRadius: 7, border: '1.5px solid var(--border)', background: 'var(--bg-page)', color: 'var(--text-primary)', boxSizing: 'border-box', outline: 'none' };
 type FormState = Record<string, string>;
-function EF({ label, name, form, onChange, type = 'text', opts, full, cols }: {
+function EF({ label, name, form, onChange, type = 'text', opts, full, cols, min, max, required }: {
   label?: string; name: string; form: FormState; onChange: (e: { target: { name: string; value: string } }) => void;
   type?: 'text' | 'date' | 'tel' | 'email' | 'textarea' | 'checkbox'; opts?: readonly string[]; full?: boolean; cols?: number;
+  min?: string; max?: string; required?: boolean;
 }) {
   const style: React.CSSProperties = { gridColumn: full ? '1 / -1' : cols ? `span ${cols}` : undefined };
   return (
     <div style={style}>
-      {label && <label style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.6px', color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>{label}</label>}
+      {label && (
+        <label style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.6px', color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>
+          {label}{required && <span style={{ color: '#dc2626' }}> *</span>}
+        </label>
+      )}
       {opts ? (
         <select name={name} value={form[name] ?? ''} onChange={(e) => onChange({ target: { name, value: e.target.value } })} style={INP}>
           <option value="">—</option>
@@ -143,7 +167,7 @@ function EF({ label, name, form, onChange, type = 'text', opts, full, cols }: {
           <span style={{ fontSize: 12, color: 'var(--text-primary)' }}>{label}</span>
         </label>
       ) : (
-        <input type={type} name={name} value={form[name] ?? ''} onChange={(e) => onChange({ target: { name, value: e.target.value } })} style={INP} />
+        <input type={type} name={name} value={form[name] ?? ''} onChange={(e) => onChange({ target: { name, value: e.target.value } })} min={min} max={max} style={INP} />
       )}
     </div>
   );
@@ -155,7 +179,13 @@ const MARITAL_OPTS = ['Single', 'Married', 'Divorced', 'Widowed'];
 const FAMILY_RELATIONS = ['Self', 'Mother', 'Father', 'Sister', 'Brother', 'Cousin', 'Spouse', 'Other'];
 const DOCUMENT_TYPES = ['Aadhaar', 'PAN', 'Passport', 'Driving License', 'Voter ID', 'Educational Certificate', 'Offer Letter', 'Relieving Letter', 'Other'];
 const EMPTY_FAMILY = { name: '', relation: '', gender: '', DOB: '', blood_group: '', nationality: '', contact_number: '', alternate_number: '', is_nominee: 'N', emergency_contact: 'N' };
-const EMPTY_DOC = { document_type: '', document_number: '', name: '', relation: '', nationality: '', valid_from: '', valid_till: '' };
+const EMPTY_DOC = { document_type: '', document_number: '', name: '', relation: '', classification: '', nationality: '', valid_from: '', valid_till: '', files: '' };
+// Field names match /api/employees/[id]/education's own GET aliases (degree/marks, not the raw
+// qualifcations columns course/mark) — see that route's comment for why. durationFrom/durationTo
+// are this form's own fields, not sent as-is: addEducation() combines them into the single
+// `duration` string the API/DB actually store (legacy schema has no separate from/to columns).
+const EMPTY_EDUCATION = { degree: '', university: '', durationFrom: '', durationTo: '', marks: '' };
+const EMPTY_EXPERIENCE = { company_name: '', designation: '', department: '', from_date: '', to_date: '', salary: '' };
 
 function GenderSelect({ form, onChange }: { form: FormState; onChange: (e: { target: { name: string; value: string } }) => void }) {
   return (
@@ -301,7 +331,10 @@ const TL_CFG = {
   experience: { color: '#059669', bg: '#d1fae5', icon: '💼', label: 'Experience' },
 } as const;
 type TLKind = keyof typeof TL_CFG;
-interface TLItem { kind: TLKind; date: string | null; title: string; sub?: string | null; extra?: string | null }
+// `date` drives sort order only. `dateLabel` overrides what the badge actually displays — needed
+// for education, whose only real precision is a year, so the badge shouldn't show a fabricated
+// day/month (fmtDate(date) would print "01 Jun 2025" for something that's really just "2025").
+interface TLItem { kind: TLKind; date: string | null; dateLabel?: string | null; title: string; sub?: string | null; extra?: string | null }
 
 export default function EssAboutPage() {
   const { data: session } = useSession();
@@ -314,7 +347,6 @@ export default function EssAboutPage() {
   const [experience, setExperience] = useState<ExperienceRow[]>([]);
   const [documents, setDocuments] = useState<PersonalDoc[]>([]);
   const [promotions, setPromotions] = useState<Promotion[]>([]);
-  const [genDocs, setGenDocs] = useState<GeneratedDoc[]>([]);
 
   // Self-edit — matches New Rizo's pencil-icon edit mode on ESS About Me, restricted to the
   // fields /api/employees/[id] PUT actually lets an employee change (see that route's isAdmin
@@ -335,6 +367,16 @@ export default function EssAboutPage() {
   const [docErrors, setDocErrors] = useState<Record<string, string>>({});
   const [docSaving, setDocSaving] = useState(false);
 
+  const [showEducationForm, setShowEducationForm] = useState(false);
+  const [educationDraft, setEducationDraft] = useState(EMPTY_EDUCATION);
+  const [educationErrors, setEducationErrors] = useState<Record<string, string>>({});
+  const [educationSaving, setEducationSaving] = useState(false);
+
+  const [showExperienceForm, setShowExperienceForm] = useState(false);
+  const [experienceDraft, setExperienceDraft] = useState(EMPTY_EXPERIENCE);
+  const [experienceErrors, setExperienceErrors] = useState<Record<string, string>>({});
+  const [experienceSaving, setExperienceSaving] = useState(false);
+
   const load = useCallback(() => {
     if (!empId) return;
     Promise.all([
@@ -343,15 +385,13 @@ export default function EssAboutPage() {
       fetch(`/api/employees/${empId}/education`).then((r) => (r.ok ? r.json() : [])).catch(() => []),
       fetch(`/api/employees/${empId}/experience`).then((r) => (r.ok ? r.json() : [])).catch(() => []),
       fetch(`/api/employees/${empId}/documents`).then((r) => (r.ok ? r.json() : [])).catch(() => []),
-      fetch(`/api/employees/${empId}/generated-documents`).then((r) => (r.ok ? r.json() : [])).catch(() => []),
       fetch(`/api/promotions?status=Y&emp_fkey=${empId}`).then((r) => (r.ok ? r.json() : [])).catch(() => []),
-    ]).then(([e, fam, edu, exp, docs, gdocs, promos]) => {
+    ]).then(([e, fam, edu, exp, docs, promos]) => {
       setEmp(e?.employee ? { ...e.employee, ...e.professional, ...e.ctc } : null);
       setFamily(fam || []);
       setEducation(edu || []);
       setExperience(exp || []);
       setDocuments(docs || []);
-      setGenDocs(gdocs || []);
       setPromotions(promos || []);
     }).finally(() => setLoading(false));
   }, [empId]);
@@ -438,8 +478,10 @@ export default function EssAboutPage() {
       name: familyDraft.name.trim() ? '' : 'Name is required',
       relation: familyDraft.relation ? '' : 'Relation is required',
       gender: familyDraft.gender ? '' : 'Gender is required',
-      DOB: familyDraft.DOB ? '' : 'Date of birth is required',
-      contact_number: familyDraft.contact_number.trim() ? '' : 'Contact number is required',
+      DOB: familyDraft.DOB ? (futureDateError(familyDraft.DOB, 'Date of birth') || '') : 'Date of birth is required',
+      contact_number: familyDraft.contact_number.trim()
+        ? (mobileError(familyDraft.contact_number.trim()) || '')
+        : 'Contact number is required',
     };
     setFamilyErrors(errors);
     if (Object.values(errors).some(Boolean)) return;
@@ -467,6 +509,8 @@ export default function EssAboutPage() {
       document_number: docDraft.document_number.trim() ? '' : 'Document number is required',
       name: docDraft.name.trim() ? '' : 'Name on document is required',
       relation: docDraft.relation.trim() ? '' : 'Relation is required',
+      classification: docDraft.classification ? '' : 'Gender is required',
+      nationality: docDraft.nationality.trim() ? '' : 'Nationality is required',
       valid_from: docDraft.valid_from ? '' : 'Valid from date is required',
     };
     setDocErrors(errors);
@@ -489,6 +533,85 @@ export default function EssAboutPage() {
     load();
   }
 
+  async function addEducation() {
+    const marksTrimmed = educationDraft.marks.trim();
+    // Field allows typing a trailing "%" (the label just hints it, doesn't force it) — strip it
+    // before parsing so "80%" validates the same as "80" instead of Number("80%") => NaN
+    // rejecting the entry outright.
+    const marksNum = Number(marksTrimmed.replace(/%\s*$/, ''));
+    const errors = {
+      degree: educationDraft.degree.trim() ? '' : 'Course is required',
+      university: educationDraft.university.trim() ? '' : 'University is required',
+      durationFrom: educationDraft.durationFrom ? '' : 'Start year is required',
+      durationTo: !educationDraft.durationTo
+        ? 'End year is required'
+        : educationDraft.durationFrom && Number(educationDraft.durationTo) < Number(educationDraft.durationFrom)
+          ? 'End year must be on or after start year'
+          : '',
+      marks: !marksTrimmed
+        ? 'Marks is required'
+        : Number.isNaN(marksNum) || marksNum < 0 || marksNum > 100
+          ? 'Marks must be a percentage between 0 and 100'
+          : '',
+    };
+    setEducationErrors(errors);
+    if (Object.values(errors).some(Boolean)) return;
+    setEducationSaving(true);
+    try {
+      // Legacy schema stores duration as one free-text string ("2025-2026") — compose it from the
+      // two year dropdowns rather than adding a from/to column pair.
+      const duration = `${educationDraft.durationFrom}-${educationDraft.durationTo}`;
+      await fetch(`/api/employees/${empId}/education`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ degree: educationDraft.degree, university: educationDraft.university, duration, marks: marksTrimmed }),
+      });
+      setEducationDraft(EMPTY_EDUCATION);
+      setEducationErrors({});
+      setShowEducationForm(false);
+      load();
+    } finally {
+      setEducationSaving(false);
+    }
+  }
+  async function deleteEducation(pkey: number) {
+    await fetch(`/api/employees/${empId}/education/${pkey}`, { method: 'DELETE' });
+    load();
+  }
+
+  async function addExperience() {
+    const errors = {
+      company_name: experienceDraft.company_name.trim() ? '' : 'Company is required',
+      designation: experienceDraft.designation.trim() ? '' : 'Designation is required',
+      department: experienceDraft.department.trim() ? '' : 'Department is required',
+      from_date: !experienceDraft.from_date
+        ? 'From date is required'
+        : (futureDateError(experienceDraft.from_date, 'From date') || ''),
+      to_date: !experienceDraft.to_date
+        ? 'To date is required'
+        : (futureDateError(experienceDraft.to_date, 'To date')
+          || (experienceDraft.from_date && experienceDraft.to_date < experienceDraft.from_date ? 'To date must be after from date' : '')),
+      salary: experienceDraft.salary.trim() ? '' : 'Salary is required',
+    };
+    setExperienceErrors(errors);
+    if (Object.values(errors).some(Boolean)) return;
+    setExperienceSaving(true);
+    try {
+      await fetch(`/api/employees/${empId}/experience`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(experienceDraft),
+      });
+      setExperienceDraft(EMPTY_EXPERIENCE);
+      setExperienceErrors({});
+      setShowExperienceForm(false);
+      load();
+    } finally {
+      setExperienceSaving(false);
+    }
+  }
+  async function deleteExperience(pkey: number) {
+    await fetch(`/api/employees/${empId}/experience/${pkey}`, { method: 'DELETE' });
+    load();
+  }
+
   const timeline: TLItem[] = (() => {
     const items: TLItem[] = [];
     if (emp?.joining_date) {
@@ -497,7 +620,7 @@ export default function EssAboutPage() {
     promotions.forEach((p) => items.push({ kind: 'promotion', date: p.approved_date || p.created_date, title: p.new_desig_name || '—', sub: p.remarks }));
     education.forEach((e) => {
       const yr = eduEndYear(e);
-      items.push({ kind: 'education', date: yr ? `${yr}-06-01` : null, title: e.degree || 'Degree', sub: e.university, extra: e.duration });
+      items.push({ kind: 'education', date: yr ? `${yr}-06-01` : null, dateLabel: e.duration, title: e.degree || 'Degree', sub: e.university, extra: marksWithPercent(e.marks) });
     });
     experience.forEach((x) => items.push({
       kind: 'experience', date: x.from_date, title: x.designation || 'Role', sub: x.company_name,
@@ -569,7 +692,7 @@ export default function EssAboutPage() {
               <G>
                 <EF label="First Name" name="first_name" form={form} onChange={handleChange} />
                 <EF label="Last Name" name="last_name" form={form} onChange={handleChange} />
-                <EF label="Date of Birth" name="date_of_birth" form={form} onChange={handleChange} type="date" />
+                <EF label="Date of Birth" name="date_of_birth" form={form} onChange={handleChange} type="date" max={MAX_DOB} />
                 <GenderSelect form={form} onChange={handleChange} />
                 <EF label="Blood Group" name="blood" form={form} onChange={handleChange} opts={BLOOD_OPTS} />
                 <EF label="Marital Status" name="maritual_status" form={form} onChange={handleChange} opts={MARITAL_OPTS} />
@@ -703,12 +826,12 @@ export default function EssAboutPage() {
                     {showFamilyForm ? (
                       <div style={{ padding: '12px 14px', background: 'rgba(30,81,110,0.04)', borderRadius: 10, marginBottom: 8, border: '1.5px dashed rgba(30,81,110,0.3)' }}>
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '8px 12px' }}>
-                          <EF label="Full Name" name="name" form={familyDraft} onChange={(e) => setFamilyDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} />
-                          <EF label="Relation" name="relation" form={familyDraft} onChange={(e) => setFamilyDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} opts={FAMILY_RELATIONS} />
-                          <EF label="Date of Birth" name="DOB" form={familyDraft} onChange={(e) => setFamilyDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} type="date" />
-                          <EF label="Gender" name="gender" form={familyDraft} onChange={(e) => setFamilyDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} opts={['Male', 'Female', 'Other']} />
+                          <EF label="Full Name" name="name" form={familyDraft} onChange={(e) => setFamilyDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} required />
+                          <EF label="Relation" name="relation" form={familyDraft} onChange={(e) => setFamilyDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} opts={FAMILY_RELATIONS} required />
+                          <EF label="Date of Birth" name="DOB" form={familyDraft} onChange={(e) => setFamilyDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} type="date" max={TODAY} required />
+                          <EF label="Gender" name="gender" form={familyDraft} onChange={(e) => setFamilyDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} opts={['Male', 'Female', 'Other']} required />
                           <EF label="Blood Group" name="blood_group" form={familyDraft} onChange={(e) => setFamilyDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} opts={BLOOD_OPTS} />
-                          <EF label="Contact Number" name="contact_number" form={familyDraft} onChange={(e) => setFamilyDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} type="tel" />
+                          <EF label="Contact Number" name="contact_number" form={familyDraft} onChange={(e) => setFamilyDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} type="tel" required />
                           <div style={{ display: 'flex', alignItems: 'center', gap: 16, paddingTop: 18 }}>
                             <EF name="is_nominee" form={familyDraft} onChange={(e) => setFamilyDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} type="checkbox" label="Nominee" />
                             <EF name="emergency_contact" form={familyDraft} onChange={(e) => setFamilyDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} type="checkbox" label="Emergency Contact" />
@@ -734,6 +857,93 @@ export default function EssAboutPage() {
               </>
             )}
 
+            {(education.length > 0 || editing) && (
+              <>
+                <Sec icon="🎓" title="Education" />
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {education.map((e) => (
+                    <div key={e.education_pkey} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 8, background: 'var(--bg-page)' }}>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{e.degree}</div>
+                        <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{e.university} · {e.duration} · {marksWithPercent(e.marks)}</div>
+                      </div>
+                      {editing && (
+                        <button onClick={() => deleteEducation(e.education_pkey)} title="Delete" style={{ width: 28, height: 28, borderRadius: 6, background: 'var(--bg-card)', border: '1px solid var(--border)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, color: '#dc2626', flexShrink: 0 }}>🗑️</button>
+                      )}
+                    </div>
+                  ))}
+                  {editing && (showEducationForm ? (
+                    <div style={{ padding: '12px 14px', background: 'rgba(30,81,110,0.04)', borderRadius: 10, border: '1.5px dashed rgba(30,81,110,0.3)' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: '8px 12px' }}>
+                        <EF label="Course" name="degree" form={educationDraft} onChange={(e) => setEducationDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} cols={2} required />
+                        <EF label="University" name="university" form={educationDraft} onChange={(e) => setEducationDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} cols={2} required />
+                        <EF label="Start Year" name="durationFrom" form={educationDraft} onChange={(e) => setEducationDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} opts={YEAR_OPTIONS} required />
+                        <EF label="End Year" name="durationTo" form={educationDraft} onChange={(e) => setEducationDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} opts={YEAR_OPTIONS} required />
+                        <EF
+                          label="Mark (%)" name="marks" type="text" form={educationDraft}
+                          onChange={(e) => setEducationDraft((d) => ({ ...d, marks: e.target.value }))}
+                          required
+                        />
+                      </div>
+                      {Object.values(educationErrors).some(Boolean) && (
+                        <div style={{ marginTop: 8, fontSize: 11, color: '#dc2626' }}>{Object.values(educationErrors).find(Boolean)}</div>
+                      )}
+                      <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                        <button onClick={addEducation} disabled={educationSaving} style={{ padding: '5px 14px', background: '#1E516E', color: '#fff', border: 'none', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>{educationSaving ? 'Adding…' : 'Add'}</button>
+                        <button onClick={() => { setShowEducationForm(false); setEducationErrors({}); }} style={{ padding: '5px 12px', border: '1.5px solid var(--border)', borderRadius: 6, background: 'transparent', color: 'var(--text-muted)', fontSize: 12, cursor: 'pointer' }}>Cancel</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button onClick={() => setShowEducationForm(true)} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', border: '1.5px dashed rgba(30,81,110,0.35)', borderRadius: 8, background: 'transparent', color: '#1E516E', fontSize: 12, fontWeight: 700, cursor: 'pointer', width: '100%', justifyContent: 'center' }}>
+                      + Add Education
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+
+            {(experience.length > 0 || editing) && (
+              <>
+                <Sec icon="💼" title="Work Experience" />
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {experience.map((x) => (
+                    <div key={x.experience_pkey} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 8, background: 'var(--bg-page)' }}>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{x.designation} · {x.company_name}</div>
+                        <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{x.department} · {fmtDate(x.from_date)} – {x.to_date ? fmtDate(x.to_date) : 'Present'}</div>
+                      </div>
+                      {editing && (
+                        <button onClick={() => deleteExperience(x.experience_pkey)} title="Delete" style={{ width: 28, height: 28, borderRadius: 6, background: 'var(--bg-card)', border: '1px solid var(--border)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, color: '#dc2626', flexShrink: 0 }}>🗑️</button>
+                      )}
+                    </div>
+                  ))}
+                  {editing && (showExperienceForm ? (
+                    <div style={{ padding: '12px 14px', background: 'rgba(30,81,110,0.04)', borderRadius: 10, border: '1.5px dashed rgba(30,81,110,0.3)' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: '8px 12px' }}>
+                        <EF label="Company" name="company_name" form={experienceDraft} onChange={(e) => setExperienceDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} cols={2} required />
+                        <EF label="Designation" name="designation" form={experienceDraft} onChange={(e) => setExperienceDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} cols={2} required />
+                        <EF label="Department" name="department" form={experienceDraft} onChange={(e) => setExperienceDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} cols={2} required />
+                        <EF label="Salary" name="salary" form={experienceDraft} onChange={(e) => setExperienceDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} cols={2} required />
+                        <EF label="From" name="from_date" form={experienceDraft} onChange={(e) => setExperienceDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} type="date" cols={2} max={TODAY} required />
+                        <EF label="To" name="to_date" form={experienceDraft} onChange={(e) => setExperienceDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} type="date" cols={2} max={TODAY} required />
+                      </div>
+                      {Object.values(experienceErrors).some(Boolean) && (
+                        <div style={{ marginTop: 8, fontSize: 11, color: '#dc2626' }}>{Object.values(experienceErrors).find(Boolean)}</div>
+                      )}
+                      <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                        <button onClick={addExperience} disabled={experienceSaving} style={{ padding: '5px 14px', background: '#1E516E', color: '#fff', border: 'none', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>{experienceSaving ? 'Adding…' : 'Add'}</button>
+                        <button onClick={() => { setShowExperienceForm(false); setExperienceErrors({}); }} style={{ padding: '5px 12px', border: '1.5px solid var(--border)', borderRadius: 6, background: 'transparent', color: 'var(--text-muted)', fontSize: 12, cursor: 'pointer' }}>Cancel</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button onClick={() => setShowExperienceForm(true)} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', border: '1.5px dashed rgba(30,81,110,0.35)', borderRadius: 8, background: 'transparent', color: '#1E516E', fontSize: 12, fontWeight: 700, cursor: 'pointer', width: '100%', justifyContent: 'center' }}>
+                      + Add Experience
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+
             {(documents.length > 0 || editing) && (
               <>
                 <Sec icon="📄" title="Personal Documents" />
@@ -755,6 +965,7 @@ export default function EssAboutPage() {
                             {d.document_number && <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'monospace' }}>{d.document_number}</span>}
                             {d.valid_from && <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>From {fmtDate(d.valid_from)}</span>}
                             {d.valid_till && <span style={{ fontSize: 11, fontWeight: 700, padding: '1px 8px', borderRadius: 20, background: stStyle.bg, color: stStyle.c }}>{stStyle.label} · {fmtDate(d.valid_till)}</span>}
+                            {d.files && <a href={d.files} target="_blank" rel="noreferrer" style={{ fontSize: 11, fontWeight: 700, color: '#1E516E', textDecoration: 'none' }}>View Attachment</a>}
                           </div>
                         </div>
                         {editing && (
@@ -766,12 +977,18 @@ export default function EssAboutPage() {
                   {editing && (showDocForm ? (
                     <div style={{ padding: '12px 14px', background: 'rgba(30,81,110,0.04)', borderRadius: 10, border: '1.5px dashed rgba(30,81,110,0.3)' }}>
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: '8px 12px' }}>
-                        <EF label="Document Type" name="document_type" form={docDraft} onChange={(e) => setDocDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} opts={DOCUMENT_TYPES} cols={2} />
-                        <EF label="Document Number" name="document_number" form={docDraft} onChange={(e) => setDocDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} cols={2} />
-                        <EF label="Name on Document" name="name" form={docDraft} onChange={(e) => setDocDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} cols={2} />
-                        <EF label="Relation" name="relation" form={docDraft} onChange={(e) => setDocDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} opts={FAMILY_RELATIONS} cols={2} />
-                        <EF label="Valid From" name="valid_from" form={docDraft} onChange={(e) => setDocDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} type="date" />
+                        <EF label="Document Type" name="document_type" form={docDraft} onChange={(e) => setDocDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} opts={DOCUMENT_TYPES} cols={2} required />
+                        <EF label="Document Number" name="document_number" form={docDraft} onChange={(e) => setDocDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} cols={2} required />
+                        <EF label="Name on Document" name="name" form={docDraft} onChange={(e) => setDocDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} cols={2} required />
+                        <EF label="Relation" name="relation" form={docDraft} onChange={(e) => setDocDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} opts={FAMILY_RELATIONS} cols={2} required />
+                        <EF label="Valid From" name="valid_from" form={docDraft} onChange={(e) => setDocDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} type="date" required />
                         <EF label="Valid Till" name="valid_till" form={docDraft} onChange={(e) => setDocDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} type="date" />
+                        <EF label="Gender" name="classification" form={docDraft} onChange={(e) => setDocDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} opts={['Male', 'Female']} required />
+                        <EF label="Nationality" name="nationality" form={docDraft} onChange={(e) => setDocDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} required />
+                      </div>
+                      <div style={{ marginTop: 10 }}>
+                        <label style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.6px', color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>Document Attachment</label>
+                        <DocumentUploadField value={docDraft.files} onChange={(path) => setDocDraft((d) => ({ ...d, files: path }))} />
                       </div>
                       {Object.values(docErrors).some(Boolean) && (
                         <div style={{ marginTop: 8, fontSize: 11, color: '#dc2626' }}>{Object.values(docErrors).find(Boolean)}</div>
@@ -790,28 +1007,6 @@ export default function EssAboutPage() {
               </>
             )}
 
-            {genDocs.length > 0 && (
-              <>
-                <Sec icon="🏢" title="HR Documents" />
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {genDocs.map((d) => (
-                    <div key={d.document_pkey} style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '10px 12px', borderRadius: 10, background: 'var(--bg-page)', border: '1px solid var(--border)' }}>
-                      <div style={{ width: 36, height: 36, borderRadius: 9, background: 'rgba(30,81,110,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, flexShrink: 0 }}>📋</div>
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{d.document_name}</div>
-                        <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>Generated: {fmtDate(d.creation_date)}</div>
-                        {d.content && (
-                          <details style={{ marginTop: 6 }}>
-                            <summary style={{ fontSize: 11, color: '#1E516E', fontWeight: 600, cursor: 'pointer', userSelect: 'none' }}>View Content ▼</summary>
-                            <div style={{ marginTop: 8, padding: '10px 12px', background: 'var(--bg-card)', borderRadius: 8, fontSize: 11, color: 'var(--text-primary)', border: '1px solid var(--border)', lineHeight: 1.6, maxHeight: 200, overflowY: 'auto' }} dangerouslySetInnerHTML={{ __html: d.content }} />
-                          </details>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </>
-            )}
           </div>
         </div>
 
@@ -843,7 +1038,7 @@ export default function EssAboutPage() {
                       <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--text-primary)', lineHeight: 1.3 }}>{item.title}</div>
                       {item.sub && <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 1 }}>{item.sub}</div>}
                       <div style={{ display: 'flex', gap: 5, marginTop: 4, flexWrap: 'wrap' }}>
-                        {item.date && <span style={{ padding: '1px 7px', borderRadius: 20, fontSize: 10, fontWeight: 700, background: cfg.bg, color: cfg.color }}>{fmtDate(item.date)}</span>}
+                        {item.date && <span style={{ padding: '1px 7px', borderRadius: 20, fontSize: 10, fontWeight: 700, background: cfg.bg, color: cfg.color }}>{item.dateLabel ?? fmtDate(item.date)}</span>}
                         {item.extra && <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 600 }}>{item.extra}</span>}
                       </div>
                     </div>

@@ -7,11 +7,40 @@ import { futureDateError } from '@/lib/validation';
 
 export async function GET(request: NextRequest) {
   const session = await getServerSession(authOptions);
-  if (!session || session.user.userGroup !== 1) {
+  if (!session) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   const pool = await getCompanyPool(session.user.companyCode);
+
+  // Self-service: an employee (My Asset / ESS Allocations tab) can only ever see assets
+  // allocated to themselves — ignores any emp_fkey/search/branch query params entirely rather
+  // than trusting client-supplied filters the way the admin branch below does.
+  //
+  // s_no/warranty fall back to the catalog (asset_management) the same way asset_name/model/
+  // brand already do: POST below snapshots them onto the allocation row at allocation time, but
+  // an allocation created before the catalog item had a serial number/warranty filled in is
+  // stuck with an empty snapshot forever otherwise — confirmed live against a real allocation
+  // whose catalog item has serial_no='1111' but whose own snapshot is ''.
+  if (session.user.userGroup !== 1) {
+    if (!session.user.empFkey) return NextResponse.json({ data: [], total: 0 });
+    const [rows] = await pool.execute<RowDataPacket[]>(
+      `SELECT a.allocate_pkey, a.emp_fkey, a.asset,
+              COALESCE(NULLIF(a.asset_name, ''), m.name) AS asset_name,
+              COALESCE(NULLIF(a.model, ''), m.model) AS model, COALESCE(NULLIF(a.brand, ''), m.brand) AS brand,
+              at.asset_type_name AS type, m.specifications, m.value AS asset_value,
+              COALESCE(NULLIF(a.s_no, ''), m.serial_no) AS s_no, COALESCE(NULLIF(a.warranty, ''), m.warranty) AS warranty,
+              a.allocated_date, a.retreived_date, a.status, a.asset_state, a.description
+       FROM asset_allocate a
+       LEFT JOIN asset_management m ON m.asset_pkey = a.asset
+       LEFT JOIN asset_types at ON at.asset_type_pkey = m.Type
+       WHERE a.active = '1' AND a.emp_fkey = ?
+       ORDER BY a.allocated_date DESC`,
+      [session.user.empFkey]
+    );
+    return NextResponse.json({ data: rows, total: rows.length });
+  }
+
   const { searchParams } = new URL(request.url);
   const search = searchParams.get('search') ?? '';
   const empFkey = searchParams.get('emp_fkey');
@@ -49,7 +78,8 @@ export async function GET(request: NextRequest) {
       `SELECT a.allocate_pkey, a.emp_fkey, e.first_name, e.last_name, e.emp_id,
               a.asset, COALESCE(NULLIF(a.asset_name, ''), m.name) AS asset_name,
               COALESCE(NULLIF(a.model, ''), m.model) AS model, COALESCE(NULLIF(a.brand, ''), m.brand) AS brand,
-              a.s_no, a.warranty, a.allocated_date, a.retreived_date, a.status,
+              COALESCE(NULLIF(a.s_no, ''), m.serial_no) AS s_no, COALESCE(NULLIF(a.warranty, ''), m.warranty) AS warranty,
+              a.allocated_date, a.retreived_date, a.status,
               a.asset_state, a.damaged_amout, a.description,
               a.official_mail, a.official_contact, a.crm_id, a.allocated_ofc_space
        FROM asset_allocate a

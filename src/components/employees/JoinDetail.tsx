@@ -6,6 +6,7 @@ import { useSetupRows } from '@/lib/setupOptions';
 import { Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { AvatarUpload } from '@/components/ui/AvatarUpload';
+import { SearchableSelect } from '@/components/ui/SearchableSelect';
 import { RepeatableRows } from '@/components/employees/RepeatableRows';
 import { DocumentUploadField } from '@/components/employees/DocumentUploadField';
 import {
@@ -46,6 +47,14 @@ const STEPS = [
   { key: 'bank', label: 'Bank', title: 'Bank Details', subtitle: 'Employee banking and payment information.', accent: 'var(--color-success)', accentSoft: 'var(--color-success-soft)' },
   { key: 'additional', label: 'Additional', title: 'Additional Details', subtitle: 'Documents, education, experience and family information.', accent: 'var(--color-highlight-dark)', accentSoft: 'var(--color-highlight-light)' },
 ] as const;
+
+// Matches lib/validation.ts's dobError (18-years-minimum) check — caps the calendar itself at
+// that same boundary instead of only rejecting an underage pick after submit.
+const MAX_DOB = (() => {
+  const d = new Date();
+  d.setFullYear(d.getFullYear() - 18);
+  return d.toISOString().slice(0, 10);
+})();
 
 const INPUT_CLASS = 'w-full px-3.5 py-2.5 border border-slate-200 rounded-xl text-sm text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/40 focus:border-[color:var(--color-primary)]/40 transition-colors duration-[180ms]';
 const ERROR_INPUT_CLASS = 'border-[color:var(--color-danger)] focus:ring-[color:var(--color-danger)]/25 focus:border-[color:var(--color-danger)]';
@@ -174,21 +183,60 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
 
   const pending = isCreate ? createJoin.isPending : savePersonal.isPending;
 
+  // Single source of truth for both live (on-type) and step-submit validation, so the two never
+  // drift apart — legacy's setup.ctp runs the same per-field regex on 'keyup blur', not just when
+  // Save & Continue is clicked (liveValidate()), which is what these fields were missing before.
+  const fieldValidators: Record<string, (v: string) => string> = {
+    first_name: (v) => v.trim() ? '' : 'First name is required',
+    date_of_birth: (v) => v ? (dobError(v) ?? '') : 'Date of birth is required',
+    mobile_no: (v) => mobileError(v) ?? '',
+    id_card: (v) => v ? (aadhaarError(v) ?? '') : 'Aadhaar / ID Card is required',
+    classification: (v) => v ? '' : 'Gender is required',
+    nationality_id: (v) => v ? '' : 'Nationality is required',
+    pincode: (v) => pincodeError(v) ?? '',
+    pan_no: (v) => panError(v) ?? '',
+    pf: (v) => pfNumberError(v) ?? '',
+    company_pf: (v) => uanError(v) ?? '',
+    esi: (v) => esiError(v) ?? '',
+    lwf_code: (v) => lwfError(v) ?? '',
+    account_no: (v) => accountNoError(v) ?? '',
+  };
+
+  function updateField(key: string, value: string) {
+    setForm((prev) => ({ ...prev, [key]: value }));
+    const validator = fieldValidators[key];
+    if (validator) setFieldErrors((prev) => ({ ...prev, [key]: validator(value) }));
+  }
+
   function f(key: string) {
     return {
       value: form[key] ?? '',
-      onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
-        setForm((prev) => ({ ...prev, [key]: e.target.value })),
+      onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => updateField(key, e.target.value),
     };
   }
 
+  // Matches legacy's toggleCountryField()/toggleDisabilityTypes(): unchecking the parent
+  // clears its dependent fields too, so a stale value can't get submitted once its own
+  // control is hidden or disabled again.
   function checkbox(key: string, label: string) {
     return (
       <label key={key} className="flex items-center gap-2 text-sm text-slate-600">
         <input
           type="checkbox"
           checked={form[key] === 'Y'}
-          onChange={(e) => setForm((prev) => ({ ...prev, [key]: e.target.checked ? 'Y' : 'N' }))}
+          onChange={(e) => {
+            const checked = e.target.checked;
+            setForm((prev) => {
+              const next = { ...prev, [key]: checked ? 'Y' : 'N' };
+              if (key === 'international_worker' && !checked) next.country_origin = '';
+              if (key === 'physical_handicap' && !checked) {
+                next.locomotive = 'N';
+                next.hearing = 'N';
+                next.visual = 'N';
+              }
+              return next;
+            });
+          }}
           className="accent-[color:var(--color-primary)]"
         />
         {label}
@@ -232,54 +280,30 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
     }, PAGE_TURN_MS);
   }
 
-  function validateStep0(): boolean {
-    const errors = {
-      first_name: form.first_name?.trim() ? '' : 'First name is required',
-      date_of_birth: form.date_of_birth
-        ? (dobError(form.date_of_birth) ?? '')
-        : 'Date of birth is required',
-      mobile_no: mobileError(form.mobile_no ?? '') ?? '',
-      id_card: form.id_card
-        ? (aadhaarError(form.id_card) ?? '')
-        : 'Aadhaar / ID Card is required',
-      classification: form.classification ? '' : 'Gender is required',
-      nationality_id: form.nationality_id ? '' : 'Nationality is required',
-      pincode: pincodeError(form.pincode ?? '') ?? '',
-    };
+  function validateFields(keys: string[]): boolean {
+    const errors = Object.fromEntries(keys.map((k) => [k, fieldValidators[k](form[k] ?? '')]));
     if (Object.values(errors).some(Boolean)) {
-      setFieldErrors(errors);
+      setFieldErrors((prev) => ({ ...prev, ...errors }));
       return false;
     }
-    setFieldErrors({});
+    setFieldErrors((prev) => {
+      const next = { ...prev };
+      keys.forEach((k) => delete next[k]);
+      return next;
+    });
     return true;
+  }
+
+  function validateStep0(): boolean {
+    return validateFields(['first_name', 'date_of_birth', 'mobile_no', 'id_card', 'classification', 'nationality_id', 'pincode']);
   }
 
   function validateStep1(): boolean {
-    const errors = {
-      pan_no: panError(form.pan_no ?? '') ?? '',
-      pf: pfNumberError(form.pf ?? '') ?? '',
-      company_pf: uanError(form.company_pf ?? '') ?? '',
-      esi: esiError(form.esi ?? '') ?? '',
-      lwf_code: lwfError(form.lwf_code ?? '') ?? '',
-    };
-    if (Object.values(errors).some(Boolean)) {
-      setFieldErrors(errors);
-      return false;
-    }
-    setFieldErrors({});
-    return true;
+    return validateFields(['pan_no', 'pf', 'company_pf', 'esi', 'lwf_code']);
   }
 
   function validateStep2(): boolean {
-    const errors = {
-      account_no: accountNoError(form.account_no ?? '') ?? '',
-    };
-    if (Object.values(errors).some(Boolean)) {
-      setFieldErrors(errors);
-      return false;
-    }
-    setFieldErrors({});
-    return true;
+    return validateFields(['account_no']);
   }
 
   function validateStep(idx: number): boolean {
@@ -372,7 +396,7 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
               <label className={LABEL_CLASS}>Date of Birth <span className="text-[color:var(--color-danger)]">*</span></label>
               <input
                 type="date"
-                max={new Date().toISOString().slice(0, 10)}
+                max={MAX_DOB}
                 className={cn(INPUT_CLASS, fieldErrors.date_of_birth && ERROR_INPUT_CLASS)}
                 {...f('date_of_birth')}
               />
@@ -380,12 +404,13 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
             </div>
             <div>
               <label className={LABEL_CLASS}>Gender <span className="text-[color:var(--color-danger)]">*</span></label>
-              <select className={cn(INPUT_CLASS, fieldErrors.classification && ERROR_INPUT_CLASS)} {...f('classification')}>
-                <option value="">Select gender</option>
-                <option value="male">Male</option>
-                <option value="female">Female</option>
-                <option value="others">Other</option>
-              </select>
+              <SearchableSelect
+                value={form.classification ?? ''}
+                onChange={(v) => updateField('classification', v)}
+                options={[{ value: 'male', label: 'Male' }, { value: 'female', label: 'Female' }, { value: 'others', label: 'Other' }]}
+                placeholder="Select gender"
+                buttonClassName={cn(INPUT_CLASS, fieldErrors.classification && ERROR_INPUT_CLASS)}
+              />
               <FieldError>{fieldErrors.classification}</FieldError>
             </div>
             <div>
@@ -413,37 +438,34 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
             </div>
             <div>
               <label className={LABEL_CLASS}>Blood Group</label>
-              <select className={INPUT_CLASS} {...f('blood')}>
-                <option value="">Select blood group</option>
-                {['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'].map((bg) => (
-                  <option key={bg} value={bg}>{bg}</option>
-                ))}
-              </select>
+              <SearchableSelect
+                value={form.blood ?? ''}
+                onChange={(v) => updateField('blood', v)}
+                options={['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'].map((bg) => ({ value: bg, label: bg }))}
+                placeholder="Select blood group"
+                buttonClassName={INPUT_CLASS}
+              />
             </div>
             <div>
               <label className={LABEL_CLASS}>Marital Status</label>
-              <select className={INPUT_CLASS} {...f('maritual_status')}>
-                <option value="">Select status</option>
-                <option value="Single">Single</option>
-                <option value="Married">Married</option>
-                <option value="Divorced">Divorced</option>
-                <option value="Widowed">Widowed</option>
-              </select>
+              <SearchableSelect
+                value={form.maritual_status ?? ''}
+                onChange={(v) => updateField('maritual_status', v)}
+                options={['Single', 'Married', 'Divorced', 'Widowed'].map((s) => ({ value: s, label: s }))}
+                placeholder="Select status"
+                buttonClassName={INPUT_CLASS}
+              />
             </div>
             <div>
               <label className={LABEL_CLASS}>Nationality <span className="text-[color:var(--color-danger)]">*</span></label>
-              <select className={cn(INPUT_CLASS, fieldErrors.nationality_id && ERROR_INPUT_CLASS)} {...f('nationality_id')}>
-                <option value="">Select nationality</option>
-                {nationalities.map((n) => <option key={n.id} value={n.id}>{n.country_name}</option>)}
-              </select>
+              <SearchableSelect
+                value={form.nationality_id ?? ''}
+                onChange={(v) => updateField('nationality_id', v)}
+                options={nationalities.map((n) => ({ value: String(n.id), label: n.country_name }))}
+                placeholder="Select nationality"
+                buttonClassName={cn(INPUT_CLASS, fieldErrors.nationality_id && ERROR_INPUT_CLASS)}
+              />
               <FieldError>{fieldErrors.nationality_id}</FieldError>
-            </div>
-            <div>
-              <label className={LABEL_CLASS}>Country of Origin</label>
-              <select className={INPUT_CLASS} {...f('country_origin')}>
-                <option value="">Select country</option>
-                {nationalities.map((n) => <option key={n.id} value={n.id}>{n.country_name}</option>)}
-              </select>
             </div>
             <div>
               <label className={LABEL_CLASS}>Guardian Name</label>
@@ -491,7 +513,7 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
                 maxLength={10}
                 className={cn(INPUT_CLASS, fieldErrors.pan_no && ERROR_INPUT_CLASS)}
                 {...f('pan_no')}
-                onChange={(e) => setForm((prev) => ({ ...prev, pan_no: e.target.value.toUpperCase() }))}
+                onChange={(e) => updateField('pan_no', e.target.value.toUpperCase())}
                 placeholder="ABCDE1234D"
               />
               <FieldError>{fieldErrors.pan_no}</FieldError>
@@ -519,7 +541,7 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
               <input maxLength={15} className={INPUT_CLASS} {...f('previous_member_id')} />
             </div>
             <div>
-              <label className={LABEL_CLASS}>ESIC Number</label>
+              <label className={LABEL_CLASS}>ESI Number</label>
               <input
                 maxLength={10}
                 className={cn(INPUT_CLASS, fieldErrors.esi && ERROR_INPUT_CLASS)}
@@ -537,7 +559,7 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
                 maxLength={15}
                 className={cn(INPUT_CLASS, fieldErrors.lwf_code && ERROR_INPUT_CLASS)}
                 {...f('lwf_code')}
-                onChange={(e) => setForm((prev) => ({ ...prev, lwf_code: e.target.value.toUpperCase() }))}
+                onChange={(e) => updateField('lwf_code', e.target.value.toUpperCase())}
               />
               <FieldError>{fieldErrors.lwf_code}</FieldError>
             </div>
@@ -546,14 +568,28 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
               <input maxLength={15} className={INPUT_CLASS} {...f('wps_code')} />
             </div>
           </div>
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mt-5">
-            {checkbox('eps', 'EPS Eligibility')}
-            {checkbox('international_worker', 'International Worker')}
+          <div className="flex items-center gap-6 mt-5 flex-wrap">
+            <div className="flex items-center gap-3">
+              {checkbox('international_worker', 'International Worker')}
+              <SearchableSelect
+                value={form.country_origin ?? ''}
+                onChange={(v) => updateField('country_origin', v)}
+                options={nationalities.map((n) => ({ value: String(n.id), label: n.country_name }))}
+                placeholder="Country of origin"
+                buttonClassName={cn(INPUT_CLASS, 'w-44 py-1.5 shrink-0')}
+                disabled={form.international_worker !== 'Y'}
+              />
+            </div>
             {checkbox('physical_handicap', 'Physical Handicap')}
-            {checkbox('locomotive', 'Locomotive Disability')}
-            {checkbox('hearing', 'Hearing Disability')}
-            {checkbox('visual', 'Visual Disability')}
+            {checkbox('eps', 'EPS Eligibility')}
           </div>
+          {form.physical_handicap === 'Y' && (
+            <div className="flex flex-wrap gap-4 mt-4 pl-1">
+              {checkbox('locomotive', 'Locomotive Disability')}
+              {checkbox('hearing', 'Hearing Disability')}
+              {checkbox('visual', 'Visual Disability')}
+            </div>
+          )}
         </div>
       );
     }

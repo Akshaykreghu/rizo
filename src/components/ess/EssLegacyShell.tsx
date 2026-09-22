@@ -24,6 +24,7 @@ const ALL_TABS = [
   // overflow → "More" dropdown
   { to: '/ess/requests', label: 'My Requests', emoji: '📋', gate: 'requests' },
   { to: '/ess/approvals', label: 'Approvals', emoji: '✅', gate: 'approvals' },
+  { to: '/ess/allocations', label: 'Allocations', emoji: '📦', gate: 'allocations' },
   { to: '/ess/reports', label: 'Reports', emoji: '📊', gate: 'reports' },
 ];
 

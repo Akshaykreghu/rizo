@@ -20,6 +20,7 @@ export function SearchableSelect({
   options,
   placeholder = 'Select',
   className,
+  buttonClassName,
   disabled,
 }: {
   value: string;
@@ -27,6 +28,10 @@ export function SearchableSelect({
   options: SearchableSelectOption[];
   placeholder?: string;
   className?: string;
+  // Overrides the trigger button's own padding/border/radius/focus-ring so it can be made to
+  // match a specific form's plain-input styling exactly (twMerge resolves the conflicting
+  // Tailwind utilities, so pass e.g. the same INPUT_CLASS used by that form's text inputs).
+  buttonClassName?: string;
   disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
@@ -67,6 +72,9 @@ export function SearchableSelect({
         className={cn(
           'w-full flex items-center justify-between gap-2 px-3 py-2 border border-gray-300 rounded-lg text-sm text-left bg-white',
           'focus:outline-none focus:ring-2 focus:ring-indigo-500',
+          buttonClassName,
+          // Always wins over buttonClassName (e.g. a form's own bg-white input styling) so a
+          // disabled trigger never silently loses its greyed-out look.
           disabled && 'bg-gray-100 cursor-not-allowed'
         )}
       >

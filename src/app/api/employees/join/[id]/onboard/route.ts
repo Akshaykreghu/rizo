@@ -62,18 +62,29 @@ export async function POST(
     }
   }
 
+  // emp_company_id is optional on this form — including it unconditionally with an undefined
+  // value (never sent at all, not even as '') crashes mysql2, which rejects undefined bind
+  // params outright; only check it when it was actually provided, same as emp_id below.
   const dupChecksPromises: Promise<[RowDataPacket[], unknown]>[] = [
-    pool.execute<RowDataPacket[]>('SELECT 1 FROM emp_proff WHERE emp_company_id = ?', [body.emp_company_id]),
     pool.execute<RowDataPacket[]>('SELECT 1 FROM user_credentials WHERE user_id = ?', [body.username]),
   ];
+  if (body.emp_company_id) {
+    dupChecksPromises.push(pool.execute<RowDataPacket[]>('SELECT 1 FROM emp_proff WHERE emp_company_id = ?', [body.emp_company_id]));
+  }
   if (body.emp_id) {
     dupChecksPromises.push(pool.execute<RowDataPacket[]>('SELECT 1 FROM emp_details WHERE emp_id = ?', [body.emp_id]));
   }
-  const [[dupCompanyId], [dupUsername], dupEmpIdResult] = await Promise.all(dupChecksPromises);
-  if (dupCompanyId.length) return NextResponse.json({ error: 'Employee Company ID already in use' }, { status: 409 });
+  const results = await Promise.all(dupChecksPromises);
+  const [dupUsername] = results[0];
   if (dupUsername.length) return NextResponse.json({ error: 'Username already in use' }, { status: 409 });
-  if (dupEmpIdResult && (dupEmpIdResult[0] as RowDataPacket[]).length) {
-    return NextResponse.json({ error: 'Employee ID already in use' }, { status: 409 });
+  let resultIdx = 1;
+  if (body.emp_company_id) {
+    const [dupCompanyId] = results[resultIdx++];
+    if (dupCompanyId.length) return NextResponse.json({ error: 'Employee Company ID already in use' }, { status: 409 });
+  }
+  if (body.emp_id) {
+    const [dupEmpId] = results[resultIdx++];
+    if (dupEmpId.length) return NextResponse.json({ error: 'Employee ID already in use' }, { status: 409 });
   }
 
   const connection = await pool.getConnection();
@@ -117,7 +128,7 @@ export async function POST(
           emp_branch, attr1, probation, notice_days, day_time_seq, HOLIDAY_GROUP_ID, LEAVEPOLICY_GROUP_ID, created_by)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        empPkey, body.joining_date ?? null, body.emp_company_id, body.emp_type ?? null,
+        empPkey, body.joining_date ?? null, body.emp_company_id ?? null, body.emp_type ?? null,
         body.designation ?? null, body.emp_dept ?? null, body.emp_grade ?? null,
         body.emp_branch ?? null, body.attr1 ?? null,
         body.probation ? Number(body.probation) : null,

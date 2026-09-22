@@ -5,6 +5,12 @@
    DESIGN TOKENS
 ══════════════════════════════════════════ */
 .ess-legacy {
+  /* Safety net so no single page's content (a too-wide table, a fixed-width row, etc.) can ever
+     make the whole page scroll sideways — components that legitimately need their own horizontal
+     scroll (.table-wrap and friends) keep it via their own nested overflow-x: auto, unaffected by
+     this being hidden at the root. */
+  overflow-x: hidden;
+
   /* Brand */
   --brand:           #1E516E;
   --brand-hover:     #174158;

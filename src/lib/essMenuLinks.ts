@@ -13,7 +13,14 @@
 export const ESS_MENU_LINK_MAP: Record<string, string> = {
   // Profile / personal
   employee: '/ess/about',
-  'documentmanager/documentmaster': '/ess/about',
+
+  // Allocations (assets + documents allocated to the employee by admin) — id 1283 "My Documents"
+  // (menu_url DocumentManager/documentMaster, matches legacy's document_master.ctp / the
+  // Document Upload library's employee-facing read view, NOT the profile's Personal/HR Documents
+  // section) and id 1284 "My Asset" (menu_url Asset/empview). Both land on the same page with a
+  // toggle between the two views; ?tab= picks which one is active on arrival.
+  'documentmanager/documentmaster': '/ess/allocations?tab=documents',
+  'asset/empview': '/ess/allocations?tab=assets',
 
   // Leave
   leaverequests: '/ess/requests',
@@ -83,7 +90,7 @@ export const TAB_MENU_GATES: Record<string, string[]> = {
   // Approvals — Team Leave Requests (emp_menu id 22).
   approvals: ['leaverequest/employeeleaves'],
   // Reports — any one of: My Shift Timings (24), Leave Details Report (28), SalarySlip Reports
-  // (30), My Loans (40), Tracking Reports (1155), My Asset (1284).
+  // (30), My Loans (40), Tracking Reports (1155).
   reports: [
     'empreport/shiftpolicyreport',
     'empreportnew/shiftpolicyreport',
@@ -93,6 +100,7 @@ export const TAB_MENU_GATES: Record<string, string[]> = {
     'employeeloan',
     'employeeloan/myloan',
     'trackingreports/hrreports',
-    'asset/empview',
   ],
+  // Allocations — My Documents (1283) or My Asset (1284).
+  allocations: ['documentmanager/documentmaster', 'asset/empview'],
 };
