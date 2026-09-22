@@ -12,6 +12,14 @@ import { EssPagination } from '@/components/ess/EssPagination';
 // page: same role-aware pending/history split and the same cancellation review step, so a team
 // leave request and its cancellation both surface here for whichever of authorizer/approver owns
 // the next action, exactly as they do for admin.
+//
+// Also ports RegularisationController::hierarchyindex()/listhierarchyregularization()/bulkupdate() —
+// legacy's hierarchy-approver queue for attendance regularisation requests, a genuinely separate
+// workflow from leave (single-stage approve/reject, not authorize-then-approve). Requests are
+// routed to a hierarchy head via employee_regularaization.approved_person, set from the requester's
+// emp_proff.attr1 at raise time; confirmed live in the dev DB (approved_person values match
+// emp_proff.attr1 for the same employees). Uses the same GET/decide/bulk-decide routes as the
+// admin-side /attendance/regularisation page, scoped server-side via ?scope=hierarchy.
 
 const BRAND = '#1E516E';
 
@@ -207,10 +215,114 @@ function CancellationModal({ row, action, onClose, onDone }: { row: LeaveRow; ac
   );
 }
 
+// ── REGULARISATION HIERARCHY QUEUE ─────────────────────────────────────────────
+interface RegRow {
+  id: number; att_date: string; direction: 'in' | 'out'; remarks: string | null; LOGTIME: string;
+  approved: 'P' | 'A' | 'R'; first_name: string; last_name: string; emp_id: string;
+}
+
+const REG_STATUS_STYLE: Record<RegRow['approved'], { bg: string; color: string }> = {
+  A: { bg: '#f0fdf4', color: '#166534' },
+  R: { bg: '#fef2f2', color: '#991b1b' },
+  P: { bg: '#fefce8', color: '#854d0e' },
+};
+const REG_STATUS_LABEL: Record<RegRow['approved'], string> = { A: 'Approved', R: 'Rejected', P: 'Pending' };
+
+function currentMonth() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function RegularisationApprovalsTab() {
+  const [rows, setRows] = useState<RegRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [busyId, setBusyId] = useState<number | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const month = currentMonth();
+
+  const load = useCallback(() => {
+    fetch(`/api/attendance/regularisation?month=${month}&scope=hierarchy&status=pending`)
+      .then((r) => (r.ok ? r.json() : { data: [] }))
+      .then((d) => setRows(d.data || []))
+      .catch(() => setRows([]))
+      .finally(() => setLoading(false));
+  }, [month]);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function decide(id: number, decision: 'approve' | 'reject') {
+    setBusyId(id);
+    setMessage(null);
+    try {
+      const res = await fetch(`/api/attendance/regularisation/${id}/decide`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ decision }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || 'Action failed');
+      load();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Action failed');
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  return (
+    <div style={{ background: 'var(--bg-card)', border: '1.5px solid var(--border)', borderRadius: 14, overflow: 'hidden' }}>
+      {message && <div style={{ padding: '10px 16px', fontSize: 12, color: '#dc2626', borderBottom: '1px solid var(--border)' }}>{message}</div>}
+      {loading ? (
+        <div style={{ padding: 48, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>Loading…</div>
+      ) : rows.length === 0 ? (
+        <div style={{ padding: 60, textAlign: 'center' }}>
+          <div style={{ fontSize: 40, marginBottom: 10 }}>✅</div>
+          <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>No pending regularisation requests — you&apos;re all caught up!</div>
+        </div>
+      ) : (
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr>
+                {['Employee', 'Date', 'Direction', 'Time', 'Remarks', 'Status'].map((h) => <th key={h} style={thS}>{h}</th>)}
+                <th style={{ ...thS, textAlign: 'center' }}>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={row.id}>
+                  <td style={tdS}>
+                    <div style={{ fontWeight: 700 }}>{row.first_name} {row.last_name}</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{row.emp_id}</div>
+                  </td>
+                  <td style={tdS}>{row.att_date}</td>
+                  <td style={{ ...tdS, textTransform: 'capitalize' }}>{row.direction}</td>
+                  <td style={tdS}>{row.LOGTIME}</td>
+                  <td style={{ ...tdS, color: 'var(--text-muted)' }}>{row.remarks || '—'}</td>
+                  <td style={tdS}>
+                    <span style={{ ...REG_STATUS_STYLE[row.approved], padding: '3px 10px', borderRadius: 12, fontSize: 11, fontWeight: 700, display: 'inline-block' }}>
+                      {REG_STATUS_LABEL[row.approved]}
+                    </span>
+                  </td>
+                  <td style={{ ...tdS, textAlign: 'center' }}>
+                    <div style={{ display: 'flex', gap: 6, justifyContent: 'center' }}>
+                      <button disabled={busyId === row.id} style={btnSm('#16a34a', '#fff')} onClick={() => decide(row.id, 'approve')}>Approve</button>
+                      <button disabled={busyId === row.id} style={btnSm('#dc2626', '#fff')} onClick={() => decide(row.id, 'reject')}>Reject</button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function EssApprovalsPage() {
   const { data: session } = useSession();
   const empId = session?.user.empFkey;
 
+  const [category, setCategory] = useState<'leave' | 'regularisation'>('leave');
   const [tab, setTab] = useState<'pending' | 'history'>('pending');
   const [rows, setRows] = useState<LeaveRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -253,6 +365,21 @@ export default function EssApprovalsPage() {
         </div>
       </div>
 
+      <div style={{ marginBottom: 14 }}>
+        <AppTabs
+          active={category}
+          onChange={(k) => setCategory(k as 'leave' | 'regularisation')}
+          tabs={[
+            { key: 'leave', label: 'Leave' },
+            { key: 'regularisation', label: 'Regularisation' },
+          ]}
+        />
+      </div>
+
+      {category === 'regularisation' ? (
+        <RegularisationApprovalsTab />
+      ) : (
+      <>
       <div style={{ marginBottom: 20 }}>
         <AppTabs
           active={tab}
@@ -326,6 +453,8 @@ export default function EssApprovalsPage() {
 
       {modal && <RemarkModal row={modal.row} action={modal.action} onClose={() => setModal(null)} onDone={() => { setModal(null); load(); }} />}
       {cancelModal && <CancellationModal row={cancelModal.row} action={cancelModal.action} onClose={() => setCancelModal(null)} onDone={() => { setCancelModal(null); load(); }} />}
+      </>
+      )}
     </div>
   );
 }
