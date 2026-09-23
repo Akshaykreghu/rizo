@@ -34,9 +34,9 @@ export async function POST(
   }
   const join = joinRows[0];
 
-  if (!body.username || !body.password) {
+  if (!body.password) {
     return NextResponse.json(
-      { error: 'Username and password are required' },
+      { error: 'Password is required' },
       { status: 400 }
     );
   }
@@ -65,9 +65,7 @@ export async function POST(
   // emp_company_id is optional on this form — including it unconditionally with an undefined
   // value (never sent at all, not even as '') crashes mysql2, which rejects undefined bind
   // params outright; only check it when it was actually provided, same as emp_id below.
-  const dupChecksPromises: Promise<[RowDataPacket[], unknown]>[] = [
-    pool.execute<RowDataPacket[]>('SELECT 1 FROM user_credentials WHERE user_id = ?', [body.username]),
-  ];
+  const dupChecksPromises: Promise<[RowDataPacket[], unknown]>[] = [];
   if (body.emp_company_id) {
     dupChecksPromises.push(pool.execute<RowDataPacket[]>('SELECT 1 FROM emp_proff WHERE emp_company_id = ?', [body.emp_company_id]));
   }
@@ -75,9 +73,7 @@ export async function POST(
     dupChecksPromises.push(pool.execute<RowDataPacket[]>('SELECT 1 FROM emp_details WHERE emp_id = ?', [body.emp_id]));
   }
   const results = await Promise.all(dupChecksPromises);
-  const [dupUsername] = results[0];
-  if (dupUsername.length) return NextResponse.json({ error: 'Username already in use' }, { status: 409 });
-  let resultIdx = 1;
+  let resultIdx = 0;
   if (body.emp_company_id) {
     const [dupCompanyId] = results[resultIdx++];
     if (dupCompanyId.length) return NextResponse.json({ error: 'Employee Company ID already in use' }, { status: 409 });
@@ -92,6 +88,19 @@ export async function POST(
     await connection.beginTransaction();
 
     const empId = body.emp_id || (await generateNextEmpId(connection));
+
+    // Login is no longer typed by the admin — auto-generate it from the company code + emp_id,
+    // matching the CompanyCode+digits convention tryEmployeeLogin (lib/auth.ts) parses a
+    // username back into (e.g. GRTL10024). Falls back to a numeric suffix on the rare collision.
+    let username = `${session.user.companyCode}${empId}`;
+    for (let suffix = 1; suffix <= 20; suffix++) {
+      const [existing] = await connection.execute<RowDataPacket[]>(
+        'SELECT 1 FROM user_credentials WHERE user_id = ?',
+        [username]
+      );
+      if (!existing.length) break;
+      username = `${session.user.companyCode}${empId}${suffix}`;
+    }
 
     const [empResult] = await connection.execute<ResultSetHeader>(
       `INSERT INTO emp_details
@@ -141,12 +150,16 @@ export async function POST(
     );
 
     const passwordHash = await bcrypt.hash(body.password, 12);
+    // Unlike legacy (which always inserts access_allowed='n' here, requiring a separate trip to
+    // Employee Access before this login works), this tab explicitly collects a Username and
+    // Initial Password from the admin — so the login it creates is enabled immediately rather
+    // than silently disabled.
     await connection.execute(
       `INSERT INTO user_credentials
          (emp_fkey, company_code, user_id, password, access_allowed, first_name, last_name, email,
           reset_login_flag, locked, incorrect_login_attempt, user_group)
-       VALUES (?, ?, ?, ?, 'n', ?, ?, ?, 'N', 0, 0, 1)`,
-      [empPkey, session.user.companyCode, body.username, passwordHash, join.first_name, join.last_name, join.email]
+       VALUES (?, ?, ?, ?, 'Y', ?, ?, ?, 'N', 0, 0, 1)`,
+      [empPkey, session.user.companyCode, username, passwordHash, join.first_name, join.last_name, join.email]
     );
 
     await connection.execute(
@@ -184,7 +197,7 @@ export async function POST(
     );
 
     await connection.commit();
-    return NextResponse.json({ emp_pkey: empPkey }, { status: 201 });
+    return NextResponse.json({ emp_pkey: empPkey, username }, { status: 201 });
   } catch (err) {
     await connection.rollback();
     throw err;

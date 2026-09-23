@@ -14,6 +14,7 @@ interface SlipItem {
   salary_amount: number | null;
   salary_rate: number | null;
   structure_det_value: number | null;
+  head_type: string | null;
 }
 interface SlipGroup {
   head_pkey: number | null;

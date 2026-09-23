@@ -199,14 +199,15 @@ export async function PUT(
       if (existingProff.length) {
         await connection.execute(
           `UPDATE emp_proff SET
-             joining_date = ?, emp_branch = ?, emp_dept = ?, designation = ?, emp_grade = ?,
-             emp_type = ?, attr1 = ?, probation = ?, day_time_seq = ?,
+             joining_date = ?, emp_company_id = ?, emp_branch = ?, emp_dept = ?, designation = ?, emp_grade = ?,
+             emp_type = ?, notice_days = ?, attr1 = ?, probation = ?, day_time_seq = ?,
              HOLIDAY_GROUP_ID = ?, LEAVEPOLICY_GROUP_ID = ?
            WHERE emp_fkey = ?`,
           [
-            nn(body.joining_date), nn(body.emp_branch), nn(body.emp_dept),
+            nn(body.joining_date), nn(body.emp_company_id), nn(body.emp_branch), nn(body.emp_dept),
             nn(body.designation), nn(body.emp_grade),
-            nn(body.emp_type), body.attr1 ? Number(body.attr1) : null,
+            nn(body.emp_type), body.notice_days ? Number(body.notice_days) : null,
+            body.attr1 ? Number(body.attr1) : null,
             body.probation ? Number(body.probation) : null,
             body.day_time_seq ? Number(body.day_time_seq) : null,
             body.holiday_group_id ? Number(body.holiday_group_id) : null,
@@ -217,11 +218,13 @@ export async function PUT(
       } else {
         await connection.execute(
           `INSERT INTO emp_proff
-             (emp_fkey, joining_date, emp_branch, emp_dept, designation, emp_grade, emp_type, attr1, probation, day_time_seq, HOLIDAY_GROUP_ID, LEAVEPOLICY_GROUP_ID)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             (emp_fkey, joining_date, emp_company_id, emp_branch, emp_dept, designation, emp_grade, emp_type, notice_days, attr1, probation, day_time_seq, HOLIDAY_GROUP_ID, LEAVEPOLICY_GROUP_ID)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
-            empPkey, nn(body.joining_date), nn(body.emp_branch), nn(body.emp_dept),
-            nn(body.designation), nn(body.emp_grade), nn(body.emp_type), body.attr1 ? Number(body.attr1) : null,
+            empPkey, nn(body.joining_date), nn(body.emp_company_id), nn(body.emp_branch), nn(body.emp_dept),
+            nn(body.designation), nn(body.emp_grade), nn(body.emp_type),
+            body.notice_days ? Number(body.notice_days) : null,
+            body.attr1 ? Number(body.attr1) : null,
             body.probation ? Number(body.probation) : null,
             body.day_time_seq ? Number(body.day_time_seq) : null,
             body.holiday_group_id ? Number(body.holiday_group_id) : null,

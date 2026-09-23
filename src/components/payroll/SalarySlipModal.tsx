@@ -11,6 +11,7 @@ interface SlipItem {
   salary_amount: number | null;
   salary_rate: number | null;
   structure_det_value: number | null;
+  head_type: string | null;
 }
 interface SlipGroup {
   head_pkey: number | null;
@@ -50,6 +51,17 @@ interface CompanyInfo {
 
 function groupTotal(group: SlipGroup) {
   return group.items.reduce((sum, i) => sum + (Number(i.salary_amount) || 0), 0);
+}
+
+// Mirrors legacy's showsalaryslip.ctp exactly: 'fixed'/'manually'/'limit' items always display
+// positive (abs) — a deduction's sign there is implied by the section it's listed under — but
+// formula-driven items (e.g. EPF/ESI computed as a % of Basic) show their true signed value,
+// negative for a deduction. Confirmed against a real slip: WWF (fixed) shows "50" while EPF/ESI
+// (formula) show "-1200"/"-75" even though all three are Deduction rows.
+function displayAmount(item: SlipItem) {
+  const raw = Number(item.salary_amount) || 0;
+  const ht = (item.head_type ?? '').toLowerCase();
+  return ht === 'fixed' || ht === 'manually' || ht === 'limit' ? Math.abs(raw) : raw;
 }
 
 // Mirrors legacy's View Slip button (showprocesspayrolltab.ctp / showapprovepayrolltab.ctp
@@ -128,15 +140,17 @@ export function SalarySlipModal({ payrollMasterPkey, onClose }: { payrollMasterP
                       {group.items.map((item, idx) => (
                         <tr key={idx} className="border-t border-slate-100">
                           <td className="py-1.5 text-[#0F172A]">{item.salary_head_item_desc}</td>
-                          <td className={`py-1.5 text-right ${item.head_operator === 'Deduction' ? 'text-[color:var(--color-danger)]' : 'text-[#0F172A]'}`}>
-                            {formatCurrency(Number(item.salary_amount) || 0)}
+                          <td className="py-1.5 text-right text-[#0F172A]">
+                            {formatCurrency(displayAmount(item))}
                           </td>
                         </tr>
                       ))}
-                      <tr className="border-t border-slate-200 font-medium">
-                        <td className="py-1.5 text-[#0F172A]">Subtotal</td>
-                        <td className="py-1.5 text-right text-[#0F172A]">{formatCurrency(groupTotal(group))}</td>
-                      </tr>
+                      {group.head_pkey === 1 && (
+                        <tr className="border-t border-slate-200 font-medium">
+                          <td className="py-1.5 text-[#0F172A]">Gross Salary</td>
+                          <td className="py-1.5 text-right text-[#0F172A]">{formatCurrency(groupTotal(group))}</td>
+                        </tr>
+                      )}
                     </tbody>
                   </table>
                 </div>
@@ -158,7 +172,7 @@ export function SalarySlipModal({ payrollMasterPkey, onClose }: { payrollMasterP
                           {group.items.map((item, idx) => (
                             <tr key={idx} className="border-t border-slate-100">
                               <td className="py-1.5 text-[#0F172A]">{item.salary_head_item_desc}</td>
-                              <td className="py-1.5 text-right text-[#0F172A]">{formatCurrency(Number(item.salary_amount) || 0)}</td>
+                              <td className="py-1.5 text-right text-[#0F172A]">{formatCurrency(displayAmount(item))}</td>
                             </tr>
                           ))}
                         </tbody>

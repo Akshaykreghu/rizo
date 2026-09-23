@@ -4,9 +4,10 @@ import { getCompanyPool } from '@/lib/db';
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket } from 'mysql2';
 
-// Mirrors PayrollController::showsalaryslip() — computed on-the-fly from emp_salary_slip's
-// currently-active rows (end_date_effective IS NULL), grouped by salary_heads.head_desc, split
-// into direct (visible payslip lines) and indirect (employer contributions, shown separately).
+// Mirrors SalarySlipReportsController::Reports() — the real self-service payslip screen (reads
+// emp_fkey from session, gated on action='Approved' exactly like pay-summary's own months filter)
+// — not PayrollController::showsalaryslip()'s admin quick-view modal, which groups differently.
+// The employee/statutory/bank fields below match reports.ctp's info panel field-for-field.
 export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -21,9 +22,13 @@ export async function GET(
     `SELECT pm.payroll_master_pkey, pm.emp_fkey, pm.emp_name, pm.branch_code, pm.month_year, pm.days_presant,
             pm.days_leave, pm.loss_of_pay, pm.gross_salary, pm.net_salary, pm.total_deduction,
             pm.action, pm.bank_details, pm.desig, pm.departments, pm.working_days, pm.holidays,
-            pm.week_off_days, ed.status AS emp_status
+            pm.week_off_days, ed.status AS emp_status,
+            ep.emp_company_id, ep.joining_date, ed.classification,
+            ed.company_pf, ed.esi, ed.pf AS uan_no,
+            ed.bank_name, ed.account_no, ed.ifsc_code, ed.branch_name AS bank_branch_name
      FROM payroll_master pm
      LEFT JOIN emp_details ed ON ed.emp_pkey = pm.emp_fkey
+     LEFT JOIN emp_proff ep ON ep.emp_fkey = pm.emp_fkey
      WHERE pm.payroll_master_pkey = ?`,
     [id]
   );
@@ -49,6 +54,7 @@ export async function GET(
     salary_amount: number | null;
     salary_rate: number | null;
     structure_det_value: number | null;
+    head_type: string | null;
   }
   type Group = { head_pkey: number | null; head_desc: string; items: SlipItem[] };
   const direct = new Map<number | string, Group>();
@@ -64,6 +70,7 @@ export async function GET(
       salary_amount: line.salary_amount,
       salary_rate: line.salary_rate,
       structure_det_value: line.structure_det_value,
+      head_type: line.head_type,
     });
   }
 

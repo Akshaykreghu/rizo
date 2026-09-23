@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Camera, Loader2 } from 'lucide-react';
+import { Camera, Loader2, Trash2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Avatar } from '@/components/ui/Avatar';
 
@@ -43,19 +43,35 @@ export function AvatarUpload({ name, imageUrl, onUploaded, className, avatarClas
   }
 
   return (
-    <label
-      className={cn('relative group/avatar block flex-shrink-0 rounded-full cursor-pointer', className)}
-      title="Change photo"
-    >
-      <Avatar name={name} imageUrl={imageUrl} className={cn('w-full h-full', avatarClassName)} />
-      <span className="absolute inset-0 rounded-full flex items-center justify-center bg-black/0 group-hover/avatar:bg-black/40 transition-colors duration-[180ms]">
-        {uploading ? (
-          <Loader2 className="w-4 h-4 text-white animate-spin" />
-        ) : (
-          <Camera className="w-4 h-4 text-white opacity-0 group-hover/avatar:opacity-100 transition-opacity duration-[180ms]" />
-        )}
-      </span>
-      <input type="file" accept="image/*" onChange={handleFile} disabled={uploading} className="hidden" />
-    </label>
+    <div className={cn('relative flex-shrink-0', className)}>
+      <label
+        className="relative group/avatar block w-full h-full rounded-full cursor-pointer"
+        title="Change photo"
+      >
+        <Avatar name={name} imageUrl={imageUrl} className={cn('w-full h-full', avatarClassName)} />
+        <span className="absolute inset-0 rounded-full flex items-center justify-center bg-black/0 group-hover/avatar:bg-black/40 transition-colors duration-[180ms]">
+          {uploading ? (
+            <Loader2 className="w-4 h-4 text-white animate-spin" />
+          ) : (
+            <Camera className="w-4 h-4 text-white opacity-0 group-hover/avatar:opacity-100 transition-opacity duration-[180ms]" />
+          )}
+        </span>
+        <input type="file" accept="image/*" onChange={handleFile} disabled={uploading} className="hidden" />
+      </label>
+      {imageUrl && !uploading && (
+        <button
+          type="button"
+          title="Remove photo"
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onUploaded('');
+          }}
+          className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-white border border-slate-200 text-slate-400 hover:text-[color:var(--color-danger)] hover:border-[color:var(--color-danger)] flex items-center justify-center shadow-sm transition-colors duration-150"
+        >
+          <Trash2 className="w-2.5 h-2.5" />
+        </button>
+      )}
+    </div>
   );
 }

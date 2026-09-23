@@ -8,5 +8,11 @@ export default function JoinDetailPage() {
   const id = params.id as string;
   const router = useRouter();
 
-  return <JoinDetail id={id} onBack={() => router.push('/employees/join')} />;
+  return (
+    <JoinDetail
+      id={id}
+      onBack={() => router.push('/employees/join')}
+      onOnboarded={(empPkey) => router.push(`/employees/${empPkey}`)}
+    />
+  );
 }

@@ -10,10 +10,23 @@ interface SlipItem {
   salary_head_item_desc: string | null;
   head_operator: string | null;
   salary_amount: number | null;
+  head_type: string | null;
 }
 interface SlipGroup {
+  head_pkey: number | null;
   head_desc: string;
   items: SlipItem[];
+}
+
+// Mirrors legacy's showsalaryslip.ctp exactly: 'fixed'/'manually'/'limit' items are always shown
+// positive (abs) — a deduction's sign there is implied by the section it's listed under — but
+// formula-driven items (e.g. EPF/ESI computed as a % of Basic) show their true signed value,
+// which is negative for a deduction. Confirmed against a real slip: WWF (fixed) shows "50", while
+// EPF/ESI (formula) show "-1200"/"-75" even though all three are Deduction rows.
+function displayAmount(item: SlipItem): number {
+  const raw = Number(item.salary_amount) || 0;
+  const ht = (item.head_type ?? '').toLowerCase();
+  return ht === 'fixed' || ht === 'manually' || ht === 'limit' ? Math.abs(raw) : raw;
 }
 interface SlipHeader {
   emp_name: string;
@@ -79,28 +92,34 @@ export function generatePayslipPdf(
   // @ts-expect-error jspdf-autotable augments doc with lastAutoTable at runtime
   y = doc.lastAutoTable.finalY + 20;
 
-  const earningsRows: (string | number)[][] = [];
-  let totalEarnings = 0;
-  let totalDeductions = 0;
+  // One table per salary-head category (e.g. "Monthly Salary Components", "Statutory
+  // Deductions"), matching legacy's per-fieldset layout — not one flat Earnings/Deductions table.
+  // Only the direct-earnings group (head_pkey 1) gets an inline "Gross Salary" subtotal right
+  // after it, exactly where legacy inserts it; no other group gets one.
   for (const group of direct) {
-    for (const item of group.items) {
-      const amt = Number(item.salary_amount) || 0;
-      if (item.head_operator === 'Deduction') totalDeductions += amt; else totalEarnings += amt;
-      earningsRows.push([group.head_desc, item.salary_head_item_desc ?? '', item.head_operator ?? '', formatCurrency(amt)]);
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'bold');
+    doc.text(group.head_desc || 'Other', 40, y);
+    y += 8;
+    autoTable(doc, {
+      startY: y,
+      head: [['Item', 'Salary Amount']],
+      body: group.items.map((item) => [item.salary_head_item_desc?.trim() ?? '', formatCurrency(displayAmount(item))]),
+      styles: { fontSize: 9, cellPadding: 4 },
+      headStyles: { fillColor: [79, 70, 229] },
+    });
+    // @ts-expect-error jspdf-autotable augments doc with lastAutoTable at runtime
+    y = doc.lastAutoTable.finalY + 8;
+    if (group.head_pkey === 1) {
+      const grossSalary = group.items.reduce((s, it) => s + (Number(it.salary_amount) || 0), 0);
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'bold');
+      doc.text(`Gross Salary: ${formatCurrency(grossSalary)}`, 40, y);
+      y += 16;
+    } else {
+      y += 8;
     }
   }
-
-  autoTable(doc, {
-    startY: y,
-    head: [['Category', 'Component', 'Type', 'Amount']],
-    body: earningsRows,
-    styles: { fontSize: 9, cellPadding: 4 },
-    headStyles: { fillColor: [79, 70, 229] },
-    foot: [['', '', 'Total Earnings', formatCurrency(totalEarnings)], ['', '', 'Total Deductions', formatCurrency(totalDeductions)]],
-    footStyles: { fontStyle: 'bold' },
-  });
-  // @ts-expect-error jspdf-autotable augments doc with lastAutoTable at runtime
-  y = doc.lastAutoTable.finalY + 15;
 
   doc.setFontSize(12);
   doc.setFont('helvetica', 'bold');
@@ -111,7 +130,7 @@ export function generatePayslipPdf(
     const indirectRows: (string | number)[][] = [];
     for (const group of indirect) {
       for (const item of group.items) {
-        indirectRows.push([group.head_desc, item.salary_head_item_desc ?? '', formatCurrency(Number(item.salary_amount) || 0)]);
+        indirectRows.push([group.head_desc, item.salary_head_item_desc ?? '', formatCurrency(displayAmount(item))]);
       }
     }
     doc.setFontSize(10);

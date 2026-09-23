@@ -38,12 +38,16 @@ export async function GET(
   );
   if (!emp) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
+  // emp_ctc_transaction (not emp_ctc_upload, an insert log of every upload event) is the
+  // employee's current CTC record everywhere else in this codebase — advances.ts, increments.ts,
+  // bulk-policies/salary and variable-upload/template all key off end_date_effective IS NULL the
+  // same way. It has no emp_monthly_ctc column at all (only emp_anual_ctc), so monthly is always
+  // derived by /12 here — there's no separate stored monthly figure to prefer.
   const [[ctc]] = await pool.execute<RowDataPacket[]>(
-    `SELECT emp_anual_ctc, emp_monthly_ctc FROM emp_ctc_upload
-     WHERE emp_fkey = ? AND status = 1 ORDER BY emp_ctc_upload_pkey DESC LIMIT 1`,
+    `SELECT emp_anual_ctc FROM emp_ctc_transaction WHERE emp_fkey = ? AND end_date_effective IS NULL`,
     [empPkey]
   );
-  const monthlyCtc = ctc?.emp_monthly_ctc ? Number(ctc.emp_monthly_ctc) : Math.round(Number(ctc?.emp_anual_ctc ?? 0) / 12);
+  const monthlyCtc = Math.round(Number(ctc?.emp_anual_ctc ?? 0) / 12);
 
   const [finYearRows] = await pool.execute<RowDataPacket[]>(
     `SELECT DISTINCT Fin_year_seq AS id, fin_year, start_month, end_month
@@ -81,8 +85,12 @@ export async function GET(
     [empPkey, ...allFYMonths]
   );
 
+  // Only 'Approved' counts as visible to the employee — 'Processed'/'Verified' are earlier,
+  // still-editable stages of the same admin workflow (see /api/payroll/route.ts's own
+  // processed vs. approved split and /api/payroll/approve/route.ts, which is the only thing
+  // that ever sets action='Approved'); legacy's own salary-total queries filter the same way.
   const months = payrollRows
-    .filter((r) => r.action === 'Processed' || r.action === 'Approved' || r.action === 'Verified')
+    .filter((r) => r.action === 'Approved')
     .map((r) => ({
       month: r.month_year, payroll_master_id: r.payroll_master_pkey,
       gross_salary: Number(r.gross_salary ?? 0), net_salary: Number(r.net_salary ?? 0),

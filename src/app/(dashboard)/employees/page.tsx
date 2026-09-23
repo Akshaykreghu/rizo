@@ -216,7 +216,7 @@ export default function EmployeesPage({
         <div className="flex items-center justify-between mb-6">
           <h1 className="font-heading text-2xl font-bold text-[#0F172A] tracking-tight">Employees</h1>
           <button
-            onClick={() => router.push('/employees/new')}
+            onClick={() => router.push('/employees/join/new')}
             className="flex items-center gap-2 bg-[color:var(--color-primary)] hover:scale-[1.03] text-white px-4 py-2.5 rounded-xl text-sm font-medium shadow-lg shadow-[color:var(--color-primary)]/20 transition-all duration-[180ms]"
           >
             <Plus className="w-4 h-4" />

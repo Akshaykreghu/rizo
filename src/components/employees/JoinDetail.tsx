@@ -2,13 +2,16 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useSetupRows } from '@/lib/setupOptions';
-import { Check } from 'lucide-react';
+import { useSetupOptions, useSetupRows } from '@/lib/setupOptions';
+import { Check, GraduationCap, History, Users, FileText } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { AvatarUpload } from '@/components/ui/AvatarUpload';
 import { SearchableSelect } from '@/components/ui/SearchableSelect';
+import { CollapsibleSection, SectionHeading } from '@/components/ui/CollapsibleSection';
 import { RepeatableRows } from '@/components/employees/RepeatableRows';
 import { DocumentUploadField } from '@/components/employees/DocumentUploadField';
+import { EmployeeSearch } from '@/components/employees/EmployeeSearch';
+import { EMP_TYPES } from '@/lib/employeeOptions';
 import {
   dobError, mobileError, aadhaarError, panError, esiError, uanError, lwfError,
   accountNoError, pfNumberError, pincodeError,
@@ -28,6 +31,10 @@ const DATE_KEYS = new Set(['date_of_birth']);
 
 const DOCUMENT_TYPES = ['Aadhaar', 'PAN', 'Passport', 'Driving License', 'Voter ID', 'Educational Certificate', 'Offer Letter', 'Relieving Letter', 'Other'];
 
+const PKEY_FIELD: Record<'documents' | 'education' | 'experience' | 'family', string> = {
+  documents: 'emp_doc_pkey', education: 'education_pkey', experience: 'experience_pkey', family: 'emp_family_pkey',
+};
+
 const PAGE_TURN_MS = 620;
 
 // Seed for "New Join" (create) mode — the full set of columns POST /api/employees/join
@@ -41,12 +48,25 @@ const EMPTY_FORM: Record<string, string> = {
   hearing: 'N', visual: 'N', physical_handicap: 'N', wps_code: '', lwf_code: '', profile_image_url: '',
 };
 
+// Seed for the "Onboarding" tab — a separate state slice from `form` above since it's saved
+// through a different endpoint (POST .../onboard, a one-time promotion) with different
+// semantics than the emp_join draft PUT. Matches the former OnboardForm's EMPTY_FORM.
+const EMPTY_ONBOARD_FORM = {
+  emp_company_id: '', password: '',
+  joining_date: '', emp_branch: '', emp_dept: '', designation: '', emp_grade: '',
+  emp_type: '', attr1: '', probation: '', notice_days: '',
+  day_time_seq: '', holiday_group_id: '', leavepolicy_group_id: '',
+};
+
+// Three tabs matching the legacy Employee Join screen (setup.ctp Tab1+2 + onboarding.ctp
+// Tab3) and the same grouping used by the Employee Details port.
 const STEPS = [
-  { key: 'personal', label: 'Personal', title: 'Personal Details', subtitle: 'Basic personal information about the employee.', accent: 'var(--color-primary)', accentSoft: 'var(--color-primary-soft)' },
-  { key: 'statutory', label: 'Statutory', title: 'Statutory Details', subtitle: 'PF, ESI, tax and compliance information.', accent: 'var(--color-accent)', accentSoft: 'var(--color-accent-soft)' },
-  { key: 'bank', label: 'Bank', title: 'Bank Details', subtitle: 'Employee banking and payment information.', accent: 'var(--color-success)', accentSoft: 'var(--color-success-soft)' },
-  { key: 'additional', label: 'Additional', title: 'Additional Details', subtitle: 'Documents, education, experience and family information.', accent: 'var(--color-highlight-dark)', accentSoft: 'var(--color-highlight-light)' },
+  { key: 'personal-info', label: 'Personal Info', title: 'Personal Info', subtitle: 'Personal, statutory and bank details.', accent: 'var(--color-primary)', accentSoft: 'var(--color-primary-soft)' },
+  { key: 'other-details', label: 'Other Details', title: 'Other Details', subtitle: 'Documents, education, experience and family information.', accent: 'var(--color-accent)', accentSoft: 'var(--color-accent-soft)' },
+  { key: 'onboarding', label: 'Onboarding', title: 'Onboarding', subtitle: 'Login access, company information and policies & rules.', accent: 'var(--color-success)', accentSoft: 'var(--color-success-soft)' },
 ] as const;
+
+const GATED_MESSAGE = 'Save the previous step first — this tab is available once the record exists.';
 
 // Matches lib/validation.ts's dobError (18-years-minimum) check — caps the calendar itself at
 // that same boundary instead of only rejecting an underage pick after submit.
@@ -77,13 +97,21 @@ interface JoinDetailProps {
   showBackLink?: boolean;
   /** Reports whether there are unsaved changes, so a host modal can guard against closing. */
   onDirtyChange?: (dirty: boolean) => void;
-  /** Called once the final step has been saved successfully. Defaults to onBack. */
-  onFinished?: () => void;
   /** Create mode only: called with the new record's id after step 1 is saved. */
   onCreated?: (empJoinPkey: number) => void;
+  /** Called with the new employee's emp_pkey once the Onboarding tab completes the real
+   *  promotion (emp_join -> emp_details/emp_proff/user_credentials). This is the wizard's
+   *  only "done" state — there's no separate "finished without onboarding" outcome. */
+  onOnboarded?: (empPkey: number) => void;
+  /** Opens the wizard on a given tab index instead of 0 — used by "Continue Onboarding". */
+  initialStep?: number;
+  /** False hides the Onboarding tab entirely, capping the wizard at Other Details — used for
+   *  "New Join", where creating the login is a separate, later action (via "Continue Onboarding"
+   *  from the Employee Join hub) rather than part of the initial create flow. Default true. */
+  includeOnboarding?: boolean;
 }
 
-export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onFinished, onCreated }: JoinDetailProps) {
+export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onCreated, onOnboarded, initialStep, includeOnboarding = true }: JoinDetailProps) {
   const queryClient = useQueryClient();
   const [createdId, setCreatedId] = useState<number | null>(null);
   const effectiveId = id ?? (createdId != null ? String(createdId) : undefined);
@@ -91,9 +119,11 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
 
   const [form, setForm] = useState<Record<string, string>>(() => (id ? {} : { ...EMPTY_FORM }));
   const [savedSnapshot, setSavedSnapshot] = useState(() => (id ? '' : JSON.stringify({ ...EMPTY_FORM })));
+  const [onboardForm, setOnboardForm] = useState({ ...EMPTY_ONBOARD_FORM });
+  const [onboardFieldErrors, setOnboardFieldErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState('');
   const [docFile, setDocFile] = useState('');
-  const [step, setStep] = useState(0);
+  const [step, setStep] = useState(initialStep ?? 0);
   const [completed, setCompleted] = useState<Set<number>>(new Set());
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [transitioning, setTransitioning] = useState<{ from: number; to: number; direction: 'forward' | 'back' } | null>(null);
@@ -125,6 +155,14 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
   });
 
   const { data: nationalities = [] } = useSetupRows<NationalityOption>('setup/nationalities');
+  const { data: branches = [] } = useSetupOptions('setup/branches', 'branch_code', 'branch_name');
+  const { data: departments = [] } = useSetupOptions('setup/departments', 'dept_code', 'dept_name');
+  const { data: designations = [] } = useSetupOptions('setup/designations', 'desig_code', 'desig_name');
+  const { data: grades = [] } = useSetupOptions('setup/grades', 'grade_code', 'grade_name');
+  const { data: noticePeriods = [] } = useSetupOptions('setup/notice-periods', 'notice_days', 'description');
+  const { data: shifts = [] } = useSetupOptions('setup/shifts', 'day_time_seq', 'day_time_desc');
+  const { data: holidayGroups = [] } = useSetupOptions('setup/holiday-groups', 'HOLIDAY_GROUP_ID', 'HOLIDAY_GROUP_NAME');
+  const { data: leavePolicyGroups = [] } = useSetupOptions('setup/leavepolicy-groups', 'LEAVEPOLICY_GROUP_ID', 'LEAVEPOLICY_GROUP_NAME');
 
   // Switching to a different existing record (host changed `id`) should allow a fresh seed;
   // the create -> edit transition of our own new record should not.
@@ -181,7 +219,24 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['employees/join'] }),
   });
 
-  const pending = isCreate ? createJoin.isPending : savePersonal.isPending;
+  // The Onboarding tab's "Done" completes the real promotion (emp_join -> emp_details/
+  // emp_proff/user_credentials) via the existing, unchanged POST .../onboard route — a
+  // fundamentally different action from the draft PUT the other two tabs use.
+  const onboardMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`/api/employees/join/${effectiveId}/onboard`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(onboardForm),
+      });
+      if (!res.ok) throw new Error((await res.json()).error ?? 'Failed to onboard employee');
+      return res.json() as Promise<{ emp_pkey: number }>;
+    },
+  });
+
+  const steps = includeOnboarding ? STEPS : STEPS.slice(0, 2);
+  const isOnboardingStep = includeOnboarding && step === STEPS.length - 1;
+  const pending = isOnboardingStep ? onboardMutation.isPending : (isCreate ? createJoin.isPending : savePersonal.isPending);
 
   // Single source of truth for both live (on-type) and step-submit validation, so the two never
   // drift apart — legacy's setup.ctp runs the same per-field regex on 'keyup blur', not just when
@@ -212,6 +267,20 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
     return {
       value: form[key] ?? '',
       onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => updateField(key, e.target.value),
+    };
+  }
+
+  function updateOnboardField(key: keyof typeof EMPTY_ONBOARD_FORM, value: string) {
+    setOnboardForm((prev) => ({ ...prev, [key]: value }));
+    if (key === 'password') {
+      setOnboardFieldErrors((prev) => ({ ...prev, [key]: value.trim() ? '' : prev[key] }));
+    }
+  }
+
+  function fOnboard(key: keyof typeof EMPTY_ONBOARD_FORM) {
+    return {
+      value: onboardForm[key],
+      onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => updateOnboardField(key, e.target.value),
     };
   }
 
@@ -247,21 +316,34 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
   function addChild(type: 'documents' | 'education' | 'experience' | 'family') {
     return async (values: Record<string, string>) => {
       if (!effectiveId) return;
-      await fetch(`/api/employees/join/${effectiveId}/${type}`, {
+      const res = await fetch(`/api/employees/join/${effectiveId}/${type}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(type === 'documents' ? { ...values, files: docFile } : values),
       });
       if (type === 'documents') setDocFile('');
-      queryClient.invalidateQueries({ queryKey: ['employees/join', effectiveId] });
+      if (!res.ok) return;
+      const created = await res.json() as Record<string, number>;
+      // Patch the cache directly rather than invalidate/refetch — right after "New Join" creates
+      // the record, the query's very first fetch for this effectiveId can still be in flight when
+      // a row is added, and a refetch just dedupes against that in-flight (already-stale) request,
+      // so the newly-added row silently didn't show until the user left and came back. The POST
+      // response already has everything needed to build the row locally, with no race possible.
+      queryClient.setQueryData<JoinDetailData>(['employees/join', effectiveId], (old) =>
+        old ? { ...old, [type]: [...old[type], { ...values, ...created }] } : old
+      );
     };
   }
 
   function removeChild(type: 'documents' | 'education' | 'experience' | 'family') {
     return async (rowId: number) => {
       if (!effectiveId) return;
-      await fetch(`/api/employees/join/${effectiveId}/${type}/${rowId}`, { method: 'DELETE' });
-      queryClient.invalidateQueries({ queryKey: ['employees/join', effectiveId] });
+      const res = await fetch(`/api/employees/join/${effectiveId}/${type}/${rowId}`, { method: 'DELETE' });
+      if (!res.ok) return;
+      const pkeyField = PKEY_FIELD[type];
+      queryClient.setQueryData<JoinDetailData>(['employees/join', effectiveId], (old) =>
+        old ? { ...old, [type]: old[type].filter((r) => Number(r[pkeyField]) !== rowId) } : old
+      );
     };
   }
 
@@ -294,22 +376,23 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
     return true;
   }
 
-  function validateStep0(): boolean {
-    return validateFields(['first_name', 'date_of_birth', 'mobile_no', 'id_card', 'classification', 'nationality_id', 'pincode']);
+  function validatePersonalInfoStep(): boolean {
+    return validateFields([
+      'first_name', 'date_of_birth', 'mobile_no', 'id_card', 'classification', 'nationality_id', 'pincode',
+      'pan_no', 'pf', 'company_pf', 'esi', 'lwf_code', 'account_no',
+    ]);
   }
 
-  function validateStep1(): boolean {
-    return validateFields(['pan_no', 'pf', 'company_pf', 'esi', 'lwf_code']);
-  }
-
-  function validateStep2(): boolean {
-    return validateFields(['account_no']);
+  function validateOnboardingStep(): boolean {
+    const errors = {
+      password: onboardForm.password.trim() ? '' : 'Password is required',
+    };
+    setOnboardFieldErrors(errors);
+    return !Object.values(errors).some(Boolean);
   }
 
   function validateStep(idx: number): boolean {
-    if (idx === 0) return validateStep0();
-    if (idx === 1) return validateStep1();
-    if (idx === 2) return validateStep2();
+    if (idx === 0) return validatePersonalInfoStep();
     return true;
   }
 
@@ -337,12 +420,28 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
 
   async function saveAndContinue() {
     if (!validateStep(step)) return;
-    if (await persist() && step < STEPS.length - 1) goToStep(step + 1);
+    if (await persist() && step < steps.length - 1) goToStep(step + 1);
   }
 
+  // The Onboarding tab is the wizard's only "done" state — completing it promotes the draft
+  // into a real employee (see onboardMutation above), it doesn't just save the draft.
   async function finish() {
-    if (!validateStep(step)) return;
-    if (await persist()) (onFinished ?? onBack)();
+    if (!validateOnboardingStep()) return;
+    setFormError('');
+    try {
+      const { emp_pkey } = await onboardMutation.mutateAsync();
+      onOnboarded?.(emp_pkey);
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  // Reached when Other Details is the last VISIBLE step (includeOnboarding=false, e.g. "New
+  // Join") — everything is already saved (persist() below, plus each Other Details row already
+  // saves itself on add), so this just confirms the save and leaves the wizard; onboarding is a
+  // separate, later action via "Continue Onboarding" on the Employee Join hub.
+  async function finishWithoutOnboarding() {
+    if (await persist()) onBack();
   }
 
   function FieldError({ children }: { children?: string }) {
@@ -367,7 +466,7 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
   }
 
   const isFirst = step === 0;
-  const isLast = step === STEPS.length - 1;
+  const isLast = step === steps.length - 1;
   const embedded = !showBackLink;
   const activeStepForUI = transitioning ? transitioning.to : step;
 
@@ -381,122 +480,239 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
   function renderStepFields(idx: number) {
     if (idx === 0) {
       return (
-        <div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-5">
-            <div>
-              <label className={LABEL_CLASS}>First Name <span className="text-[color:var(--color-danger)]">*</span></label>
-              <input className={cn(INPUT_CLASS, fieldErrors.first_name && ERROR_INPUT_CLASS)} {...f('first_name')} />
-              <FieldError>{fieldErrors.first_name}</FieldError>
+        <div className="space-y-8">
+          <div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-5">
+              <div>
+                <label className={LABEL_CLASS}>First Name <span className="text-[color:var(--color-danger)]">*</span></label>
+                <input className={cn(INPUT_CLASS, fieldErrors.first_name && ERROR_INPUT_CLASS)} {...f('first_name')} />
+                <FieldError>{fieldErrors.first_name}</FieldError>
+              </div>
+              <div>
+                <label className={LABEL_CLASS}>Last Name</label>
+                <input className={INPUT_CLASS} {...f('last_name')} />
+              </div>
+              <div>
+                <label className={LABEL_CLASS}>Date of Birth <span className="text-[color:var(--color-danger)]">*</span></label>
+                <input
+                  type="date"
+                  max={MAX_DOB}
+                  className={cn(INPUT_CLASS, fieldErrors.date_of_birth && ERROR_INPUT_CLASS)}
+                  {...f('date_of_birth')}
+                />
+                <FieldError>{fieldErrors.date_of_birth}</FieldError>
+              </div>
+              <div>
+                <label className={LABEL_CLASS}>Gender <span className="text-[color:var(--color-danger)]">*</span></label>
+                <SearchableSelect
+                  value={form.classification ?? ''}
+                  onChange={(v) => updateField('classification', v)}
+                  options={[{ value: 'male', label: 'Male' }, { value: 'female', label: 'Female' }, { value: 'others', label: 'Other' }]}
+                  placeholder="Select gender"
+                  buttonClassName={cn(INPUT_CLASS, fieldErrors.classification && ERROR_INPUT_CLASS)}
+                />
+                <FieldError>{fieldErrors.classification}</FieldError>
+              </div>
+              <div>
+                <label className={LABEL_CLASS}>Mobile</label>
+                <input
+                  type="tel"
+                  maxLength={10}
+                  className={cn(INPUT_CLASS, fieldErrors.mobile_no && ERROR_INPUT_CLASS)}
+                  {...f('mobile_no')}
+                />
+                <FieldError>{fieldErrors.mobile_no}</FieldError>
+              </div>
+              <div>
+                <label className={LABEL_CLASS}>Email</label>
+                <input type="email" className={INPUT_CLASS} {...f('email')} />
+              </div>
+              <div>
+                <label className={LABEL_CLASS}>Aadhaar / ID Card <span className="text-[color:var(--color-danger)]">*</span></label>
+                <input
+                  maxLength={12}
+                  className={cn(INPUT_CLASS, fieldErrors.id_card && ERROR_INPUT_CLASS)}
+                  {...f('id_card')}
+                />
+                <FieldError>{fieldErrors.id_card}</FieldError>
+              </div>
+              <div>
+                <label className={LABEL_CLASS}>Blood Group</label>
+                <SearchableSelect
+                  value={form.blood ?? ''}
+                  onChange={(v) => updateField('blood', v)}
+                  options={['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'].map((bg) => ({ value: bg, label: bg }))}
+                  placeholder="Select blood group"
+                  buttonClassName={INPUT_CLASS}
+                />
+              </div>
+              <div>
+                <label className={LABEL_CLASS}>Marital Status</label>
+                <SearchableSelect
+                  value={form.maritual_status ?? ''}
+                  onChange={(v) => updateField('maritual_status', v)}
+                  options={['Single', 'Married', 'Divorced', 'Widowed'].map((s) => ({ value: s, label: s }))}
+                  placeholder="Select status"
+                  buttonClassName={INPUT_CLASS}
+                />
+              </div>
+              <div>
+                <label className={LABEL_CLASS}>Nationality <span className="text-[color:var(--color-danger)]">*</span></label>
+                <SearchableSelect
+                  value={form.nationality_id ?? ''}
+                  onChange={(v) => updateField('nationality_id', v)}
+                  options={nationalities.map((n) => ({ value: String(n.id), label: n.country_name }))}
+                  placeholder="Select nationality"
+                  buttonClassName={cn(INPUT_CLASS, fieldErrors.nationality_id && ERROR_INPUT_CLASS)}
+                />
+                <FieldError>{fieldErrors.nationality_id}</FieldError>
+              </div>
+              <div>
+                <label className={LABEL_CLASS}>Guardian Name</label>
+                <input className={INPUT_CLASS} {...f('guradian')} />
+              </div>
+              <div>
+                <label className={LABEL_CLASS}>Relation to Guardian</label>
+                <input className={INPUT_CLASS} {...f('relation_guardian')} />
+              </div>
             </div>
-            <div>
-              <label className={LABEL_CLASS}>Last Name</label>
-              <input className={INPUT_CLASS} {...f('last_name')} />
+            <div className="mt-5">
+              <label className={LABEL_CLASS}>Address</label>
+              <textarea className={INPUT_CLASS} rows={2} value={form.address ?? ''} onChange={(e) => setForm((p) => ({ ...p, address: e.target.value }))} />
             </div>
-            <div>
-              <label className={LABEL_CLASS}>Date of Birth <span className="text-[color:var(--color-danger)]">*</span></label>
-              <input
-                type="date"
-                max={MAX_DOB}
-                className={cn(INPUT_CLASS, fieldErrors.date_of_birth && ERROR_INPUT_CLASS)}
-                {...f('date_of_birth')}
-              />
-              <FieldError>{fieldErrors.date_of_birth}</FieldError>
-            </div>
-            <div>
-              <label className={LABEL_CLASS}>Gender <span className="text-[color:var(--color-danger)]">*</span></label>
-              <SearchableSelect
-                value={form.classification ?? ''}
-                onChange={(v) => updateField('classification', v)}
-                options={[{ value: 'male', label: 'Male' }, { value: 'female', label: 'Female' }, { value: 'others', label: 'Other' }]}
-                placeholder="Select gender"
-                buttonClassName={cn(INPUT_CLASS, fieldErrors.classification && ERROR_INPUT_CLASS)}
-              />
-              <FieldError>{fieldErrors.classification}</FieldError>
-            </div>
-            <div>
-              <label className={LABEL_CLASS}>Mobile</label>
-              <input
-                type="tel"
-                maxLength={10}
-                className={cn(INPUT_CLASS, fieldErrors.mobile_no && ERROR_INPUT_CLASS)}
-                {...f('mobile_no')}
-              />
-              <FieldError>{fieldErrors.mobile_no}</FieldError>
-            </div>
-            <div>
-              <label className={LABEL_CLASS}>Email</label>
-              <input type="email" className={INPUT_CLASS} {...f('email')} />
-            </div>
-            <div>
-              <label className={LABEL_CLASS}>Aadhaar / ID Card <span className="text-[color:var(--color-danger)]">*</span></label>
-              <input
-                maxLength={12}
-                className={cn(INPUT_CLASS, fieldErrors.id_card && ERROR_INPUT_CLASS)}
-                {...f('id_card')}
-              />
-              <FieldError>{fieldErrors.id_card}</FieldError>
-            </div>
-            <div>
-              <label className={LABEL_CLASS}>Blood Group</label>
-              <SearchableSelect
-                value={form.blood ?? ''}
-                onChange={(v) => updateField('blood', v)}
-                options={['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'].map((bg) => ({ value: bg, label: bg }))}
-                placeholder="Select blood group"
-                buttonClassName={INPUT_CLASS}
-              />
-            </div>
-            <div>
-              <label className={LABEL_CLASS}>Marital Status</label>
-              <SearchableSelect
-                value={form.maritual_status ?? ''}
-                onChange={(v) => updateField('maritual_status', v)}
-                options={['Single', 'Married', 'Divorced', 'Widowed'].map((s) => ({ value: s, label: s }))}
-                placeholder="Select status"
-                buttonClassName={INPUT_CLASS}
-              />
-            </div>
-            <div>
-              <label className={LABEL_CLASS}>Nationality <span className="text-[color:var(--color-danger)]">*</span></label>
-              <SearchableSelect
-                value={form.nationality_id ?? ''}
-                onChange={(v) => updateField('nationality_id', v)}
-                options={nationalities.map((n) => ({ value: String(n.id), label: n.country_name }))}
-                placeholder="Select nationality"
-                buttonClassName={cn(INPUT_CLASS, fieldErrors.nationality_id && ERROR_INPUT_CLASS)}
-              />
-              <FieldError>{fieldErrors.nationality_id}</FieldError>
-            </div>
-            <div>
-              <label className={LABEL_CLASS}>Guardian Name</label>
-              <input className={INPUT_CLASS} {...f('guradian')} />
-            </div>
-            <div>
-              <label className={LABEL_CLASS}>Relation to Guardian</label>
-              <input className={INPUT_CLASS} {...f('relation_guardian')} />
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-6 gap-y-5 mt-5">
+              <div>
+                <label className={LABEL_CLASS}>District</label>
+                <input className={INPUT_CLASS} {...f('district')} />
+              </div>
+              <div>
+                <label className={LABEL_CLASS}>State</label>
+                <input className={INPUT_CLASS} {...f('state')} />
+              </div>
+              <div>
+                <label className={LABEL_CLASS}>Pincode</label>
+                <input
+                  maxLength={6}
+                  className={cn(INPUT_CLASS, fieldErrors.pincode && ERROR_INPUT_CLASS)}
+                  {...f('pincode')}
+                />
+                <FieldError>{fieldErrors.pincode}</FieldError>
+              </div>
             </div>
           </div>
-          <div className="mt-5">
-            <label className={LABEL_CLASS}>Address</label>
-            <textarea className={INPUT_CLASS} rows={2} value={form.address ?? ''} onChange={(e) => setForm((p) => ({ ...p, address: e.target.value }))} />
+
+          <div>
+            <SectionHeading>Statutory Details</SectionHeading>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-5">
+              <div>
+                <label className={LABEL_CLASS}>PAN Number</label>
+                <input
+                  maxLength={10}
+                  className={cn(INPUT_CLASS, fieldErrors.pan_no && ERROR_INPUT_CLASS)}
+                  {...f('pan_no')}
+                  onChange={(e) => updateField('pan_no', e.target.value.toUpperCase())}
+                  placeholder="ABCDE1234D"
+                />
+                <FieldError>{fieldErrors.pan_no}</FieldError>
+              </div>
+              <div>
+                <label className={LABEL_CLASS}>PF Number</label>
+                <input
+                  maxLength={22}
+                  className={cn(INPUT_CLASS, fieldErrors.pf && ERROR_INPUT_CLASS)}
+                  {...f('pf')}
+                />
+                <FieldError>{fieldErrors.pf}</FieldError>
+              </div>
+              <div>
+                <label className={LABEL_CLASS}>UAN No</label>
+                <input
+                  maxLength={12}
+                  className={cn(INPUT_CLASS, fieldErrors.company_pf && ERROR_INPUT_CLASS)}
+                  {...f('company_pf')}
+                />
+                <FieldError>{fieldErrors.company_pf}</FieldError>
+              </div>
+              <div>
+                <label className={LABEL_CLASS}>Previous PF Member ID</label>
+                <input maxLength={15} className={INPUT_CLASS} {...f('previous_member_id')} />
+              </div>
+              <div>
+                <label className={LABEL_CLASS}>ESI Number</label>
+                <input
+                  maxLength={10}
+                  className={cn(INPUT_CLASS, fieldErrors.esi && ERROR_INPUT_CLASS)}
+                  {...f('esi')}
+                />
+                <FieldError>{fieldErrors.esi}</FieldError>
+              </div>
+              <div>
+                <label className={LABEL_CLASS}>ESI Dispensary</label>
+                <input className={INPUT_CLASS} {...f('esi_dispensary')} />
+              </div>
+              <div>
+                <label className={LABEL_CLASS}>LWF Code</label>
+                <input
+                  maxLength={15}
+                  className={cn(INPUT_CLASS, fieldErrors.lwf_code && ERROR_INPUT_CLASS)}
+                  {...f('lwf_code')}
+                  onChange={(e) => updateField('lwf_code', e.target.value.toUpperCase())}
+                />
+                <FieldError>{fieldErrors.lwf_code}</FieldError>
+              </div>
+              <div>
+                <label className={LABEL_CLASS}>WPS Code</label>
+                <input maxLength={15} className={INPUT_CLASS} {...f('wps_code')} />
+              </div>
+            </div>
+            <div className="flex items-center gap-6 mt-5 flex-wrap">
+              <div className="flex items-center gap-3">
+                {checkbox('international_worker', 'International Worker')}
+                <SearchableSelect
+                  value={form.country_origin ?? ''}
+                  onChange={(v) => updateField('country_origin', v)}
+                  options={nationalities.map((n) => ({ value: String(n.id), label: n.country_name }))}
+                  placeholder="Country of origin"
+                  buttonClassName={cn(INPUT_CLASS, 'w-44 py-1.5 shrink-0')}
+                  disabled={form.international_worker !== 'Y'}
+                />
+              </div>
+              {checkbox('physical_handicap', 'Physical Handicap')}
+              {checkbox('eps', 'EPS Eligibility')}
+            </div>
+            {form.physical_handicap === 'Y' && (
+              <div className="flex flex-wrap gap-4 mt-4 pl-1">
+                {checkbox('locomotive', 'Locomotive Disability')}
+                {checkbox('hearing', 'Hearing Disability')}
+                {checkbox('visual', 'Visual Disability')}
+              </div>
+            )}
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-6 gap-y-5 mt-5">
-            <div>
-              <label className={LABEL_CLASS}>District</label>
-              <input className={INPUT_CLASS} {...f('district')} />
-            </div>
-            <div>
-              <label className={LABEL_CLASS}>State</label>
-              <input className={INPUT_CLASS} {...f('state')} />
-            </div>
-            <div>
-              <label className={LABEL_CLASS}>Pincode</label>
-              <input
-                maxLength={6}
-                className={cn(INPUT_CLASS, fieldErrors.pincode && ERROR_INPUT_CLASS)}
-                {...f('pincode')}
-              />
-              <FieldError>{fieldErrors.pincode}</FieldError>
+
+          <div>
+            <SectionHeading>Bank Details</SectionHeading>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-5">
+              <div>
+                <label className={LABEL_CLASS}>Bank Name</label>
+                <input className={INPUT_CLASS} {...f('bank')} />
+              </div>
+              <div>
+                <label className={LABEL_CLASS}>Bank Branch</label>
+                <input className={INPUT_CLASS} {...f('bank_branch')} />
+              </div>
+              <div>
+                <label className={LABEL_CLASS}>IFSC Code</label>
+                <input maxLength={12} className={INPUT_CLASS} {...f('ifsc_code')} />
+              </div>
+              <div>
+                <label className={LABEL_CLASS}>Account Number</label>
+                <input
+                  maxLength={18}
+                  className={cn(INPUT_CLASS, fieldErrors.account_no && ERROR_INPUT_CLASS)}
+                  {...f('account_no')}
+                />
+                <FieldError>{fieldErrors.account_no}</FieldError>
+              </div>
             </div>
           </div>
         </div>
@@ -504,212 +720,198 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
     }
 
     if (idx === 1) {
+      if (isCreate) {
+        return <p className="text-sm text-slate-500">{GATED_MESSAGE}</p>;
+      }
       return (
-        <div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-5">
-            <div>
-              <label className={LABEL_CLASS}>PAN Number</label>
-              <input
-                maxLength={10}
-                className={cn(INPUT_CLASS, fieldErrors.pan_no && ERROR_INPUT_CLASS)}
-                {...f('pan_no')}
-                onChange={(e) => updateField('pan_no', e.target.value.toUpperCase())}
-                placeholder="ABCDE1234D"
-              />
-              <FieldError>{fieldErrors.pan_no}</FieldError>
-            </div>
-            <div>
-              <label className={LABEL_CLASS}>PF Number</label>
-              <input
-                maxLength={22}
-                className={cn(INPUT_CLASS, fieldErrors.pf && ERROR_INPUT_CLASS)}
-                {...f('pf')}
-              />
-              <FieldError>{fieldErrors.pf}</FieldError>
-            </div>
-            <div>
-              <label className={LABEL_CLASS}>UAN (Company PF)</label>
-              <input
-                maxLength={12}
-                className={cn(INPUT_CLASS, fieldErrors.company_pf && ERROR_INPUT_CLASS)}
-                {...f('company_pf')}
-              />
-              <FieldError>{fieldErrors.company_pf}</FieldError>
-            </div>
-            <div>
-              <label className={LABEL_CLASS}>Previous PF Member ID</label>
-              <input maxLength={15} className={INPUT_CLASS} {...f('previous_member_id')} />
-            </div>
-            <div>
-              <label className={LABEL_CLASS}>ESI Number</label>
-              <input
-                maxLength={10}
-                className={cn(INPUT_CLASS, fieldErrors.esi && ERROR_INPUT_CLASS)}
-                {...f('esi')}
-              />
-              <FieldError>{fieldErrors.esi}</FieldError>
-            </div>
-            <div>
-              <label className={LABEL_CLASS}>ESI Dispensary</label>
-              <input className={INPUT_CLASS} {...f('esi_dispensary')} />
-            </div>
-            <div>
-              <label className={LABEL_CLASS}>LWF Code</label>
-              <input
-                maxLength={15}
-                className={cn(INPUT_CLASS, fieldErrors.lwf_code && ERROR_INPUT_CLASS)}
-                {...f('lwf_code')}
-                onChange={(e) => updateField('lwf_code', e.target.value.toUpperCase())}
-              />
-              <FieldError>{fieldErrors.lwf_code}</FieldError>
-            </div>
-            <div>
-              <label className={LABEL_CLASS}>WPS Code</label>
-              <input maxLength={15} className={INPUT_CLASS} {...f('wps_code')} />
-            </div>
-          </div>
-          <div className="flex items-center gap-6 mt-5 flex-wrap">
-            <div className="flex items-center gap-3">
-              {checkbox('international_worker', 'International Worker')}
-              <SearchableSelect
-                value={form.country_origin ?? ''}
-                onChange={(v) => updateField('country_origin', v)}
-                options={nationalities.map((n) => ({ value: String(n.id), label: n.country_name }))}
-                placeholder="Country of origin"
-                buttonClassName={cn(INPUT_CLASS, 'w-44 py-1.5 shrink-0')}
-                disabled={form.international_worker !== 'Y'}
-              />
-            </div>
-            {checkbox('physical_handicap', 'Physical Handicap')}
-            {checkbox('eps', 'EPS Eligibility')}
-          </div>
-          {form.physical_handicap === 'Y' && (
-            <div className="flex flex-wrap gap-4 mt-4 pl-1">
-              {checkbox('locomotive', 'Locomotive Disability')}
-              {checkbox('hearing', 'Hearing Disability')}
-              {checkbox('visual', 'Visual Disability')}
-            </div>
-          )}
-        </div>
-      );
-    }
-
-    if (idx === 2) {
-      return (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-5">
-          <div>
-            <label className={LABEL_CLASS}>Bank Name</label>
-            <input className={INPUT_CLASS} {...f('bank')} />
-          </div>
-          <div>
-            <label className={LABEL_CLASS}>Bank Branch</label>
-            <input className={INPUT_CLASS} {...f('bank_branch')} />
-          </div>
-          <div>
-            <label className={LABEL_CLASS}>IFSC Code</label>
-            <input maxLength={12} className={INPUT_CLASS} {...f('ifsc_code')} />
-          </div>
-          <div>
-            <label className={LABEL_CLASS}>Account Number</label>
-            <input
-              maxLength={18}
-              className={cn(INPUT_CLASS, fieldErrors.account_no && ERROR_INPUT_CLASS)}
-              {...f('account_no')}
+        <div className="space-y-4">
+          <CollapsibleSection title="Education" icon={GraduationCap}>
+            <RepeatableRows
+              pkeyField="education_pkey"
+              rows={education}
+              addLabel="Add education"
+              onAdd={addChild('education')}
+              onRemove={removeChild('education')}
+              fields={[
+                { key: 'course', label: 'Course', required: true },
+                { key: 'university', label: 'University', required: true },
+                { key: 'duration', label: 'Duration', required: true },
+                { key: 'mark', label: 'Marks', required: true },
+              ]}
             />
-            <FieldError>{fieldErrors.account_no}</FieldError>
-          </div>
+          </CollapsibleSection>
+
+          <CollapsibleSection title="Work Experience" icon={History}>
+            <RepeatableRows
+              pkeyField="experience_pkey"
+              rows={experience}
+              addLabel="Add experience"
+              onAdd={addChild('experience')}
+              onRemove={removeChild('experience')}
+              fields={[
+                { key: 'company', label: 'Company', required: true },
+                { key: 'designation', label: 'Designation', required: true },
+                { key: 'department', label: 'Department', required: true },
+                { key: 'from_date', label: 'From', type: 'date', required: true },
+                { key: 'to_date', label: 'To', type: 'date', required: true },
+                { key: 'salary', label: 'Salary', type: 'number', required: true },
+              ]}
+            />
+          </CollapsibleSection>
+
+          <CollapsibleSection title="Family" icon={Users}>
+            <RepeatableRows
+              pkeyField="emp_family_pkey"
+              rows={family}
+              addLabel="Add family member"
+              onAdd={addChild('family')}
+              onRemove={removeChild('family')}
+              fields={[
+                { key: 'name', label: 'Name', required: true },
+                { key: 'relation', label: 'Relation', required: true },
+                { key: 'gender', label: 'Gender', required: true },
+                { key: 'DOB', label: 'Date of Birth', type: 'date', required: true },
+                { key: 'nationality', label: 'Nationality' },
+                { key: 'contact_number', label: 'Contact Number', required: true },
+              ]}
+            />
+          </CollapsibleSection>
+
+          <CollapsibleSection title="Documents" icon={FileText}>
+            <div className="mb-3 max-w-sm">
+              <label className={LABEL_CLASS}>Upload file (attach before adding a row below)</label>
+              <DocumentUploadField value={docFile} onChange={setDocFile} />
+            </div>
+            <RepeatableRows
+              pkeyField="emp_doc_pkey"
+              rows={documents}
+              addLabel="Add document"
+              onAdd={addChild('documents')}
+              onRemove={removeChild('documents')}
+              fields={[
+                { key: 'document_type', label: 'Type', type: 'select', options: DOCUMENT_TYPES.map((d) => ({ value: d, label: d })), required: true },
+                { key: 'document_number', label: 'Number', required: true },
+                { key: 'name', label: 'Name on Document', required: true },
+                { key: 'relation', label: 'Relation', required: true },
+                { key: 'nationality', label: 'Nationality' },
+                { key: 'valid_from', label: 'Valid From', type: 'date', required: true },
+                { key: 'valid_till', label: 'Valid Till', type: 'date' },
+              ]}
+            />
+          </CollapsibleSection>
         </div>
       );
     }
 
+    // idx === 2: Onboarding — only reachable once the draft exists (mirrors legacy's own
+    // Tab-3-empty-until-saved behavior, not a bug to fix).
     if (isCreate) {
-      return (
-        <p className="text-sm text-slate-500">
-          Save the previous steps first — documents, education, experience and family can be added once the record exists.
-        </p>
-      );
+      return <p className="text-sm text-slate-500">{GATED_MESSAGE}</p>;
     }
-
     return (
       <div className="space-y-8">
-        <section>
-          <h3 className="text-[12px] font-semibold text-slate-500 uppercase tracking-wider mb-3">Documents</h3>
-          <div className="mb-3 max-w-sm">
-            <label className={LABEL_CLASS}>Upload file (attach before adding a row below)</label>
-            <DocumentUploadField value={docFile} onChange={setDocFile} />
+        <div>
+          <SectionHeading>Identity &amp; Login</SectionHeading>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-5">
+            <div>
+              <label className={LABEL_CLASS}>Employee ID</label>
+              <input className={INPUT_CLASS} {...fOnboard('emp_company_id')} placeholder="Leave blank if no ID" />
+            </div>
+            <div>
+              <label className={LABEL_CLASS}>Initial Password <span className="text-[color:var(--color-danger)]">*</span></label>
+              <input
+                type="password"
+                autoComplete="new-password"
+                className={cn(INPUT_CLASS, onboardFieldErrors.password && ERROR_INPUT_CLASS)}
+                {...fOnboard('password')}
+              />
+              <FieldError>{onboardFieldErrors.password}</FieldError>
+            </div>
           </div>
-          <RepeatableRows
-            pkeyField="emp_doc_pkey"
-            rows={documents}
-            addLabel="Add document"
-            onAdd={addChild('documents')}
-            onRemove={removeChild('documents')}
-            fields={[
-              { key: 'document_type', label: 'Type', type: 'select', options: DOCUMENT_TYPES.map((d) => ({ value: d, label: d })), required: true },
-              { key: 'document_number', label: 'Number', required: true },
-              { key: 'name', label: 'Name on Document', required: true },
-              { key: 'relation', label: 'Relation', required: true },
-              { key: 'nationality', label: 'Nationality' },
-              { key: 'valid_from', label: 'Valid From', type: 'date', required: true },
-              { key: 'valid_till', label: 'Valid Till', type: 'date' },
-            ]}
-          />
-        </section>
+          <p className="text-xs text-slate-500 mt-3">
+            The login username is generated automatically from the company code and employee ID once onboarding completes.
+          </p>
+        </div>
 
-        <section>
-          <h3 className="text-[12px] font-semibold text-slate-500 uppercase tracking-wider mb-3">Education</h3>
-          <RepeatableRows
-            pkeyField="education_pkey"
-            rows={education}
-            addLabel="Add education"
-            onAdd={addChild('education')}
-            onRemove={removeChild('education')}
-            fields={[
-              { key: 'course', label: 'Course', required: true },
-              { key: 'university', label: 'University', required: true },
-              { key: 'duration', label: 'Duration', required: true },
-              { key: 'mark', label: 'Marks', required: true },
-            ]}
-          />
-        </section>
+        <div>
+          <SectionHeading>Company Information</SectionHeading>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-5">
+            <div>
+              <label className={LABEL_CLASS}>Joining Date</label>
+              <input type="date" className={INPUT_CLASS} {...fOnboard('joining_date')} />
+            </div>
+            <div>
+              <label className={LABEL_CLASS}>Employment Type</label>
+              <SearchableSelect
+                value={onboardForm.emp_type}
+                onChange={(v) => updateOnboardField('emp_type', v)}
+                options={EMP_TYPES.map((t) => ({ value: t, label: t }))}
+                placeholder="Select type"
+                buttonClassName={INPUT_CLASS}
+              />
+            </div>
+            {[
+              { key: 'emp_branch' as const, label: 'Branch', opts: branches },
+              { key: 'emp_dept' as const, label: 'Department', opts: departments },
+              { key: 'designation' as const, label: 'Designation', opts: designations },
+              { key: 'emp_grade' as const, label: 'Grade', opts: grades },
+            ].map(({ key, label, opts }) => (
+              <div key={key}>
+                <label className={LABEL_CLASS}>{label}</label>
+                <SearchableSelect
+                  value={onboardForm[key]}
+                  onChange={(v) => updateOnboardField(key, v)}
+                  options={opts}
+                  placeholder={`Select ${label.toLowerCase()}`}
+                  buttonClassName={INPUT_CLASS}
+                />
+              </div>
+            ))}
+            <div>
+              <label className={LABEL_CLASS}>Notice Period</label>
+              <SearchableSelect
+                value={onboardForm.notice_days}
+                onChange={(v) => updateOnboardField('notice_days', v)}
+                options={noticePeriods}
+                placeholder="Select notice period"
+                buttonClassName={INPUT_CLASS}
+              />
+            </div>
+            <div>
+              <label className={LABEL_CLASS}>Probation Period (days)</label>
+              <input type="number" className={INPUT_CLASS} {...fOnboard('probation')} />
+            </div>
+            <div>
+              <label className={LABEL_CLASS}>Reporting Manager</label>
+              <EmployeeSearch
+                value={onboardForm.attr1}
+                onChange={(empPkey) => setOnboardForm((prev) => ({ ...prev, attr1: empPkey }))}
+              />
+            </div>
+          </div>
+        </div>
 
-        <section>
-          <h3 className="text-[12px] font-semibold text-slate-500 uppercase tracking-wider mb-3">Work Experience</h3>
-          <RepeatableRows
-            pkeyField="experience_pkey"
-            rows={experience}
-            addLabel="Add experience"
-            onAdd={addChild('experience')}
-            onRemove={removeChild('experience')}
-            fields={[
-              { key: 'company', label: 'Company', required: true },
-              { key: 'designation', label: 'Designation', required: true },
-              { key: 'department', label: 'Department', required: true },
-              { key: 'from_date', label: 'From', type: 'date', required: true },
-              { key: 'to_date', label: 'To', type: 'date', required: true },
-              { key: 'salary', label: 'Salary', type: 'number', required: true },
-            ]}
-          />
-        </section>
-
-        <section>
-          <h3 className="text-[12px] font-semibold text-slate-500 uppercase tracking-wider mb-3">Family</h3>
-          <RepeatableRows
-            pkeyField="emp_family_pkey"
-            rows={family}
-            addLabel="Add family member"
-            onAdd={addChild('family')}
-            onRemove={removeChild('family')}
-            fields={[
-              { key: 'name', label: 'Name', required: true },
-              { key: 'relation', label: 'Relation', required: true },
-              { key: 'gender', label: 'Gender', required: true },
-              { key: 'DOB', label: 'Date of Birth', type: 'date', required: true },
-              { key: 'nationality', label: 'Nationality' },
-              { key: 'contact_number', label: 'Contact Number', required: true },
-            ]}
-          />
-        </section>
+        <div>
+          <SectionHeading>Policies &amp; Rules</SectionHeading>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-5">
+            {[
+              { key: 'day_time_seq' as const, label: 'Shift Policy', opts: shifts },
+              { key: 'holiday_group_id' as const, label: 'Holiday Calendar', opts: holidayGroups },
+              { key: 'leavepolicy_group_id' as const, label: 'Leave Policy', opts: leavePolicyGroups },
+            ].map(({ key, label, opts }) => (
+              <div key={key}>
+                <label className={LABEL_CLASS}>{label}</label>
+                <SearchableSelect
+                  value={onboardForm[key]}
+                  onChange={(v) => updateOnboardField(key, v)}
+                  options={opts}
+                  placeholder={`Select ${label.toLowerCase()}`}
+                  buttonClassName={INPUT_CLASS}
+                />
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
     );
   }
@@ -742,7 +944,7 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
         <div className="flex items-center gap-3 pr-14">
           <AvatarUpload
             name={headerName || 'New Joiner'}
-            imageUrl={form.profile_image_url || data?.join.profile_image_url}
+            imageUrl={form.profile_image_url !== undefined ? form.profile_image_url : data?.join.profile_image_url}
             onUploaded={(path) => setForm((prev) => ({ ...prev, profile_image_url: path }))}
             className="w-10 h-10 flex-shrink-0"
           />
@@ -755,10 +957,13 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
         </div>
 
         <div className="flex items-center gap-1.5 mt-5 overflow-x-auto scroll-fade">
-          {STEPS.map((s, i) => {
+          {steps.map((s, i) => {
             const isCompleted = completed.has(i);
             const isActive = i === activeStepForUI;
-            const clickable = isCompleted || isActive;
+            // Once the draft exists, every tab is freely reachable — matching legacy's own
+            // tab-switching (no restriction once emp_pkey != 0), and avoiding a stuck tab
+            // when Onboarding (which never calls persist()/marks "completed") is left early.
+            const clickable = isActive || i === 0 || !isCreate;
             return (
               <div key={s.key} className="flex items-center gap-1.5 flex-shrink-0">
                 <button
@@ -770,7 +975,9 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
                     'flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-[13px] font-medium whitespace-nowrap transition-colors duration-[220ms]',
                     !isActive && (isCompleted
                       ? 'text-[color:var(--color-success)] hover:bg-[color:var(--color-success)]/10 cursor-pointer'
-                      : 'text-slate-400 cursor-default')
+                      : clickable
+                        ? 'text-slate-500 hover:bg-slate-100 cursor-pointer'
+                        : 'text-slate-400 cursor-default')
                   )}
                 >
                   <span
@@ -788,7 +995,7 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
                   </span>
                   {s.label}
                 </button>
-                {i < STEPS.length - 1 && <span className="w-4 h-px bg-slate-200 flex-shrink-0" />}
+                {i < steps.length - 1 && <span className="w-4 h-px bg-slate-200 flex-shrink-0" />}
               </div>
             );
           })}
@@ -855,10 +1062,18 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onF
             </button>
           )}
 
-          {isLast ? (
+          {isLast && includeOnboarding ? (
             <button
               onClick={finish}
-              disabled={pending}
+              disabled={pending || isCreate}
+              className="px-5 py-2.5 rounded-xl text-sm font-semibold bg-[color:var(--color-primary)] hover:scale-[1.03] disabled:opacity-50 disabled:hover:scale-100 text-white shadow-lg shadow-[color:var(--color-primary)]/20 transition-all duration-[180ms]"
+            >
+              {pending ? 'Onboarding…' : 'Complete Onboarding'}
+            </button>
+          ) : isLast ? (
+            <button
+              onClick={finishWithoutOnboarding}
+              disabled={pending || isCreate}
               className="px-5 py-2.5 rounded-xl text-sm font-semibold bg-[color:var(--color-primary)] hover:scale-[1.03] disabled:opacity-50 disabled:hover:scale-100 text-white shadow-lg shadow-[color:var(--color-primary)]/20 transition-all duration-[180ms]"
             >
               {pending ? 'Saving…' : 'Done'}

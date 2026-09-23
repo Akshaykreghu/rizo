@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useSession } from 'next-auth/react';
 import AppTabs from '@/components/ess/AppTabs';
+import { SalarySlipModal } from '@/components/payroll/SalarySlipModal';
 
 // Port of New Rizo's pages/ESS/ESSSalary.jsx (Salary & Benefits + Tax Declarations tabs), backed
 // by the new /api/employees/[id]/pay-summary endpoint and the existing tax-* routes (now with
@@ -22,6 +23,13 @@ const card: React.CSSProperties = { background: 'var(--bg-card)', border: '1.5px
 // ── Salary trend bar chart ────────────────────────────────────────────────────
 function SalaryTrendChart({ allFYMonths, processedMap, monthlyCTC }: { allFYMonths: string[]; processedMap: Map<string, { net_salary: number }>; monthlyCTC: number }) {
   if (!allFYMonths.length) return <div style={{ height: 180, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: 12 }}>Loading…</div>;
+  if (processedMap.size === 0) {
+    return (
+      <div style={{ height: 60, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: 12 }}>
+        No salary processed yet for this financial year.
+      </div>
+    );
+  }
   const W = 480, H = 200, PL = 46, PR = 6, PT = 14, PB = 28;
   const cW = W - PL - PR, cH = H - PT - PB;
   const n = allFYMonths.length;
@@ -117,6 +125,7 @@ export default function EssSalaryPage() {
   const empId = session?.user.empFkey;
 
   const [tab, setTab] = useState<'salary' | 'tax'>('salary');
+  const [slipId, setSlipId] = useState<number | null>(null);
   const [payData, setPayData] = useState<PayData | null>(null);
   const [selFYId, setSelFYId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
@@ -200,59 +209,6 @@ export default function EssSalaryPage() {
     if (empId) await fetch(`/api/employees/${empId}/tax-regime`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ optionType: r === 'OLD' ? 'O' : 'N' }) });
   }
 
-  function printSlipHTML(html: string) {
-    const w = window.open('', '_blank');
-    if (!w) return;
-    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Salary Slip</title><style>
-      *{box-sizing:border-box;margin:0;padding:0}body{font-family:Arial,sans-serif;font-size:11px;color:#111;padding:24px}
-      .header{text-align:center;margin-bottom:16px}.company{font-size:16px;font-weight:900;color:#1E516E}
-      .slip-title{font-size:12px;font-weight:700;margin:4px 0}.emp-grid{display:grid;grid-template-columns:1fr 1fr;gap:4px 24px;margin-bottom:14px;padding:10px 14px;border:1px solid #ddd;border-radius:6px}
-      table{width:100%;border-collapse:collapse;margin-bottom:10px}
-      th{background:#1E516E;color:#fff;padding:6px 10px;text-align:left;font-size:10px}
-      td{padding:5px 10px;border-bottom:1px solid #eee}
-      .totals{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-top:12px}
-      .total-box{border:1px solid #ddd;border-radius:6px;padding:8px 12px;text-align:center}
-      .total-box .label{font-size:9px;color:#666;font-weight:700;text-transform:uppercase}
-      .total-box .value{font-size:14px;font-weight:900;color:#1E516E;margin-top:2px}
-      .net-box{background:#1E516E;border-color:#1E516E}.net-box .label,.net-box .value{color:#fff}
-    </style></head><body>${html}</body></html>`);
-    w.document.close();
-    setTimeout(() => { w.focus(); w.print(); }, 400);
-  }
-
-  async function downloadPayslip(payrollMasterId: number, monthLabel: string) {
-    try {
-      const res = await fetch(`/api/payroll/slip/${payrollMasterId}`);
-      const data = await res.json();
-      const fmtA = (n: number) => Number(n).toLocaleString('en-IN', { minimumFractionDigits: 2 });
-      interface SlipGroup { head_desc: string; items: { salary_head_item_desc: string; head_operator: string; salary_amount: number }[] }
-      const allItems = (data.direct as SlipGroup[]).flatMap((g) => g.items);
-      const earnings = allItems.filter((it) => it.head_operator === 'Addition');
-      const deductions = allItems.filter((it) => it.head_operator === 'Deduction');
-      const rows = (items: typeof allItems) => items.map((it) => `<tr><td>${it.salary_head_item_desc}</td><td style="text-align:right">${fmtA(it.salary_amount)}</td></tr>`).join('');
-      const html = `
-        <div class="header"><div class="company">${data.header.desig || 'Payslip'}</div><div class="slip-title">Salary Slip — ${monthLabel}</div></div>
-        <div class="emp-grid">
-          <div><span>Employee: </span><strong>${data.header.emp_name}</strong></div>
-          <div><span>Month: </span><strong>${monthLabel}</strong></div>
-          <div><span>Present Days: </span><strong>${data.header.days_presant ?? '—'}</strong></div>
-          <div><span>Working Days: </span><strong>${data.header.working_days ?? '—'}</strong></div>
-        </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
-          <div><table><thead><tr><th>Earnings</th><th style="text-align:right">Amount</th></tr></thead><tbody>${rows(earnings)}</tbody></table></div>
-          <div><table><thead><tr><th>Deductions</th><th style="text-align:right">Amount</th></tr></thead><tbody>${rows(deductions)}</tbody></table></div>
-        </div>
-        <div class="totals">
-          <div class="total-box"><div class="label">Gross Salary</div><div class="value">${fmtA(data.header.gross_salary)}</div></div>
-          <div class="total-box"><div class="label">Total Deductions</div><div class="value" style="color:#dc2626">${fmtA(data.header.total_deduction)}</div></div>
-          <div class="total-box net-box"><div class="label">Net Pay</div><div class="value">${fmtA(data.header.net_salary)}</div></div>
-        </div>`;
-      printSlipHTML(html);
-    } catch {
-      alert('Could not load payslip data.');
-    }
-  }
-
   if (loading && !payData) {
     return (
       <div style={{ height: '60vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -321,25 +277,27 @@ export default function EssSalaryPage() {
               ))}
             </div>
 
-            <div style={{ ...card, padding: '14px 16px' }}>
-              <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--text-primary)', marginBottom: 8 }}>Monthly Net Salary — {finYear?.fin_year}</div>
-              <SalaryTrendChart allFYMonths={allFYMonths} processedMap={processedMap} monthlyCTC={monthlyCTC} />
-            </div>
-
-            {earningsLines.length > 0 && (
+            <div style={{ display: 'grid', gridTemplateColumns: earningsLines.length > 0 ? '1fr 1fr' : '1fr', gap: 16 }}>
               <div style={{ ...card, padding: '14px 16px' }}>
-                <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--text-primary)', marginBottom: 8 }}>Latest Earnings Breakdown</div>
-                {earningsLines.map((l, i) => (
-                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: i < earningsLines.length - 1 ? '1px solid var(--border)' : 'none', fontSize: 12 }}>
-                    <span style={{ color: 'var(--text-primary)' }}>{l.item_name.trim()}</span>
-                    <span style={{ fontWeight: 700 }}>₹{fmtINR(l.amount)}</span>
-                  </div>
-                ))}
-                <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: 8, marginTop: 4, borderTop: `2px solid ${BRAND}`, fontSize: 12, fontWeight: 800, color: BRAND }}>
-                  <span>Total</span><span>₹{fmtINR(earningsTotal)}</span>
-                </div>
+                <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--text-primary)', marginBottom: 8 }}>Monthly Net Salary — {finYear?.fin_year}</div>
+                <SalaryTrendChart allFYMonths={allFYMonths} processedMap={processedMap} monthlyCTC={monthlyCTC} />
               </div>
-            )}
+
+              {earningsLines.length > 0 && (
+                <div style={{ ...card, padding: '14px 16px' }}>
+                  <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--text-primary)', marginBottom: 8 }}>Latest Earnings Breakdown</div>
+                  {earningsLines.map((l, i) => (
+                    <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: i < earningsLines.length - 1 ? '1px solid var(--border)' : 'none', fontSize: 12 }}>
+                      <span style={{ color: 'var(--text-primary)' }}>{l.item_name.trim()}</span>
+                      <span style={{ fontWeight: 700 }}>₹{fmtINR(l.amount)}</span>
+                    </div>
+                  ))}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: 8, marginTop: 4, borderTop: `2px solid ${BRAND}`, fontSize: 12, fontWeight: 800, color: BRAND }}>
+                    <span>Total</span><span>₹{fmtINR(earningsTotal)}</span>
+                  </div>
+                </div>
+              )}
+            </div>
 
             <div style={{ ...card, overflow: 'hidden' }}>
               <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)' }}>
@@ -364,7 +322,7 @@ export default function EssSalaryPage() {
                           <td style={{ padding: '9px 14px', textAlign: 'right', fontWeight: p ? 700 : 400, color: p ? BRAND : 'var(--text-muted)' }}>{p ? fmtINR(p.net_salary) : '—'}</td>
                           <td style={{ padding: '9px 14px', textAlign: 'right', color: 'var(--text-muted)' }}>{p ? fmtINR(p.total_deductions) : '—'}</td>
                           <td style={{ padding: '9px 14px', textAlign: 'right', color: 'var(--text-muted)' }}>{p ? p.present_days : '—'}</td>
-                          <td style={{ padding: '9px 14px', textAlign: 'center' }}>{p ? <button onClick={() => downloadPayslip(p.payroll_master_id, `${MON[parseInt(mo)]} ${yr}`)} style={{ padding: '3px 10px', fontSize: 9, fontWeight: 700, cursor: 'pointer', border: `1px solid ${BRAND}`, borderRadius: 12, background: 'transparent', color: BRAND }}>⬇ Payslip</button> : '—'}</td>
+                          <td style={{ padding: '9px 14px', textAlign: 'center' }}>{p ? <button onClick={() => setSlipId(p.payroll_master_id)} style={{ padding: '3px 10px', fontSize: 9, fontWeight: 700, cursor: 'pointer', border: `1px solid ${BRAND}`, borderRadius: 12, background: 'transparent', color: BRAND }}>👁 Payslip</button> : '—'}</td>
                         </tr>
                       );
                     })}
@@ -437,6 +395,8 @@ export default function EssSalaryPage() {
           </div>
         )}
       </div>
+
+      {slipId != null && <SalarySlipModal payrollMasterPkey={slipId} onClose={() => setSlipId(null)} />}
     </div>
   );
 }

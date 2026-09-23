@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useSession } from 'next-auth/react';
 
 // Port of New Rizo's pages/ESS/ESSTeam.jsx, backed by /api/employees/[id]/team (hierarchy)
@@ -164,15 +164,25 @@ function VLine({ h = 32 }: { h?: number }) {
     </div>
   );
 }
-function HBracket({ count }: { count: number }) {
+// Each card gets its own vertical drop line, joined into one continuous horizontal bar across
+// all siblings (same connector style as the "Entire Team" org-chart's TreeChildrenRow) — one
+// straight row, not a single bracket spanning a fixed width regardless of how many there are.
+function ConnectedRow({ children }: { children: ReactNode[] }) {
+  const count = children.length;
   if (count === 0) return null;
-  if (count === 1) return <VLine h={28} />;
+  if (count === 1) return (<><VLine h={28} /><div>{children[0]}</div></>);
   return (
-    <div style={{ position: 'relative', height: 28, margin: '0 auto', width: '70%', minWidth: 200 }}>
-      <div style={{ position: 'absolute', top: 0, left: '50%', transform: 'translateX(-50%)', width: 2, height: 14, background: 'var(--border)' }} />
-      <div style={{ position: 'absolute', top: 14, left: '10%', right: '10%', height: 2, background: 'var(--border)' }} />
-      <div style={{ position: 'absolute', top: 14, left: '10%', width: 2, height: 14, background: 'var(--border)' }} />
-      <div style={{ position: 'absolute', top: 14, right: '10%', width: 2, height: 14, background: 'var(--border)' }} />
+    <div style={{ overflowX: 'auto', maxWidth: '100%', paddingBottom: 4 }}>
+      <div style={{ display: 'flex', justifyContent: 'center', width: 'max-content', margin: '0 auto' }}>
+        {children.map((child, i) => (
+          <div key={i} style={{ position: 'relative', padding: '20px 8px 0', flexShrink: 0 }}>
+            <div style={{ position: 'absolute', top: 0, left: '50%', width: 2, height: 20, background: 'var(--border)' }} />
+            {i > 0 && <div style={{ position: 'absolute', top: 0, left: 0, width: '50%', height: 2, background: 'var(--border)' }} />}
+            {i < count - 1 && <div style={{ position: 'absolute', top: 0, left: '50%', width: '50%', height: 2, background: 'var(--border)' }} />}
+            {child}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -417,7 +427,7 @@ export default function EssTeamPage() {
             )}
 
             <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'center', flexWrap: 'wrap', gap: 16, paddingBottom: 2 }}>
-              {leftPeers.length > 0 && (
+              {showEntireTeam && leftPeers.length > 0 && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                   {leftPeers.map((p) => <EmpNode key={p.emp_pkey} emp={p} size="xs" />)}
                 </div>
@@ -425,20 +435,21 @@ export default function EssTeamPage() {
               <div style={{ flexShrink: 0 }}>
                 <EmpNode emp={me} isYou />
               </div>
-              {rightPeers.length > 0 && (
+              {showEntireTeam && rightPeers.length > 0 && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                   {rightPeers.map((p) => <EmpNode key={p.emp_pkey} emp={p} size="xs" />)}
                 </div>
               )}
             </div>
 
-            {/* Direct reports — connected to You by a branch line, same as before */}
+            {/* Direct reports — one straight row, each card connected by its own line; scrolls
+                horizontally instead of wrapping when there are too many to fit. */}
             {!showEntireTeam && directReports.length > 0 && (
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                <HBracket count={directReports.length} />
-                <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', justifyContent: 'center' }}>
-                  {directReports.map((r) => <div key={r.emp_pkey} style={{ flexShrink: 0 }}><EmpNode emp={r} size="sm" /></div>)}
-                </div>
+                <VLine h={28} />
+                <ConnectedRow>
+                  {directReports.map((r) => <EmpNode key={r.emp_pkey} emp={r} size="sm" />)}
+                </ConnectedRow>
                 <div style={{ marginTop: 8, fontSize: 9, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '1px', color: 'var(--text-muted)' }}>
                   Direct Reports · {directReports.length}
                 </div>

@@ -9,8 +9,16 @@ export default function NewJoinPage() {
   return (
     <JoinDetail
       onBack={() => router.push('/employees/join')}
-      onCreated={(empJoinPkey) => router.replace(`/employees/join/${empJoinPkey}`)}
-      onFinished={() => router.push('/employees/join')}
+      // A router.replace() here would swap in /employees/join/[id]/page.tsx — a different route
+      // component — which unmounts and remounts JoinDetail, discarding the very step/form state
+      // (e.g. Nationality) the wizard's justCreated/seeded refs exist to preserve. Updating the
+      // URL bar directly keeps the same component instance alive (refresh/bookmark still lands
+      // correctly on the edit route since the id is now in the URL).
+      onCreated={(empJoinPkey) => window.history.replaceState(null, '', `/employees/join/${empJoinPkey}`)}
+      onOnboarded={(empPkey) => router.push(`/employees/${empPkey}`)}
+      // New Join stops at Other Details — activating the login is a separate, later action via
+      // "Continue Onboarding" on the Employee Join hub, not part of the initial create flow.
+      includeOnboarding={false}
     />
   );
 }

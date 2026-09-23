@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
-  ArrowLeft, User, Briefcase, Wallet, Landmark, FileText, Plus, Trash2, Eye, RefreshCw,
+  ArrowLeft, User, Briefcase, FileText, Plus, Trash2, Eye, RefreshCw,
   AlertCircle, CheckCircle2, Users, Star, GraduationCap, History,
 } from 'lucide-react';
 import { RepeatableRows } from '@/components/employees/RepeatableRows';
@@ -11,6 +11,7 @@ import { cn, formatDate } from '@/lib/utils';
 import { AvatarUpload } from '@/components/ui/AvatarUpload';
 import { RequiredMark } from '@/components/ui/RequiredMark';
 import { SearchableSelect } from '@/components/ui/SearchableSelect';
+import { CollapsibleSection, SectionHeading } from '@/components/ui/CollapsibleSection';
 import { EmployeeSearch } from '@/components/employees/EmployeeSearch';
 import { DocumentUploadField } from '@/components/employees/DocumentUploadField';
 import { useSetupOptions, useSetupRows } from '@/lib/setupOptions';
@@ -31,24 +32,22 @@ const STATUS_BADGE: Record<number, { label: string; cls: string }> = {
   2: { label: 'Resigned', cls: 'bg-amber-50 text-amber-600' },
 };
 
+// Three top-level tabs matching the legacy Employee Details screen (Employee/setups/{id} +
+// EmployeeJoin/allonboard/{id}) — each merges several of this component's previous flat tabs.
 const TABS = [
-  { key: 'personal', label: 'Personal', icon: User, title: 'Personal Details', subtitle: 'Basic employee information' },
-  { key: 'professional', label: 'Professional', icon: Briefcase, title: 'Professional Details', subtitle: 'Employment and organizational information' },
-  { key: 'statutory', label: 'Salary & Statutory', icon: Wallet, title: 'Salary & Statutory', subtitle: 'Tax, PF, pension and statutory information' },
-  { key: 'bank', label: 'Bank Details', icon: Landmark, title: 'Bank Details', subtitle: 'Employee salary account information' },
-  { key: 'documents', label: 'Documents', icon: FileText, title: 'Documents', subtitle: 'Identity and supporting documents' },
-  { key: 'family', label: 'Family', icon: Users, title: 'Family & Nominee', subtitle: 'Family member and nominee details' },
-  { key: 'education', label: 'Education', icon: GraduationCap, title: 'Education', subtitle: 'Academic qualifications' },
-  { key: 'experience', label: 'Experience', icon: History, title: 'Work Experience', subtitle: 'Previous employment history' },
+  { key: 'personal-info', label: 'Personal Info', icon: User, title: 'Personal Info', subtitle: 'Personal, statutory and bank details' },
+  { key: 'other-details', label: 'Other Details', icon: FileText, title: 'Other Details', subtitle: 'Education, experience, family and documents' },
+  { key: 'onboarding', label: 'Onboarding', icon: Briefcase, title: 'Onboarding', subtitle: 'Company information and policies & rules' },
 ] as const;
 
 type TabKey = (typeof TABS)[number]['key'];
 
 // Which tab each validated field lives on — used to jump the user to the first invalid tab.
+// Everything validated today lives on the merged Personal Info tab.
 const FIELD_TAB: Record<string, TabKey> = {
-  first_name: 'personal', classification: 'personal', date_of_birth: 'personal', id_card: 'personal',
-  pan_no: 'statutory', pf: 'statutory', company_pf: 'statutory', esi: 'statutory', lwf_code: 'personal',
-  account_no: 'bank',
+  first_name: 'personal-info', classification: 'personal-info', date_of_birth: 'personal-info', id_card: 'personal-info',
+  pan_no: 'personal-info', pf: 'personal-info', company_pf: 'personal-info', esi: 'personal-info', lwf_code: 'personal-info',
+  account_no: 'personal-info',
 };
 
 const EMPTY_DOC = { document_type: '', document_number: '', name: '', relation: '', nationality: '', valid_from: '', valid_till: '' };
@@ -94,7 +93,7 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
   const [savedSnapshot, setSavedSnapshot] = useState('');
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState('');
-  const [activeTab, setActiveTab] = useState<TabKey>('personal');
+  const [activeTab, setActiveTab] = useState<TabKey>('personal-info');
   const seeded = useRef(false);
   // Legacy locks a record on onboarding (editable=0) until an admin explicitly unlocks it —
   // default true so the form isn't briefly disabled while this employee's data is still loading.
@@ -146,6 +145,7 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
   const { data: shifts = [] } = useSetupOptions('setup/shifts', 'day_time_seq', 'day_time_desc');
   const { data: holidayGroups = [] } = useSetupOptions('setup/holiday-groups', 'HOLIDAY_GROUP_ID', 'HOLIDAY_GROUP_NAME');
   const { data: leavePolicyGroups = [] } = useSetupOptions('setup/leavepolicy-groups', 'LEAVEPOLICY_GROUP_ID', 'LEAVEPOLICY_GROUP_NAME');
+  const { data: noticePeriods = [] } = useSetupOptions('setup/notice-periods', 'notice_days', 'description');
 
   // Seed `form` from the server exactly once — a background refetch (window refocus, a
   // document add/remove invalidating ['employee', id]) must not clobber in-progress edits.
@@ -200,6 +200,8 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
         leavepolicy_group_id: data.professional?.LEAVEPOLICY_GROUP_ID != null ? String(data.professional.LEAVEPOLICY_GROUP_ID) : '',
         attr1: data.professional?.attr1 ?? '',
         probation: data.professional?.probation != null ? String(data.professional.probation) : '',
+        emp_company_id: data.professional?.emp_company_id ?? '',
+        notice_days: data.professional?.notice_days != null ? String(data.professional.notice_days) : '',
       };
       setForm(initial);
       setSavedSnapshot(JSON.stringify(initial));
@@ -491,7 +493,7 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
           <div className="flex items-center gap-3.5 min-w-0">
             <AvatarUpload
               name={headerName}
-              imageUrl={form.profile_pic || emp.profile_pic}
+              imageUrl={form.profile_pic !== undefined ? form.profile_pic : emp.profile_pic}
               onUploaded={(path) => setForm((prev) => ({ ...prev, profile_pic: path }))}
               className="w-12 h-12 flex-shrink-0"
               avatarClassName="text-sm"
@@ -571,660 +573,702 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                 </div>
               </div>
 
-              {tab.key === 'personal' && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-5 gap-y-5">
-                  <div>
-                    <label className={LABEL_CLASS}>First Name<RequiredMark /></label>
-                    <input maxLength={100} className={cn(INPUT_CLASS, fieldErrors.first_name && ERROR_INPUT_CLASS)} {...f('first_name')} />
-                    <FieldError>{fieldErrors.first_name}</FieldError>
-                  </div>
-                  <div>
-                    <label className={LABEL_CLASS}>Last Name</label>
-                    <input maxLength={100} className={INPUT_CLASS} {...f('last_name')} />
-                  </div>
-                  <div>
-                    <label className={LABEL_CLASS}>Date of Birth<RequiredMark /></label>
-                    <input type="date" max={MAX_DOB} className={cn(INPUT_CLASS, fieldErrors.date_of_birth && ERROR_INPUT_CLASS)} {...f('date_of_birth')} />
-                    <FieldError>{fieldErrors.date_of_birth}</FieldError>
-                  </div>
-                  <div>
-                    <label className={LABEL_CLASS}>Gender<RequiredMark /></label>
-                    <SearchableSelect
-                      value={form.classification ?? ''}
-                      onChange={(v) => updateField('classification', v)}
-                      options={[{ value: 'male', label: 'Male' }, { value: 'female', label: 'Female' }]}
-                      placeholder="Select"
-                      buttonClassName={cn(INPUT_CLASS, fieldErrors.classification && ERROR_INPUT_CLASS)}
-                    />
-                    <FieldError>{fieldErrors.classification}</FieldError>
-                  </div>
-                  <div>
-                    <label className={LABEL_CLASS}>Mobile</label>
-                    <input type="tel" maxLength={10} className={INPUT_CLASS} {...f('mobile_no')} />
-                  </div>
-                  <div>
-                    <label className={LABEL_CLASS}>Email</label>
-                    <input type="email" className={INPUT_CLASS} {...f('email')} />
-                  </div>
-                  <div>
-                    <label className={LABEL_CLASS}>Blood Group</label>
-                    <SearchableSelect
-                      value={form.blood ?? ''}
-                      onChange={(v) => updateField('blood', v)}
-                      options={['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'].map((bg) => ({ value: bg, label: bg }))}
-                      placeholder="Select"
-                      buttonClassName={INPUT_CLASS}
-                    />
-                  </div>
-                  <div>
-                    <label className={LABEL_CLASS}>Marital Status</label>
-                    <SearchableSelect
-                      value={form.maritual_status ?? ''}
-                      onChange={(v) => updateField('maritual_status', v)}
-                      options={[{ value: 'Single', label: 'Single' }, { value: 'Married', label: 'Married' }]}
-                      placeholder="Select"
-                      buttonClassName={INPUT_CLASS}
-                    />
-                  </div>
-                  <div>
-                    <label className={LABEL_CLASS}>ID Card Number<RequiredMark /></label>
-                    <input maxLength={12} className={cn(INPUT_CLASS, fieldErrors.id_card && ERROR_INPUT_CLASS)} {...f('id_card')} />
-                    <FieldError>{fieldErrors.id_card}</FieldError>
-                  </div>
-                  <div>
-                    <label className={LABEL_CLASS}>LWF Code</label>
-                    <input
-                      maxLength={15}
-                      className={cn(INPUT_CLASS, fieldErrors.lwf_code && ERROR_INPUT_CLASS)}
-                      {...f('lwf_code')}
-                      onChange={(e) => updateField('lwf_code', e.target.value.toUpperCase())}
-                    />
-                    <FieldError>{fieldErrors.lwf_code}</FieldError>
-                  </div>
-                  <div>
-                    <label className={LABEL_CLASS}>WPS ID</label>
-                    <input className={INPUT_CLASS} {...f('wps_code')} />
-                  </div>
-                  <div>
-                    <label className={LABEL_CLASS}>Previous Member ID</label>
-                    <input className={INPUT_CLASS} {...f('previous_member_id')} />
-                  </div>
-                  <div>
-                    <label className={LABEL_CLASS}>District</label>
-                    <input className={INPUT_CLASS} {...f('district')} />
-                  </div>
-                  <div>
-                    <label className={LABEL_CLASS}>State</label>
-                    <input className={INPUT_CLASS} {...f('state')} />
-                  </div>
-                  <div>
-                    <label className={LABEL_CLASS}>Pincode</label>
-                    <input maxLength={6} className={INPUT_CLASS} {...f('pincode')} />
-                  </div>
-                  <div>
-                    <label className={LABEL_CLASS}>Guardian Name</label>
-                    <input className={INPUT_CLASS} {...f('guradian')} />
-                  </div>
-                  <div>
-                    <label className={LABEL_CLASS}>Relation to Guardian</label>
-                    <input className={INPUT_CLASS} {...f('relation_guardian')} />
-                  </div>
-                  <div className="col-span-full">
-                    <label className={LABEL_CLASS}>Address</label>
-                    <textarea
-                      rows={2}
-                      className={cn(INPUT_CLASS, 'h-auto py-2.5')}
-                      value={form.address ?? ''}
-                      onChange={(e) => setForm((prev) => ({ ...prev, address: e.target.value }))}
-                    />
-                  </div>
-
-                  <div className="col-span-full flex flex-col gap-3 pt-1">
-                    <div className="flex items-center gap-6 flex-wrap">
-                      <div className="flex items-center gap-3">
-                        {checkbox('international_worker', 'International Worker')}
-                        <SearchableSelect
-                          value={form.country ?? ''}
-                          onChange={(v) => updateField('country', v)}
-                          options={nationalities.map((n) => ({ value: String(n.id), label: n.country_name }))}
-                          placeholder="Country of origin"
-                          buttonClassName={cn(INPUT_CLASS, 'w-44 py-1.5 shrink-0')}
-                          disabled={form.international_worker !== 'Y'}
-                        />
-                      </div>
-                      {checkbox('physical_handicap', 'Physical Handicap')}
+              {tab.key === 'personal-info' && (
+                <div className="space-y-8">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-5 gap-y-5">
+                    <div>
+                      <label className={LABEL_CLASS}>First Name<RequiredMark /></label>
+                      <input maxLength={100} className={cn(INPUT_CLASS, fieldErrors.first_name && ERROR_INPUT_CLASS)} {...f('first_name')} />
+                      <FieldError>{fieldErrors.first_name}</FieldError>
                     </div>
-                    {form.physical_handicap === 'Y' && (
-                      <div className="flex flex-wrap gap-4 pl-1">
-                        {checkbox('locomotive', 'Locomotive')}
-                        {checkbox('hearing', 'Hearing')}
-                        {checkbox('visual', 'Visual')}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {tab.key === 'professional' && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-5 gap-y-5">
-                  <div>
-                    <label className={LABEL_CLASS}>Joining Date</label>
-                    <input type="date" className={INPUT_CLASS} {...f('joining_date')} />
-                  </div>
-                  <div>
-                    <label className={LABEL_CLASS}>Employment Type</label>
-                    <SearchableSelect
-                      value={form.emp_type ?? ''}
-                      onChange={(v) => updateField('emp_type', v)}
-                      options={EMP_TYPES.map((t) => ({ value: t, label: t }))}
-                      placeholder="Select"
-                      buttonClassName={INPUT_CLASS}
-                    />
-                  </div>
-                  {[
-                    { key: 'emp_branch', label: 'Branch', opts: branches },
-                    { key: 'emp_dept', label: 'Department', opts: departments },
-                    { key: 'designation', label: 'Designation', opts: designations },
-                    { key: 'emp_grade', label: 'Grade', opts: grades },
-                    { key: 'day_time_seq', label: 'Shift Policy', opts: shifts },
-                    { key: 'holiday_group_id', label: 'Holiday Group', opts: holidayGroups },
-                    { key: 'leavepolicy_group_id', label: 'Leave Policy Group', opts: leavePolicyGroups },
-                  ].map(({ key, label, opts }) => (
-                    <div key={key}>
-                      <label className={LABEL_CLASS}>{label}</label>
+                    <div>
+                      <label className={LABEL_CLASS}>Last Name</label>
+                      <input maxLength={100} className={INPUT_CLASS} {...f('last_name')} />
+                    </div>
+                    <div>
+                      <label className={LABEL_CLASS}>Date of Birth<RequiredMark /></label>
+                      <input type="date" max={MAX_DOB} className={cn(INPUT_CLASS, fieldErrors.date_of_birth && ERROR_INPUT_CLASS)} {...f('date_of_birth')} />
+                      <FieldError>{fieldErrors.date_of_birth}</FieldError>
+                    </div>
+                    <div>
+                      <label className={LABEL_CLASS}>Gender<RequiredMark /></label>
                       <SearchableSelect
-                        value={form[key] ?? ''}
-                        onChange={(v) => updateField(key, v)}
-                        options={opts}
-                        placeholder={`Select ${label.toLowerCase()}`}
+                        value={form.classification ?? ''}
+                        onChange={(v) => updateField('classification', v)}
+                        options={[{ value: 'male', label: 'Male' }, { value: 'female', label: 'Female' }]}
+                        placeholder="Select"
+                        buttonClassName={cn(INPUT_CLASS, fieldErrors.classification && ERROR_INPUT_CLASS)}
+                      />
+                      <FieldError>{fieldErrors.classification}</FieldError>
+                    </div>
+                    <div>
+                      <label className={LABEL_CLASS}>Mobile</label>
+                      <input type="tel" maxLength={10} className={INPUT_CLASS} {...f('mobile_no')} />
+                    </div>
+                    <div>
+                      <label className={LABEL_CLASS}>Email</label>
+                      <input type="email" className={INPUT_CLASS} {...f('email')} />
+                    </div>
+                    <div>
+                      <label className={LABEL_CLASS}>Blood Group</label>
+                      <SearchableSelect
+                        value={form.blood ?? ''}
+                        onChange={(v) => updateField('blood', v)}
+                        options={['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'].map((bg) => ({ value: bg, label: bg }))}
+                        placeholder="Select"
                         buttonClassName={INPUT_CLASS}
                       />
                     </div>
-                  ))}
-                  <div>
-                    <label className={LABEL_CLASS}>Probation Period (days)</label>
-                    <input type="number" className={INPUT_CLASS} {...f('probation')} />
+                    <div>
+                      <label className={LABEL_CLASS}>Marital Status</label>
+                      <SearchableSelect
+                        value={form.maritual_status ?? ''}
+                        onChange={(v) => updateField('maritual_status', v)}
+                        options={[{ value: 'Single', label: 'Single' }, { value: 'Married', label: 'Married' }]}
+                        placeholder="Select"
+                        buttonClassName={INPUT_CLASS}
+                      />
+                    </div>
+                    <div>
+                      <label className={LABEL_CLASS}>ID Card Number<RequiredMark /></label>
+                      <input maxLength={12} className={cn(INPUT_CLASS, fieldErrors.id_card && ERROR_INPUT_CLASS)} {...f('id_card')} />
+                      <FieldError>{fieldErrors.id_card}</FieldError>
+                    </div>
+                    <div>
+                      <label className={LABEL_CLASS}>LWF Code</label>
+                      <input
+                        maxLength={15}
+                        className={cn(INPUT_CLASS, fieldErrors.lwf_code && ERROR_INPUT_CLASS)}
+                        {...f('lwf_code')}
+                        onChange={(e) => updateField('lwf_code', e.target.value.toUpperCase())}
+                      />
+                      <FieldError>{fieldErrors.lwf_code}</FieldError>
+                    </div>
+                    <div>
+                      <label className={LABEL_CLASS}>WPS ID</label>
+                      <input className={INPUT_CLASS} {...f('wps_code')} />
+                    </div>
+                    <div>
+                      <label className={LABEL_CLASS}>Previous Member ID</label>
+                      <input className={INPUT_CLASS} {...f('previous_member_id')} />
+                    </div>
+                    <div>
+                      <label className={LABEL_CLASS}>District</label>
+                      <input className={INPUT_CLASS} {...f('district')} />
+                    </div>
+                    <div>
+                      <label className={LABEL_CLASS}>State</label>
+                      <input className={INPUT_CLASS} {...f('state')} />
+                    </div>
+                    <div>
+                      <label className={LABEL_CLASS}>Pincode</label>
+                      <input maxLength={6} className={INPUT_CLASS} {...f('pincode')} />
+                    </div>
+                    <div>
+                      <label className={LABEL_CLASS}>Guardian Name</label>
+                      <input className={INPUT_CLASS} {...f('guradian')} />
+                    </div>
+                    <div>
+                      <label className={LABEL_CLASS}>Relation to Guardian</label>
+                      <input className={INPUT_CLASS} {...f('relation_guardian')} />
+                    </div>
+                    <div className="col-span-full">
+                      <label className={LABEL_CLASS}>Address</label>
+                      <textarea
+                        rows={2}
+                        className={cn(INPUT_CLASS, 'h-auto py-2.5')}
+                        value={form.address ?? ''}
+                        onChange={(e) => setForm((prev) => ({ ...prev, address: e.target.value }))}
+                      />
+                    </div>
+
+                    <div className="col-span-full flex flex-col gap-3 pt-1">
+                      <div className="flex items-center gap-6 flex-wrap">
+                        <div className="flex items-center gap-3">
+                          {checkbox('international_worker', 'International Worker')}
+                          <SearchableSelect
+                            value={form.country ?? ''}
+                            onChange={(v) => updateField('country', v)}
+                            options={nationalities.map((n) => ({ value: String(n.id), label: n.country_name }))}
+                            placeholder="Country of origin"
+                            buttonClassName={cn(INPUT_CLASS, 'w-44 py-1.5 shrink-0')}
+                            disabled={form.international_worker !== 'Y'}
+                          />
+                        </div>
+                        {checkbox('physical_handicap', 'Physical Handicap')}
+                      </div>
+                      {form.physical_handicap === 'Y' && (
+                        <div className="flex flex-wrap gap-4 pl-1">
+                          {checkbox('locomotive', 'Locomotive')}
+                          {checkbox('hearing', 'Hearing')}
+                          {checkbox('visual', 'Visual')}
+                        </div>
+                      )}
+                    </div>
                   </div>
+
                   <div>
-                    <label className={LABEL_CLASS}>Reporting Manager</label>
-                    <EmployeeSearch
-                      value={form.attr1 ?? ''}
-                      onChange={(empPkey) => setForm((prev) => ({ ...prev, attr1: empPkey }))}
-                    />
-                  </div>
-                </div>
-              )}
-
-              {tab.key === 'education' && (
-                <RepeatableRows
-                  pkeyField="education_pkey"
-                  rows={education}
-                  addLabel="Add education"
-                  onAdd={addEducation}
-                  onRemove={removeEducation}
-                  fields={[
-                    { key: 'degree', label: 'Course', required: true },
-                    { key: 'university', label: 'University', required: true },
-                    { key: 'duration', label: 'Duration', required: true },
-                    { key: 'marks', label: 'Marks', required: true },
-                  ]}
-                />
-              )}
-
-              {tab.key === 'experience' && (
-                <RepeatableRows
-                  pkeyField="experience_pkey"
-                  rows={experience}
-                  addLabel="Add experience"
-                  onAdd={addExperience}
-                  onRemove={removeExperience}
-                  fields={[
-                    { key: 'company_name', label: 'Company', required: true },
-                    { key: 'designation', label: 'Designation', required: true },
-                    { key: 'department', label: 'Department', required: true },
-                    { key: 'from_date', label: 'From', type: 'date', required: true },
-                    { key: 'to_date', label: 'To', type: 'date', required: true },
-                    { key: 'salary', label: 'Salary', type: 'number', required: true },
-                  ]}
-                />
-              )}
-
-              {tab.key === 'statutory' && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-5 gap-y-5">
-                  {structures.length > 0 || ctc ? (
-                    <div className="col-span-full rounded-lg bg-slate-50 border border-slate-100 px-4 py-3.5 grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-2 mb-1">
+                    <SectionHeading>Statutory Details</SectionHeading>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-5 gap-y-5">
                       <div>
-                        <p className="text-[11px] text-slate-400 mb-0.5">Salary Structure</p>
-                        <p className="text-[13px] font-medium text-[#0F172A]">
-                          {structures.find((s) => s.value === String(prof?.structure_id))?.label || '—'}
-                        </p>
+                        <label className={LABEL_CLASS}>PAN Number</label>
+                        <input
+                          maxLength={10}
+                          className={cn(INPUT_CLASS, fieldErrors.pan_no && ERROR_INPUT_CLASS)}
+                          {...f('pan_no')}
+                          onChange={(e) => updateField('pan_no', e.target.value.toUpperCase())}
+                        />
+                        {fieldErrors.pan_no ? <FieldError>{fieldErrors.pan_no}</FieldError> : <HelperText>Format: ABCDE1234F</HelperText>}
                       </div>
                       <div>
-                        <p className="text-[11px] text-slate-400 mb-0.5">Annual CTC</p>
-                        <p className="text-[13px] font-medium text-[#0F172A]">{ctc?.emp_anual_ctc ?? '—'}</p>
+                        <label className={LABEL_CLASS}>PF Number</label>
+                        <input maxLength={22} className={cn(INPUT_CLASS, fieldErrors.pf && ERROR_INPUT_CLASS)} {...f('pf')} />
+                        <FieldError>{fieldErrors.pf}</FieldError>
                       </div>
                       <div>
-                        <p className="text-[11px] text-slate-400 mb-0.5">Monthly CTC</p>
-                        <p className="text-[13px] font-medium text-[#0F172A]">{ctc?.emp_monthly_ctc ?? '—'}</p>
+                        <label className={LABEL_CLASS}>UAN No</label>
+                        <input maxLength={12} className={cn(INPUT_CLASS, fieldErrors.company_pf && ERROR_INPUT_CLASS)} {...f('company_pf')} />
+                        <FieldError>{fieldErrors.company_pf}</FieldError>
+                      </div>
+                      <div>
+                        <label className={LABEL_CLASS}>EPS</label>
+                        <input className={INPUT_CLASS} {...f('eps')} />
+                      </div>
+                      <div>
+                        <label className={LABEL_CLASS}>ESI Number</label>
+                        <input maxLength={10} className={cn(INPUT_CLASS, fieldErrors.esi && ERROR_INPUT_CLASS)} {...f('esi')} />
+                        {fieldErrors.esi ? <FieldError>{fieldErrors.esi}</FieldError> : <HelperText>10 digits</HelperText>}
+                      </div>
+                      <div>
+                        <label className={LABEL_CLASS}>ESI Dispensary</label>
+                        <input className={INPUT_CLASS} {...f('esi_dispensary')} />
                       </div>
                     </div>
-                  ) : null}
+                  </div>
+
                   <div>
-                    <label className={LABEL_CLASS}>PAN Number</label>
-                    <input
-                      maxLength={10}
-                      className={cn(INPUT_CLASS, fieldErrors.pan_no && ERROR_INPUT_CLASS)}
-                      {...f('pan_no')}
-                      onChange={(e) => updateField('pan_no', e.target.value.toUpperCase())}
+                    <SectionHeading>Bank Details</SectionHeading>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-5 gap-y-5">
+                      <div>
+                        <label className={LABEL_CLASS}>Bank Name</label>
+                        <input maxLength={100} className={INPUT_CLASS} {...f('bank_name')} />
+                      </div>
+                      <div>
+                        <label className={LABEL_CLASS}>Bank Branch</label>
+                        <input maxLength={100} className={INPUT_CLASS} {...f('bank_branch_name')} />
+                      </div>
+                      <div>
+                        <label className={LABEL_CLASS}>IFSC Code</label>
+                        <input maxLength={12} className={INPUT_CLASS} {...f('ifsc_code')} />
+                      </div>
+                      <div>
+                        <label className={LABEL_CLASS}>Account Number</label>
+                        <input maxLength={18} className={cn(INPUT_CLASS, fieldErrors.account_no && ERROR_INPUT_CLASS)} {...f('account_no')} />
+                        <FieldError>{fieldErrors.account_no}</FieldError>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {tab.key === 'onboarding' && (
+                <div className="space-y-8">
+                  <div>
+                    <SectionHeading>Company Information</SectionHeading>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-5 gap-y-5">
+                      {structures.length > 0 || ctc ? (
+                        <div className="col-span-full rounded-lg bg-slate-50 border border-slate-100 px-4 py-3.5 grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-2 mb-1">
+                          <div>
+                            <p className="text-[11px] text-slate-400 mb-0.5">Salary Structure</p>
+                            <p className="text-[13px] font-medium text-[#0F172A]">
+                              {structures.find((s) => s.value === String(prof?.structure_id))?.label || '—'}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-[11px] text-slate-400 mb-0.5">Annual CTC</p>
+                            <p className="text-[13px] font-medium text-[#0F172A]">{ctc?.emp_anual_ctc ?? '—'}</p>
+                          </div>
+                          <div>
+                            <p className="text-[11px] text-slate-400 mb-0.5">Monthly CTC</p>
+                            <p className="text-[13px] font-medium text-[#0F172A]">{ctc?.emp_monthly_ctc ?? '—'}</p>
+                          </div>
+                        </div>
+                      ) : null}
+                      <div>
+                        <label className={LABEL_CLASS}>Joining Date</label>
+                        <input type="date" className={INPUT_CLASS} {...f('joining_date')} />
+                      </div>
+                      <div>
+                        <label className={LABEL_CLASS}>Employee ID</label>
+                        <input className={INPUT_CLASS} {...f('emp_company_id')} />
+                      </div>
+                      <div>
+                        <label className={LABEL_CLASS}>Employment Type</label>
+                        <SearchableSelect
+                          value={form.emp_type ?? ''}
+                          onChange={(v) => updateField('emp_type', v)}
+                          options={EMP_TYPES.map((t) => ({ value: t, label: t }))}
+                          placeholder="Select"
+                          buttonClassName={INPUT_CLASS}
+                        />
+                      </div>
+                      {[
+                        { key: 'emp_branch', label: 'Branch', opts: branches },
+                        { key: 'emp_dept', label: 'Department', opts: departments },
+                        { key: 'designation', label: 'Designation', opts: designations },
+                        { key: 'emp_grade', label: 'Grade', opts: grades },
+                      ].map(({ key, label, opts }) => (
+                        <div key={key}>
+                          <label className={LABEL_CLASS}>{label}</label>
+                          <SearchableSelect
+                            value={form[key] ?? ''}
+                            onChange={(v) => updateField(key, v)}
+                            options={opts}
+                            placeholder={`Select ${label.toLowerCase()}`}
+                            buttonClassName={INPUT_CLASS}
+                          />
+                        </div>
+                      ))}
+                      <div>
+                        <label className={LABEL_CLASS}>Notice Period</label>
+                        <SearchableSelect
+                          value={form.notice_days ?? ''}
+                          onChange={(v) => updateField('notice_days', v)}
+                          options={noticePeriods}
+                          placeholder="Select notice period"
+                          buttonClassName={INPUT_CLASS}
+                        />
+                      </div>
+                      <div>
+                        <label className={LABEL_CLASS}>Probation Period (days)</label>
+                        <input type="number" className={INPUT_CLASS} {...f('probation')} />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <SectionHeading>Policies & Rules</SectionHeading>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-5 gap-y-5">
+                      {[
+                        { key: 'day_time_seq', label: 'Shift Policy', opts: shifts },
+                        { key: 'holiday_group_id', label: 'Holiday Group', opts: holidayGroups },
+                        { key: 'leavepolicy_group_id', label: 'Leave Policy Group', opts: leavePolicyGroups },
+                      ].map(({ key, label, opts }) => (
+                        <div key={key}>
+                          <label className={LABEL_CLASS}>{label}</label>
+                          <SearchableSelect
+                            value={form[key] ?? ''}
+                            onChange={(v) => updateField(key, v)}
+                            options={opts}
+                            placeholder={`Select ${label.toLowerCase()}`}
+                            buttonClassName={INPUT_CLASS}
+                          />
+                        </div>
+                      ))}
+                      <div>
+                        <label className={LABEL_CLASS}>Reporting Manager (Superior)</label>
+                        <EmployeeSearch
+                          value={form.attr1 ?? ''}
+                          onChange={(empPkey) => setForm((prev) => ({ ...prev, attr1: empPkey }))}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {tab.key === 'other-details' && (
+                <div className="space-y-4">
+                  <CollapsibleSection title="Education" icon={GraduationCap}>
+                    <RepeatableRows
+                      pkeyField="education_pkey"
+                      rows={education}
+                      addLabel="Add education"
+                      onAdd={addEducation}
+                      onRemove={removeEducation}
+                      fields={[
+                        { key: 'degree', label: 'Course', required: true },
+                        { key: 'university', label: 'University', required: true },
+                        { key: 'duration', label: 'Duration', required: true },
+                        { key: 'marks', label: 'Marks', required: true },
+                      ]}
                     />
-                    {fieldErrors.pan_no ? <FieldError>{fieldErrors.pan_no}</FieldError> : <HelperText>Format: ABCDE1234F</HelperText>}
-                  </div>
-                  <div>
-                    <label className={LABEL_CLASS}>PF Number</label>
-                    <input maxLength={22} className={cn(INPUT_CLASS, fieldErrors.pf && ERROR_INPUT_CLASS)} {...f('pf')} />
-                    <FieldError>{fieldErrors.pf}</FieldError>
-                  </div>
-                  <div>
-                    <label className={LABEL_CLASS}>Company PF</label>
-                    <input maxLength={12} className={cn(INPUT_CLASS, fieldErrors.company_pf && ERROR_INPUT_CLASS)} {...f('company_pf')} />
-                    <FieldError>{fieldErrors.company_pf}</FieldError>
-                  </div>
-                  <div>
-                    <label className={LABEL_CLASS}>EPS</label>
-                    <input className={INPUT_CLASS} {...f('eps')} />
-                  </div>
-                  <div>
-                    <label className={LABEL_CLASS}>ESI Number</label>
-                    <input maxLength={10} className={cn(INPUT_CLASS, fieldErrors.esi && ERROR_INPUT_CLASS)} {...f('esi')} />
-                    {fieldErrors.esi ? <FieldError>{fieldErrors.esi}</FieldError> : <HelperText>10 digits</HelperText>}
-                  </div>
-                  <div>
-                    <label className={LABEL_CLASS}>ESI Dispensary</label>
-                    <input className={INPUT_CLASS} {...f('esi_dispensary')} />
-                  </div>
-                </div>
-              )}
+                  </CollapsibleSection>
 
-              {tab.key === 'bank' && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-5 gap-y-5">
-                  <div>
-                    <label className={LABEL_CLASS}>Bank Name</label>
-                    <input maxLength={100} className={INPUT_CLASS} {...f('bank_name')} />
-                  </div>
-                  <div>
-                    <label className={LABEL_CLASS}>Bank Branch</label>
-                    <input maxLength={100} className={INPUT_CLASS} {...f('bank_branch_name')} />
-                  </div>
-                  <div>
-                    <label className={LABEL_CLASS}>IFSC Code</label>
-                    <input maxLength={12} className={INPUT_CLASS} {...f('ifsc_code')} />
-                  </div>
-                  <div>
-                    <label className={LABEL_CLASS}>Account Number</label>
-                    <input maxLength={18} className={cn(INPUT_CLASS, fieldErrors.account_no && ERROR_INPUT_CLASS)} {...f('account_no')} />
-                    <FieldError>{fieldErrors.account_no}</FieldError>
-                  </div>
-                </div>
-              )}
+                  <CollapsibleSection title="Experience" icon={History}>
+                    <RepeatableRows
+                      pkeyField="experience_pkey"
+                      rows={experience}
+                      addLabel="Add experience"
+                      onAdd={addExperience}
+                      onRemove={removeExperience}
+                      fields={[
+                        { key: 'company_name', label: 'Company', required: true },
+                        { key: 'designation', label: 'Designation', required: true },
+                        { key: 'department', label: 'Department', required: true },
+                        { key: 'from_date', label: 'From', type: 'date', required: true },
+                        { key: 'to_date', label: 'To', type: 'date', required: true },
+                        { key: 'salary', label: 'Salary', type: 'number', required: true },
+                      ]}
+                    />
+                  </CollapsibleSection>
 
-              {tab.key === 'documents' && (
-                <div>
-                  {documents.length === 0 && !showDocForm && (
-                    <p className="text-sm text-slate-400 py-6 text-center border border-dashed border-slate-200 rounded-lg">
-                      No documents added yet.
-                    </p>
-                  )}
-                  {documents.length > 0 && (
-                    <div className="space-y-2.5">
-                      {documents.map((row) => {
-                        const validity = row.valid_from
-                          ? `Valid ${formatDate(row.valid_from as string)}${row.valid_till ? ` – ${formatDate(row.valid_till as string)}` : ''}`
-                          : '';
-                        return (
-                          <div
-                            key={String(row.emp_passport_visa_pkey)}
-                            className="flex items-center gap-3.5 rounded-lg border border-slate-100 bg-white px-4 py-3.5 hover:border-slate-200 transition-colors duration-150"
-                          >
-                            <span className="w-9 h-9 rounded-lg bg-[color:var(--color-primary)]/8 text-[color:var(--color-primary)] flex items-center justify-center flex-shrink-0">
-                              <FileText className="w-4 h-4" />
-                            </span>
-                            <div className="min-w-0 flex-1">
-                              <p className="text-sm font-medium text-[#0F172A] truncate">
-                                {String(row.document_type || 'Document')} · {String(row.document_number || '—')}
-                              </p>
-                              <p className="text-xs text-slate-400 mt-0.5 truncate">
-                                {String(row.name || '')}{validity ? ` · ${validity}` : ''}
-                              </p>
-                            </div>
-                            <span className="text-[11px] font-medium px-2 py-1 rounded-full bg-[color:var(--color-success)]/10 text-[color:var(--color-success)] flex-shrink-0">
-                              Uploaded
-                            </span>
-                            <div className="flex items-center gap-0.5 flex-shrink-0">
-                              {row.files ? (
-                                <a
-                                  href={String(row.files)}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="p-2 rounded-lg text-slate-400 hover:text-[color:var(--color-primary)] hover:bg-slate-50 transition-colors duration-150"
-                                  title="View"
-                                >
-                                  <Eye className="w-4 h-4" />
-                                </a>
-                              ) : null}
+                  <CollapsibleSection title="Family" icon={Users}>
+                    {family.length === 0 && !showFamilyForm && (
+                      <p className="text-sm text-slate-400 py-6 text-center border border-dashed border-slate-200 rounded-lg">
+                        No family members added yet.
+                      </p>
+                    )}
+                    {family.length > 0 && (
+                      <div className="space-y-2.5">
+                        {family.map((row) => {
+                          const dob = row.DOB ? new Date(String(row.DOB)) : null;
+                          const age = dob && !Number.isNaN(dob.getTime())
+                            ? Math.floor((Date.now() - dob.getTime()) / (365.25 * 24 * 60 * 60 * 1000))
+                            : null;
+                          return (
+                            <div
+                              key={String(row.emp_family_pkey)}
+                              className="flex items-center gap-3.5 rounded-lg border border-slate-100 bg-white px-4 py-3.5 hover:border-slate-200 transition-colors duration-150"
+                            >
+                              <span className="w-9 h-9 rounded-lg bg-[color:var(--color-primary)]/8 text-[color:var(--color-primary)] flex items-center justify-center flex-shrink-0">
+                                <Users className="w-4 h-4" />
+                              </span>
+                              <div className="min-w-0 flex-1">
+                                <p className="text-sm font-medium text-[#0F172A] truncate flex items-center gap-1.5">
+                                  {String(row.name || '—')}
+                                  {row.is_nominee === 'Y' && <Star className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" fill="currentColor" />}
+                                </p>
+                                <p className="text-xs text-slate-400 mt-0.5 truncate">
+                                  {String(row.relation || '')}{age != null ? ` · ${age} yrs` : ''}{row.contact_number ? ` · ${row.contact_number}` : ''}
+                                </p>
+                              </div>
+                              {row.is_nominee === 'Y' && (
+                                <span className="text-[11px] font-medium px-2 py-1 rounded-full bg-amber-50 text-amber-600 flex-shrink-0">
+                                  Nominee
+                                </span>
+                              )}
                               <button
                                 type="button"
-                                onClick={() => openReplaceDocument(row)}
-                                className="p-2 rounded-lg text-slate-400 hover:text-[color:var(--color-primary)] hover:bg-slate-50 transition-colors duration-150"
-                                title="Replace"
-                              >
-                                <RefreshCw className="w-4 h-4" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => removeDocument(Number(row.emp_passport_visa_pkey))}
-                                className="p-2 rounded-lg text-slate-400 hover:text-[color:var(--color-danger)] hover:bg-slate-50 transition-colors duration-150"
+                                onClick={() => removeFamilyMember(Number(row.emp_family_pkey))}
+                                className="p-2 rounded-lg text-slate-400 hover:text-[color:var(--color-danger)] hover:bg-slate-50 transition-colors duration-150 flex-shrink-0"
                                 title="Delete"
                               >
                                 <Trash2 className="w-4 h-4" />
                               </button>
                             </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {!showFamilyForm && (
+                      <button
+                        type="button"
+                        onClick={openAddFamily}
+                        className="mt-4 inline-flex items-center gap-1.5 text-sm font-medium text-[color:var(--color-primary)] hover:opacity-80 transition-opacity duration-150"
+                      >
+                        <Plus className="w-4 h-4" /> Add Family Member
+                      </button>
+                    )}
+
+                    {showFamilyForm && (
+                      <div className="mt-4 rounded-xl border border-slate-100 bg-slate-50/60 p-5">
+                        <h3 className="text-sm font-semibold text-[#0F172A] mb-4">Add Family Member</h3>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-5 gap-y-4">
+                          <div>
+                            <label className={LABEL_CLASS}>Name<RequiredMark /></label>
+                            <input
+                              maxLength={100}
+                              className={cn(INPUT_CLASS, familyErrors.name && ERROR_INPUT_CLASS)}
+                              value={familyDraft.name}
+                              onChange={(e) => setFamilyDraft((p) => ({ ...p, name: e.target.value }))}
+                            />
+                            <FieldError>{familyErrors.name}</FieldError>
                           </div>
-                        );
-                      })}
-                    </div>
-                  )}
-
-                  {!showDocForm && (
-                    <button
-                      type="button"
-                      onClick={openAddDocument}
-                      className="mt-4 inline-flex items-center gap-1.5 text-sm font-medium text-[color:var(--color-primary)] hover:opacity-80 transition-opacity duration-150"
-                    >
-                      <Plus className="w-4 h-4" /> Add Document
-                    </button>
-                  )}
-
-                  {showDocForm && (
-                    <div className="mt-4 rounded-xl border border-slate-100 bg-slate-50/60 p-5">
-                      <h3 className="text-sm font-semibold text-[#0F172A] mb-4">
-                        {replacingPkey != null ? 'Replace Document' : 'Add Document'}
-                      </h3>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-5 gap-y-4">
-                        <div>
-                          <label className={LABEL_CLASS}>Document Type<RequiredMark /></label>
-                          <SearchableSelect
-                            value={docDraft.document_type}
-                            onChange={(v) => setDocDraft((p) => ({ ...p, document_type: v }))}
-                            options={DOCUMENT_TYPES.map((d) => ({ value: d, label: d }))}
-                            placeholder="Select type"
-                            buttonClassName={cn(INPUT_CLASS, docErrors.document_type && ERROR_INPUT_CLASS)}
-                          />
-                          <FieldError>{docErrors.document_type}</FieldError>
+                          <div>
+                            <label className={LABEL_CLASS}>Relation<RequiredMark /></label>
+                            <SearchableSelect
+                              value={familyDraft.relation}
+                              onChange={(v) => setFamilyDraft((p) => ({ ...p, relation: v }))}
+                              options={FAMILY_RELATIONS.map((r) => ({ value: r, label: r }))}
+                              placeholder="Select relation"
+                              buttonClassName={cn(INPUT_CLASS, familyErrors.relation && ERROR_INPUT_CLASS)}
+                            />
+                            <FieldError>{familyErrors.relation}</FieldError>
+                          </div>
+                          <div>
+                            <label className={LABEL_CLASS}>Gender<RequiredMark /></label>
+                            <SearchableSelect
+                              value={familyDraft.gender}
+                              onChange={(v) => setFamilyDraft((p) => ({ ...p, gender: v }))}
+                              options={[{ value: 'Male', label: 'Male' }, { value: 'Female', label: 'Female' }, { value: 'Other', label: 'Other' }]}
+                              placeholder="Select gender"
+                              buttonClassName={cn(INPUT_CLASS, familyErrors.gender && ERROR_INPUT_CLASS)}
+                            />
+                            <FieldError>{familyErrors.gender}</FieldError>
+                          </div>
+                          <div>
+                            <label className={LABEL_CLASS}>Date of Birth<RequiredMark /></label>
+                            <input
+                              type="date"
+                              max={TODAY}
+                              className={cn(INPUT_CLASS, familyErrors.DOB && ERROR_INPUT_CLASS)}
+                              value={familyDraft.DOB}
+                              onChange={(e) => setFamilyDraft((p) => ({ ...p, DOB: e.target.value }))}
+                            />
+                            <FieldError>{familyErrors.DOB}</FieldError>
+                          </div>
+                          <div>
+                            <label className={LABEL_CLASS}>Blood Group</label>
+                            <input
+                              maxLength={5}
+                              className={INPUT_CLASS}
+                              value={familyDraft.blood_group}
+                              onChange={(e) => setFamilyDraft((p) => ({ ...p, blood_group: e.target.value }))}
+                            />
+                          </div>
+                          <div>
+                            <label className={LABEL_CLASS}>Nationality</label>
+                            <input
+                              className={INPUT_CLASS}
+                              value={familyDraft.nationality}
+                              onChange={(e) => setFamilyDraft((p) => ({ ...p, nationality: e.target.value }))}
+                            />
+                          </div>
+                          <div>
+                            <label className={LABEL_CLASS}>Contact Number<RequiredMark /></label>
+                            <input
+                              maxLength={10}
+                              className={cn(INPUT_CLASS, familyErrors.contact_number && ERROR_INPUT_CLASS)}
+                              value={familyDraft.contact_number}
+                              onChange={(e) => setFamilyDraft((p) => ({ ...p, contact_number: e.target.value }))}
+                            />
+                            <FieldError>{familyErrors.contact_number}</FieldError>
+                          </div>
+                          <div>
+                            <label className={LABEL_CLASS}>Alternative Number</label>
+                            <input
+                              maxLength={10}
+                              className={INPUT_CLASS}
+                              value={familyDraft.alternate_number}
+                              onChange={(e) => setFamilyDraft((p) => ({ ...p, alternate_number: e.target.value }))}
+                            />
+                          </div>
                         </div>
-                        <div>
-                          <label className={LABEL_CLASS}>Document Number<RequiredMark /></label>
-                          <input
-                            className={cn(INPUT_CLASS, docErrors.document_number && ERROR_INPUT_CLASS)}
-                            value={docDraft.document_number}
-                            onChange={(e) => setDocDraft((p) => ({ ...p, document_number: e.target.value }))}
-                          />
-                          <FieldError>{docErrors.document_number}</FieldError>
+                        <div className="flex flex-wrap gap-4 mt-4">
+                          <label className="flex items-center gap-2 text-sm text-slate-600">
+                            <input
+                              type="checkbox"
+                              checked={familyDraft.is_nominee === 'Y'}
+                              onChange={(e) => setFamilyDraft((p) => ({ ...p, is_nominee: e.target.checked ? 'Y' : 'N' }))}
+                              className="accent-[color:var(--color-primary)]"
+                            />
+                            Mark as Nominee
+                          </label>
+                          <label className="flex items-center gap-2 text-sm text-slate-600">
+                            <input
+                              type="checkbox"
+                              checked={familyDraft.emergency_contact === 'Y'}
+                              onChange={(e) => setFamilyDraft((p) => ({ ...p, emergency_contact: e.target.checked ? 'Y' : 'N' }))}
+                              className="accent-[color:var(--color-primary)]"
+                            />
+                            Mark as Emergency Contact
+                          </label>
                         </div>
-                        <div>
-                          <label className={LABEL_CLASS}>Name on Document<RequiredMark /></label>
-                          <input
-                            className={cn(INPUT_CLASS, docErrors.name && ERROR_INPUT_CLASS)}
-                            value={docDraft.name}
-                            onChange={(e) => setDocDraft((p) => ({ ...p, name: e.target.value }))}
-                          />
-                          <FieldError>{docErrors.name}</FieldError>
-                        </div>
-                        <div>
-                          <label className={LABEL_CLASS}>Relation<RequiredMark /></label>
-                          <input
-                            className={cn(INPUT_CLASS, docErrors.relation && ERROR_INPUT_CLASS)}
-                            value={docDraft.relation}
-                            onChange={(e) => setDocDraft((p) => ({ ...p, relation: e.target.value }))}
-                          />
-                          <FieldError>{docErrors.relation}</FieldError>
-                        </div>
-                        <div>
-                          <label className={LABEL_CLASS}>Nationality</label>
-                          <input
-                            className={INPUT_CLASS}
-                            value={docDraft.nationality}
-                            onChange={(e) => setDocDraft((p) => ({ ...p, nationality: e.target.value }))}
-                          />
-                        </div>
-                        <div>
-                          <label className={LABEL_CLASS}>Valid From<RequiredMark /></label>
-                          <input
-                            type="date"
-                            className={cn(INPUT_CLASS, docErrors.valid_from && ERROR_INPUT_CLASS)}
-                            value={docDraft.valid_from}
-                            onChange={(e) => setDocDraft((p) => ({ ...p, valid_from: e.target.value }))}
-                          />
-                          <FieldError>{docErrors.valid_from}</FieldError>
-                        </div>
-                        <div>
-                          <label className={LABEL_CLASS}>Valid Till</label>
-                          <input
-                            type="date"
-                            className={INPUT_CLASS}
-                            value={docDraft.valid_till}
-                            onChange={(e) => setDocDraft((p) => ({ ...p, valid_till: e.target.value }))}
-                          />
-                        </div>
-                      </div>
-                      <div className="mt-4">
-                        <label className={LABEL_CLASS}>File Upload</label>
-                        <DocumentUploadField value={docFile} onChange={setDocFile} />
-                      </div>
-                      <div className="flex items-center gap-2 mt-5">
-                        <button
-                          type="button"
-                          onClick={submitDocument}
-                          disabled={docSaving}
-                          className="px-4 py-2 text-sm font-medium bg-[color:var(--color-primary)] hover:opacity-90 disabled:opacity-50 text-white rounded-lg transition-opacity duration-150"
-                        >
-                          {docSaving ? 'Saving…' : replacingPkey != null ? 'Save Replacement' : 'Save Document'}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setShowDocForm(false)}
-                          className="px-4 py-2 text-sm font-medium text-slate-500 hover:bg-slate-100 rounded-lg transition-colors duration-150"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {tab.key === 'family' && (
-                <div>
-                  {family.length === 0 && !showFamilyForm && (
-                    <p className="text-sm text-slate-400 py-6 text-center border border-dashed border-slate-200 rounded-lg">
-                      No family members added yet.
-                    </p>
-                  )}
-                  {family.length > 0 && (
-                    <div className="space-y-2.5">
-                      {family.map((row) => {
-                        const dob = row.DOB ? new Date(String(row.DOB)) : null;
-                        const age = dob && !Number.isNaN(dob.getTime())
-                          ? Math.floor((Date.now() - dob.getTime()) / (365.25 * 24 * 60 * 60 * 1000))
-                          : null;
-                        return (
-                          <div
-                            key={String(row.emp_family_pkey)}
-                            className="flex items-center gap-3.5 rounded-lg border border-slate-100 bg-white px-4 py-3.5 hover:border-slate-200 transition-colors duration-150"
+                        <div className="flex items-center gap-2 mt-5">
+                          <button
+                            type="button"
+                            onClick={submitFamily}
+                            disabled={familySaving}
+                            className="px-4 py-2 text-sm font-medium bg-[color:var(--color-primary)] hover:opacity-90 disabled:opacity-50 text-white rounded-lg transition-opacity duration-150"
                           >
-                            <span className="w-9 h-9 rounded-lg bg-[color:var(--color-primary)]/8 text-[color:var(--color-primary)] flex items-center justify-center flex-shrink-0">
-                              <Users className="w-4 h-4" />
-                            </span>
-                            <div className="min-w-0 flex-1">
-                              <p className="text-sm font-medium text-[#0F172A] truncate flex items-center gap-1.5">
-                                {String(row.name || '—')}
-                                {row.is_nominee === 'Y' && <Star className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" fill="currentColor" />}
-                              </p>
-                              <p className="text-xs text-slate-400 mt-0.5 truncate">
-                                {String(row.relation || '')}{age != null ? ` · ${age} yrs` : ''}{row.contact_number ? ` · ${row.contact_number}` : ''}
-                              </p>
-                            </div>
-                            {row.is_nominee === 'Y' && (
-                              <span className="text-[11px] font-medium px-2 py-1 rounded-full bg-amber-50 text-amber-600 flex-shrink-0">
-                                Nominee
-                              </span>
-                            )}
-                            <button
-                              type="button"
-                              onClick={() => removeFamilyMember(Number(row.emp_family_pkey))}
-                              className="p-2 rounded-lg text-slate-400 hover:text-[color:var(--color-danger)] hover:bg-slate-50 transition-colors duration-150 flex-shrink-0"
-                              title="Delete"
+                            {familySaving ? 'Saving…' : 'Save Family Member'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setShowFamilyForm(false)}
+                            className="px-4 py-2 text-sm font-medium text-slate-500 hover:bg-slate-100 rounded-lg transition-colors duration-150"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </CollapsibleSection>
+
+                  <CollapsibleSection title="Documents" icon={FileText}>
+                    {documents.length === 0 && !showDocForm && (
+                      <p className="text-sm text-slate-400 py-6 text-center border border-dashed border-slate-200 rounded-lg">
+                        No documents added yet.
+                      </p>
+                    )}
+                    {documents.length > 0 && (
+                      <div className="space-y-2.5">
+                        {documents.map((row) => {
+                          const validity = row.valid_from
+                            ? `Valid ${formatDate(row.valid_from as string)}${row.valid_till ? ` – ${formatDate(row.valid_till as string)}` : ''}`
+                            : '';
+                          return (
+                            <div
+                              key={String(row.emp_passport_visa_pkey)}
+                              className="flex items-center gap-3.5 rounded-lg border border-slate-100 bg-white px-4 py-3.5 hover:border-slate-200 transition-colors duration-150"
                             >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
+                              <span className="w-9 h-9 rounded-lg bg-[color:var(--color-primary)]/8 text-[color:var(--color-primary)] flex items-center justify-center flex-shrink-0">
+                                <FileText className="w-4 h-4" />
+                              </span>
+                              <div className="min-w-0 flex-1">
+                                <p className="text-sm font-medium text-[#0F172A] truncate">
+                                  {String(row.document_type || 'Document')} · {String(row.document_number || '—')}
+                                </p>
+                                <p className="text-xs text-slate-400 mt-0.5 truncate">
+                                  {String(row.name || '')}{validity ? ` · ${validity}` : ''}
+                                </p>
+                              </div>
+                              <span className="text-[11px] font-medium px-2 py-1 rounded-full bg-[color:var(--color-success)]/10 text-[color:var(--color-success)] flex-shrink-0">
+                                Uploaded
+                              </span>
+                              <div className="flex items-center gap-0.5 flex-shrink-0">
+                                {row.files ? (
+                                  <a
+                                    href={String(row.files)}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="p-2 rounded-lg text-slate-400 hover:text-[color:var(--color-primary)] hover:bg-slate-50 transition-colors duration-150"
+                                    title="View"
+                                  >
+                                    <Eye className="w-4 h-4" />
+                                  </a>
+                                ) : null}
+                                <button
+                                  type="button"
+                                  onClick={() => openReplaceDocument(row)}
+                                  className="p-2 rounded-lg text-slate-400 hover:text-[color:var(--color-primary)] hover:bg-slate-50 transition-colors duration-150"
+                                  title="Replace"
+                                >
+                                  <RefreshCw className="w-4 h-4" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => removeDocument(Number(row.emp_passport_visa_pkey))}
+                                  className="p-2 rounded-lg text-slate-400 hover:text-[color:var(--color-danger)] hover:bg-slate-50 transition-colors duration-150"
+                                  title="Delete"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {!showDocForm && (
+                      <button
+                        type="button"
+                        onClick={openAddDocument}
+                        className="mt-4 inline-flex items-center gap-1.5 text-sm font-medium text-[color:var(--color-primary)] hover:opacity-80 transition-opacity duration-150"
+                      >
+                        <Plus className="w-4 h-4" /> Add Document
+                      </button>
+                    )}
+
+                    {showDocForm && (
+                      <div className="mt-4 rounded-xl border border-slate-100 bg-slate-50/60 p-5">
+                        <h3 className="text-sm font-semibold text-[#0F172A] mb-4">
+                          {replacingPkey != null ? 'Replace Document' : 'Add Document'}
+                        </h3>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-5 gap-y-4">
+                          <div>
+                            <label className={LABEL_CLASS}>Document Type<RequiredMark /></label>
+                            <SearchableSelect
+                              value={docDraft.document_type}
+                              onChange={(v) => setDocDraft((p) => ({ ...p, document_type: v }))}
+                              options={DOCUMENT_TYPES.map((d) => ({ value: d, label: d }))}
+                              placeholder="Select type"
+                              buttonClassName={cn(INPUT_CLASS, docErrors.document_type && ERROR_INPUT_CLASS)}
+                            />
+                            <FieldError>{docErrors.document_type}</FieldError>
                           </div>
-                        );
-                      })}
-                    </div>
-                  )}
-
-                  {!showFamilyForm && (
-                    <button
-                      type="button"
-                      onClick={openAddFamily}
-                      className="mt-4 inline-flex items-center gap-1.5 text-sm font-medium text-[color:var(--color-primary)] hover:opacity-80 transition-opacity duration-150"
-                    >
-                      <Plus className="w-4 h-4" /> Add Family Member
-                    </button>
-                  )}
-
-                  {showFamilyForm && (
-                    <div className="mt-4 rounded-xl border border-slate-100 bg-slate-50/60 p-5">
-                      <h3 className="text-sm font-semibold text-[#0F172A] mb-4">Add Family Member</h3>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-5 gap-y-4">
-                        <div>
-                          <label className={LABEL_CLASS}>Name<RequiredMark /></label>
-                          <input
-                            maxLength={100}
-                            className={cn(INPUT_CLASS, familyErrors.name && ERROR_INPUT_CLASS)}
-                            value={familyDraft.name}
-                            onChange={(e) => setFamilyDraft((p) => ({ ...p, name: e.target.value }))}
-                          />
-                          <FieldError>{familyErrors.name}</FieldError>
+                          <div>
+                            <label className={LABEL_CLASS}>Document Number<RequiredMark /></label>
+                            <input
+                              className={cn(INPUT_CLASS, docErrors.document_number && ERROR_INPUT_CLASS)}
+                              value={docDraft.document_number}
+                              onChange={(e) => setDocDraft((p) => ({ ...p, document_number: e.target.value }))}
+                            />
+                            <FieldError>{docErrors.document_number}</FieldError>
+                          </div>
+                          <div>
+                            <label className={LABEL_CLASS}>Name on Document<RequiredMark /></label>
+                            <input
+                              className={cn(INPUT_CLASS, docErrors.name && ERROR_INPUT_CLASS)}
+                              value={docDraft.name}
+                              onChange={(e) => setDocDraft((p) => ({ ...p, name: e.target.value }))}
+                            />
+                            <FieldError>{docErrors.name}</FieldError>
+                          </div>
+                          <div>
+                            <label className={LABEL_CLASS}>Relation<RequiredMark /></label>
+                            <input
+                              className={cn(INPUT_CLASS, docErrors.relation && ERROR_INPUT_CLASS)}
+                              value={docDraft.relation}
+                              onChange={(e) => setDocDraft((p) => ({ ...p, relation: e.target.value }))}
+                            />
+                            <FieldError>{docErrors.relation}</FieldError>
+                          </div>
+                          <div>
+                            <label className={LABEL_CLASS}>Nationality</label>
+                            <input
+                              className={INPUT_CLASS}
+                              value={docDraft.nationality}
+                              onChange={(e) => setDocDraft((p) => ({ ...p, nationality: e.target.value }))}
+                            />
+                          </div>
+                          <div>
+                            <label className={LABEL_CLASS}>Valid From<RequiredMark /></label>
+                            <input
+                              type="date"
+                              className={cn(INPUT_CLASS, docErrors.valid_from && ERROR_INPUT_CLASS)}
+                              value={docDraft.valid_from}
+                              onChange={(e) => setDocDraft((p) => ({ ...p, valid_from: e.target.value }))}
+                            />
+                            <FieldError>{docErrors.valid_from}</FieldError>
+                          </div>
+                          <div>
+                            <label className={LABEL_CLASS}>Valid Till</label>
+                            <input
+                              type="date"
+                              className={INPUT_CLASS}
+                              value={docDraft.valid_till}
+                              onChange={(e) => setDocDraft((p) => ({ ...p, valid_till: e.target.value }))}
+                            />
+                          </div>
                         </div>
-                        <div>
-                          <label className={LABEL_CLASS}>Relation<RequiredMark /></label>
-                          <SearchableSelect
-                            value={familyDraft.relation}
-                            onChange={(v) => setFamilyDraft((p) => ({ ...p, relation: v }))}
-                            options={FAMILY_RELATIONS.map((r) => ({ value: r, label: r }))}
-                            placeholder="Select relation"
-                            buttonClassName={cn(INPUT_CLASS, familyErrors.relation && ERROR_INPUT_CLASS)}
-                          />
-                          <FieldError>{familyErrors.relation}</FieldError>
+                        <div className="mt-4">
+                          <label className={LABEL_CLASS}>File Upload</label>
+                          <DocumentUploadField value={docFile} onChange={setDocFile} />
                         </div>
-                        <div>
-                          <label className={LABEL_CLASS}>Gender<RequiredMark /></label>
-                          <SearchableSelect
-                            value={familyDraft.gender}
-                            onChange={(v) => setFamilyDraft((p) => ({ ...p, gender: v }))}
-                            options={[{ value: 'Male', label: 'Male' }, { value: 'Female', label: 'Female' }, { value: 'Other', label: 'Other' }]}
-                            placeholder="Select gender"
-                            buttonClassName={cn(INPUT_CLASS, familyErrors.gender && ERROR_INPUT_CLASS)}
-                          />
-                          <FieldError>{familyErrors.gender}</FieldError>
-                        </div>
-                        <div>
-                          <label className={LABEL_CLASS}>Date of Birth<RequiredMark /></label>
-                          <input
-                            type="date"
-                            max={TODAY}
-                            className={cn(INPUT_CLASS, familyErrors.DOB && ERROR_INPUT_CLASS)}
-                            value={familyDraft.DOB}
-                            onChange={(e) => setFamilyDraft((p) => ({ ...p, DOB: e.target.value }))}
-                          />
-                          <FieldError>{familyErrors.DOB}</FieldError>
-                        </div>
-                        <div>
-                          <label className={LABEL_CLASS}>Blood Group</label>
-                          <input
-                            maxLength={5}
-                            className={INPUT_CLASS}
-                            value={familyDraft.blood_group}
-                            onChange={(e) => setFamilyDraft((p) => ({ ...p, blood_group: e.target.value }))}
-                          />
-                        </div>
-                        <div>
-                          <label className={LABEL_CLASS}>Nationality</label>
-                          <input
-                            className={INPUT_CLASS}
-                            value={familyDraft.nationality}
-                            onChange={(e) => setFamilyDraft((p) => ({ ...p, nationality: e.target.value }))}
-                          />
-                        </div>
-                        <div>
-                          <label className={LABEL_CLASS}>Contact Number<RequiredMark /></label>
-                          <input
-                            maxLength={10}
-                            className={cn(INPUT_CLASS, familyErrors.contact_number && ERROR_INPUT_CLASS)}
-                            value={familyDraft.contact_number}
-                            onChange={(e) => setFamilyDraft((p) => ({ ...p, contact_number: e.target.value }))}
-                          />
-                          <FieldError>{familyErrors.contact_number}</FieldError>
-                        </div>
-                        <div>
-                          <label className={LABEL_CLASS}>Alternative Number</label>
-                          <input
-                            maxLength={10}
-                            className={INPUT_CLASS}
-                            value={familyDraft.alternate_number}
-                            onChange={(e) => setFamilyDraft((p) => ({ ...p, alternate_number: e.target.value }))}
-                          />
+                        <div className="flex items-center gap-2 mt-5">
+                          <button
+                            type="button"
+                            onClick={submitDocument}
+                            disabled={docSaving}
+                            className="px-4 py-2 text-sm font-medium bg-[color:var(--color-primary)] hover:opacity-90 disabled:opacity-50 text-white rounded-lg transition-opacity duration-150"
+                          >
+                            {docSaving ? 'Saving…' : replacingPkey != null ? 'Save Replacement' : 'Save Document'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setShowDocForm(false)}
+                            className="px-4 py-2 text-sm font-medium text-slate-500 hover:bg-slate-100 rounded-lg transition-colors duration-150"
+                          >
+                            Cancel
+                          </button>
                         </div>
                       </div>
-                      <div className="flex flex-wrap gap-4 mt-4">
-                        <label className="flex items-center gap-2 text-sm text-slate-600">
-                          <input
-                            type="checkbox"
-                            checked={familyDraft.is_nominee === 'Y'}
-                            onChange={(e) => setFamilyDraft((p) => ({ ...p, is_nominee: e.target.checked ? 'Y' : 'N' }))}
-                            className="accent-[color:var(--color-primary)]"
-                          />
-                          Mark as Nominee
-                        </label>
-                        <label className="flex items-center gap-2 text-sm text-slate-600">
-                          <input
-                            type="checkbox"
-                            checked={familyDraft.emergency_contact === 'Y'}
-                            onChange={(e) => setFamilyDraft((p) => ({ ...p, emergency_contact: e.target.checked ? 'Y' : 'N' }))}
-                            className="accent-[color:var(--color-primary)]"
-                          />
-                          Mark as Emergency Contact
-                        </label>
-                      </div>
-                      <div className="flex items-center gap-2 mt-5">
-                        <button
-                          type="button"
-                          onClick={submitFamily}
-                          disabled={familySaving}
-                          className="px-4 py-2 text-sm font-medium bg-[color:var(--color-primary)] hover:opacity-90 disabled:opacity-50 text-white rounded-lg transition-opacity duration-150"
-                        >
-                          {familySaving ? 'Saving…' : 'Save Family Member'}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setShowFamilyForm(false)}
-                          className="px-4 py-2 text-sm font-medium text-slate-500 hover:bg-slate-100 rounded-lg transition-colors duration-150"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    </div>
-                  )}
+                    )}
+                  </CollapsibleSection>
                 </div>
               )}
             </div>
