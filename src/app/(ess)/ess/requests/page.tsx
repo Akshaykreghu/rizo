@@ -904,15 +904,18 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
     // legacy's own Apply Leave form.
     if (preview && !preview.minServiceOk) { setError(preview.minServiceMessage); return; }
     if (preview && !preview.advanceNoticeOk) { setError(preview.advanceNoticeMessage); return; }
-    // Balance/per-request-max overflow just becomes Loss of Pay for the excess, same as the
-    // Advance tab's limit — /api/leave/requests itself never blocks on this — so it's a
-    // Continue-Anyway warning, not a hard stop.
+    // Per-request-max overflow just becomes Loss of Pay for the excess, same as the Advance tab's
+    // limit — /api/leave/requests itself never blocks on this — so it's a Continue-Anyway warning.
     if (preview && preview.maxLeaveLimit > 0 && leaveDays > preview.maxLeaveLimit) {
       setWarning(`This leave type allows a maximum of ${preview.maxLeaveLimit} day(s) per request. You're requesting ${leaveDays}.`);
       return;
     }
-    if (preview && !preview.allowNegative && leaveDays > preview.balance) {
-      setWarning(`You're requesting ${leaveDays} day(s), but your balance for this leave type is only ${preview.balance}. The excess may be treated as Loss of Pay.`);
+    // Balance is a hard stop, unlike the max-per-request limit above — legacy's own client-side
+    // validateLeave() blocks purely on `leave_balance < diffDays` regardless of ALLOW_NEGETIVE, so a
+    // 0-balance leave type can never be submitted here even though allowNegative would otherwise let
+    // the excess through as Loss of Pay for a partial-balance request.
+    if (preview && leaveDays > preview.balance) {
+      setError(`You do not have enough leave balance. Available: ${preview.balance} day(s), requested: ${leaveDays}.`);
       return;
     }
     doSubmit();
@@ -957,11 +960,10 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
               );
             })}
           </div>
-          {leaveDays > 0 && (
-            <div style={{ marginBottom: 14, padding: '8px 14px', borderRadius: 8, background: `${BRAND}12`, border: `1px solid ${BRAND}33`, fontSize: 13, fontWeight: 700, color: BRAND, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
-              <span>📅 {leaveDays} day{leaveDays !== 1 ? 's' : ''}</span>
-              {preview && !preview.minServiceOk && <span style={{ fontSize: 11, color: '#dc2626' }}>Not yet eligible</span>}
-              {preview && preview.minServiceOk && !preview.advanceNoticeOk && <span style={{ fontSize: 11, color: '#d97706' }}>Needs more advance notice</span>}
+          {leaveDays > 0 && preview && (!preview.minServiceOk || (preview.minServiceOk && !preview.advanceNoticeOk)) && (
+            <div style={{ marginBottom: 14, padding: '8px 14px', borderRadius: 8, background: `${BRAND}12`, border: `1px solid ${BRAND}33`, fontSize: 11, fontWeight: 700, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {!preview.minServiceOk && <span style={{ color: '#dc2626' }}>Not yet eligible</span>}
+              {preview.minServiceOk && !preview.advanceNoticeOk && <span style={{ color: '#d97706' }}>Needs more advance notice</span>}
             </div>
           )}
           <div style={{ marginBottom: 14 }}>
