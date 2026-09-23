@@ -35,7 +35,16 @@ export async function GET(request: NextRequest) {
   const pool = await getCompanyPool(session.user.companyCode);
   const period = await getAttPeriod(pool, month);
 
-  const conditions = ['er.att_date BETWEEN ? AND ?', 'er.status = 1'];
+  // Legacy's `status = 1` condition (RegularisationController lines ~533/1619/1963) only ever guards
+  // its *pending* queues (`status = 1 AND approved IN ('P')`) — rejecting a request sets status = 0
+  // (decideRegularisation()'s reject branch) purely to pull it out of those pending queues, not to
+  // hide the record everywhere. Only apply status = 1 when the caller explicitly asked for pending;
+  // otherwise (no filter, or approved/rejected) a rejected/approved request still shows up in
+  // "My Requests" and in admin's grid under its own status.
+  const conditions = ['er.att_date BETWEEN ? AND ?'];
+  if (status === 'pending') {
+    conditions.push('er.status = 1');
+  }
   const values: (string | number)[] = [period.start, period.end];
   if (session.user.userGroup === 1) {
     if (branch) {

@@ -83,18 +83,28 @@ export async function GET(request: NextRequest) {
   let advanceNoticeMessage: string | null = null;
   const minDayBeforeApply = Number(policy.min_day_before_apply ?? 0);
   if (policy.exceptions === 'Y' && minDayBeforeApply > 0) {
-    const diffDays = Math.floor((new Date(fromDate).getTime() - Date.now()) / 86400000);
+    // Legacy diffs two date-only strtotime() values (both midnight), so applying for leave TODAY is
+    // diffDays = 0. Diffing against Date.now() (current time-of-day) instead of today's own midnight
+    // made this off by one — same-day leave came out as -1, failing a policy that should allow it.
+    const todayMidnight = new Date(new Date().toISOString().slice(0, 10)).getTime();
+    const diffDays = Math.floor((new Date(fromDate).getTime() - todayMidnight) / 86400000);
     if (diffDays < minDayBeforeApply) {
       advanceNoticeOk = false;
       advanceNoticeMessage = `Leave should be applied at least ${minDayBeforeApply} day(s) in advance.`;
     }
   }
 
+  // Same exceptions='Y' gate as the checks above — legacy leaves min_leave_limit/max_leave_limit as
+  // empty strings (no limit enforced at all) outside that branch, rather than falling back to
+  // whatever's in the minimum_leave/maximum_leave columns.
+  const minLeaveLimit = policy.exceptions === 'Y' ? Number(policy.minimum_leave ?? 0) : 0;
+  const maxLeaveLimit = policy.exceptions === 'Y' ? Number(policy.maximum_leave ?? 0) : 0;
+
   return NextResponse.json({
     balance,
     allowNegative: policy.ALLOW_NEGETIVE === 'Y',
-    minLeaveLimit: Number(policy.minimum_leave ?? 0),
-    maxLeaveLimit: Number(policy.maximum_leave ?? 0),
+    minLeaveLimit,
+    maxLeaveLimit,
     minServiceOk,
     minServiceMessage,
     advanceNoticeOk,

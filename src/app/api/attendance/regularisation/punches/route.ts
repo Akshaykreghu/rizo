@@ -26,7 +26,20 @@ export async function GET(request: NextRequest) {
 
   const pool = await getCompanyPool(session.user.companyCode);
   const rows = await getPunchesForEmployeeDate(pool, empId, attDate);
-  return NextResponse.json({ data: rows });
+  // LOGDATE is read back as a JS Date built with the pool's timezone: '+00:00' setting, so it must be
+  // formatted as a plain local wall-clock string here rather than left for the client to re-parse with
+  // `new Date(...)` — that re-parse applies the browser's own timezone offset on top, shifting the
+  // displayed time (e.g. a stored 09:15:54 rendering as 3:20 PM instead).
+  const data = rows.map((r) => {
+    const logDate = r.LOGDATE as unknown;
+    return { ...r, LOGDATE: logDate instanceof Date ? formatLocalDateTime(logDate) : r.LOGDATE };
+  });
+  return NextResponse.json({ data });
+}
+
+function formatLocalDateTime(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
 }
 
 export async function POST(request: NextRequest) {
