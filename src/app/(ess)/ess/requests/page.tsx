@@ -823,11 +823,11 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
   const [authorizerQuery, setAuthorizerQuery] = useState('');
   const [approverQuery, setApproverQuery] = useState('');
   const [file, setFile] = useState<File | null>(null);
+  const [fileDisplayName, setFileDisplayName] = useState('');
   const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<LeaveBalancePreview | null>(null);
-  const [warning, setWarning] = useState<string | null>(null);
   const [form, setForm] = useState({ leave_type_id: defaultTypeId ? String(defaultTypeId) : '', from_date: today(), from_half: '1', to_date: today(), to_half: '2', reason: '', contact_person: '', contact_no: '' });
 
   useEffect(() => {
@@ -844,13 +844,26 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
   }, [empId]);
 
   // Real per-type balance + minimum-service/advance-notice eligibility, from the same endpoint
-  // legacy's own Apply Leave form calls whenever the type or From Date changes — was wired up for
-  // admin only until now, so ESS never had a way to check any of this before submitting.
+  // legacy's own Apply Leave form calls — but only on FROMDATE's changeDate handler
+  // (addeditleave_new.ctp ~line 724), not on leave-type change: that handler has getLeaveBalance()
+  // commented out and instead clears FROMDATE and hides the balance display, forcing a fresh date
+  // pick under the new type. Re-fetching here on leave_type_id too would show a stale balance for
+  // whatever from_date was already set under the OLD type.
+  const [prevTypeId, setPrevTypeId] = useState(form.leave_type_id);
+  if (form.leave_type_id !== prevTypeId) {
+    setPrevTypeId(form.leave_type_id);
+    if (form.from_date) {
+      setForm((f) => ({ ...f, from_date: '' }));
+      setPreview(null);
+    }
+  }
+
   useEffect(() => {
     if (!form.leave_type_id || !form.from_date) return;
     fetch(`/api/leave/balance-preview?employee=${empId}&leaveType=${form.leave_type_id}&fromDate=${form.from_date}`)
       .then((r) => (r.ok ? r.json() : null)).then(setPreview).catch(() => setPreview(null));
-  }, [empId, form.leave_type_id, form.from_date]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [empId, form.from_date]);
 
   const leaveDays = calcLeaveDays(form.from_date, Number(form.from_half), form.to_date, Number(form.to_half));
 
@@ -869,7 +882,11 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
         setUploading(false);
         if (!upRes.ok) throw new Error(upBody.error || 'Failed to upload document');
         fileName = upBody.path;
-        fileType = file.type;
+        // file_type actually stores the user-typed "Uploaded File Name" display label, not a MIME
+        // type — a confusing but real column-name swap in legacy's own schema (addeditleave_new.ctp's
+        // separate #filename text input, saved as $arr_form_data['filename'] into file_type). Matches
+        // the same convention already used by the post-submit "add document" flow (document/route.ts).
+        fileType = fileDisplayName.trim() || file.name;
       }
       const res = await fetch('/api/leave/requests', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -899,23 +916,33 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
     if (!form.reason.trim()) { setError('Please enter a reason for your leave.'); return; }
     if (!authorizerFkey) { setError('Please select who should Authorize this leave.'); return; }
     if (!approverFkey) { setError('Please select who should Approve this leave.'); return; }
-    if (preview?.documentMandatory && !file) { setError('A supporting document is required for this leave type.'); return; }
+    // The balance/eligibility preview must have loaded before submit is allowed — treating a still-
+    // loading or failed fetch (preview === null) as "no checks apply" would let a 0-balance leave
+    // through if the network is slow or the balance-preview call errors, since every check below is
+    // otherwise skipped entirely when preview is null.
+    if (!preview) { setError('Still checking your leave balance — please wait a moment and try again.'); return; }
+    if (preview.documentMandatory && !file) { setError('A supporting document is required for this leave type.'); return; }
+    if (preview.documentMandatory && !fileDisplayName.trim()) { setError('Please enter the uploaded file name.'); return; }
     // Genuine policy ineligibility (not served yet / applied too late) — hard block, same as
     // legacy's own Apply Leave form.
-    if (preview && !preview.minServiceOk) { setError(preview.minServiceMessage); return; }
-    if (preview && !preview.advanceNoticeOk) { setError(preview.advanceNoticeMessage); return; }
-    // Per-request-max overflow just becomes Loss of Pay for the excess, same as the Advance tab's
-    // limit — /api/leave/requests itself never blocks on this — so it's a Continue-Anyway warning.
-    if (preview && preview.maxLeaveLimit > 0 && leaveDays > preview.maxLeaveLimit) {
-      setWarning(`This leave type allows a maximum of ${preview.maxLeaveLimit} day(s) per request. You're requesting ${leaveDays}.`);
+    if (!preview.minServiceOk) { setError(preview.minServiceMessage); return; }
+    if (!preview.advanceNoticeOk) { setError(preview.advanceNoticeMessage); return; }
+    // Balance is a hard stop — legacy's own client-side validateLeave() blocks purely on
+    // `leave_balance < diffDays` regardless of ALLOW_NEGETIVE, so a 0-balance leave type can never
+    // be submitted here.
+    if (leaveDays > preview.balance) {
+      setError(`You do not have enough leave balance. Available: ${preview.balance} day(s), requested: ${leaveDays}.`);
       return;
     }
-    // Balance is a hard stop, unlike the max-per-request limit above — legacy's own client-side
-    // validateLeave() blocks purely on `leave_balance < diffDays` regardless of ALLOW_NEGETIVE, so a
-    // 0-balance leave type can never be submitted here even though allowNegative would otherwise let
-    // the excess through as Loss of Pay for a partial-balance request.
-    if (preview && leaveDays > preview.balance) {
-      setError(`You do not have enough leave balance. Available: ${preview.balance} day(s), requested: ${leaveDays}.`);
+    // Min/max-per-request limits are hard stops too, not a Continue-Anyway warning — legacy's
+    // validateLeave() alerts and disables the Submit button outright for both
+    // ("Minimum N day(s) leave required." / "Maximum allowed leave is N day(s).").
+    if (preview.minLeaveLimit > 0 && leaveDays < preview.minLeaveLimit) {
+      setError(`Minimum ${preview.minLeaveLimit} day(s) leave required.`);
+      return;
+    }
+    if (preview.maxLeaveLimit > 0 && leaveDays > preview.maxLeaveLimit) {
+      setError(`Maximum allowed leave is ${preview.maxLeaveLimit} day(s).`);
       return;
     }
     doSubmit();
@@ -938,9 +965,9 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
               options={types.map((t) => ({ value: String(t.salaryHeadItemFkey), label: t.occurance ? `${t.name} (${t.occurance})` : t.name }))}
             />
             {preview && (
-              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
-                Balance: <strong style={{ color: preview.balance >= 0 ? 'var(--text-primary)' : '#dc2626' }}>{preview.balance}</strong> day(s)
-                {preview.maxLeaveLimit > 0 && ` · Max ${preview.maxLeaveLimit}/request`}
+              <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginTop: 6 }}>
+                Balance: <strong style={{ color: preview.balance >= 0 ? BRAND : '#dc2626' }}>{preview.balance}</strong> day(s)
+                {preview.maxLeaveLimit > 0 && <span style={{ fontWeight: 500, color: 'var(--text-muted)' }}> · Max {preview.maxLeaveLimit}/request</span>}
               </div>
             )}
           </div>
@@ -998,10 +1025,23 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
             </label>
             <input
               type="file"
+              required={!!preview?.documentMandatory}
               style={inp}
               onChange={(e) => setFile(e.target.files?.[0] ?? null)}
             />
-            {preview?.remarks && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>{preview.remarks}</div>}
+          </div>
+          <div style={{ marginBottom: 14 }}>
+            <label style={lbl}>
+              Uploaded File Name {preview?.documentMandatory && <span style={{ color: '#dc2626' }}>*</span>}
+            </label>
+            <input
+              type="text"
+              required={!!preview?.documentMandatory}
+              placeholder="Uploaded File Name"
+              style={inp}
+              value={fileDisplayName}
+              onChange={(e) => setFileDisplayName(e.target.value)}
+            />
           </div>
           {error && <div style={{ marginBottom: 12, fontSize: 12, color: '#dc2626' }}>{error}</div>}
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
@@ -1012,16 +1052,6 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
           </div>
         </form>
       </div>
-      {warning && (
-        <AlertModal
-          tone="warning"
-          title="Check before you submit"
-          message={warning}
-          onClose={() => setWarning(null)}
-          onConfirm={() => { setWarning(null); doSubmit(); }}
-          confirmLabel="Submit Anyway"
-        />
-      )}
     </div>
   );
 }

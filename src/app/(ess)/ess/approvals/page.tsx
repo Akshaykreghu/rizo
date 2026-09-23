@@ -390,6 +390,7 @@ export default function EssApprovalsPage() {
 
       <div style={{ marginBottom: 14 }}>
         <AppTabs
+          compact
           active={category}
           onChange={(k) => setCategory(k as 'leave' | 'regularisation')}
           tabs={[
@@ -405,6 +406,7 @@ export default function EssApprovalsPage() {
       <>
       <div style={{ marginBottom: 20 }}>
         <AppTabs
+          compact
           active={tab}
           onChange={changeTab}
           tabs={[
