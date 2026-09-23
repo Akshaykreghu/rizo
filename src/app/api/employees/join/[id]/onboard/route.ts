@@ -41,6 +41,15 @@ export async function POST(
     );
   }
 
+  if (body.emp_type === 'Contract') {
+    if (!body.contract_end_date) {
+      return NextResponse.json({ error: 'Contract end date is required' }, { status: 400 });
+    }
+    if (body.joining_date && body.contract_end_date <= body.joining_date) {
+      return NextResponse.json({ error: 'Contract end date must be after the joining date' }, { status: 400 });
+    }
+  }
+
   // Duplicate checks — mirrors legacy saveonboarding() (EmployeeJoinController.php:10622)
   const dupChecks: { column: string; value: string | null }[] = [
     { column: 'pan_no', value: join.pan_no },
@@ -148,6 +157,17 @@ export async function POST(
         session.user.loginUserId,
       ]
     );
+
+    // Ports legacy EmployeeController.php:3402-3409 — a Contract hire gets its initial
+    // contracted_days row created right alongside emp_proff.
+    if (body.emp_type === 'Contract') {
+      await connection.execute(
+        `INSERT INTO contracted_days
+           (emp_fkey, contract_start_date, contract_end_date, start_date_effective, status, created_by, created_time)
+         VALUES (?, ?, ?, CURDATE(), 1, ?, NOW())`,
+        [empPkey, body.joining_date ?? null, body.contract_end_date ?? null, session.user.loginUserId]
+      );
+    }
 
     const passwordHash = await bcrypt.hash(body.password, 12);
     // Unlike legacy (which always inserts access_allowed='n' here, requiring a separate trip to

@@ -282,7 +282,7 @@ export default function EmployeesPage({
 
       <FloatingActionPanel visible={panelActions.length > 0} actions={panelActions} />
 
-      <Modal open={modalOpen} onClose={() => setModalOpen(false)} className="max-w-[1100px] rounded-[22px]">
+      <Modal open={modalOpen} onClose={() => setModalOpen(false)} className="max-w-[1100px] max-h-[95vh] rounded-[22px]">
         {selectedEmpPkey !== null && (
           <EmployeeDetail id={String(selectedEmpPkey)} onBack={() => setModalOpen(false)} showBackLink={false} />
         )}

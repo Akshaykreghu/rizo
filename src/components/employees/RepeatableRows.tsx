@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Plus, Trash2 } from 'lucide-react';
+import { Check, Plus, Trash2 } from 'lucide-react';
 import { RequiredMark } from '@/components/ui/RequiredMark';
 import { SearchableSelect } from '@/components/ui/SearchableSelect';
 
@@ -13,6 +13,9 @@ export interface RepeatableFieldDef {
   type?: 'text' | 'date' | 'number' | 'select' | 'checkbox';
   options?: { value: string; label: string }[];
   required?: boolean;
+  /** Matches legacy's `maxlength` on the equivalent field (View/EmployeeJoin/setup.ctp) — no
+   *  effect on 'select'/'date' fields. */
+  maxLength?: number;
 }
 
 interface RepeatableRowsProps {
@@ -81,12 +84,20 @@ export function RepeatableRows({ fields, rows, pkeyField, onAdd, onRemove, addLa
         </div>
       )}
 
-      <div className="grid gap-3" style={{ gridTemplateColumns: `repeat(${fields.length}, minmax(0, 1fr))` }}>
+      {/* Labels and inputs are two separate grid rows (not one row of stacked label+input pairs)
+          so a long label wrapping to two lines (e.g. "Name on Document") only grows the label
+          row — it can no longer push just that one field's input out of line with its neighbors.
+          The trailing `auto` column holds a dedicated save icon, lined up with the trash-icon
+          column of the saved-rows table above. */}
+      <div className="grid gap-x-3 gap-y-1 items-end" style={{ gridTemplateColumns: `repeat(${fields.length}, minmax(0, 1fr)) auto` }}>
         {fields.map((f) => (
-          <div key={f.key}>
-            <label className="block text-xs font-medium text-gray-500 mb-1">
-              {f.label}{f.required && <RequiredMark />}
-            </label>
+          <label key={`${f.key}-label`} className="block text-xs font-medium text-gray-500">
+            {f.label}{f.required && <RequiredMark />}
+          </label>
+        ))}
+        <span />
+        {fields.map((f) => (
+          <div key={`${f.key}-input`}>
             {f.type === 'select' ? (
               <SearchableSelect
                 value={draft[f.key]}
@@ -98,6 +109,7 @@ export function RepeatableRows({ fields, rows, pkeyField, onAdd, onRemove, addLa
             ) : (
               <input
                 type={f.type === 'number' ? 'number' : f.type === 'date' ? 'date' : 'text'}
+                maxLength={f.maxLength}
                 className="w-full px-2.5 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 value={draft[f.key]}
                 onChange={(e) => setDraft((prev) => ({ ...prev, [f.key]: e.target.value }))}
@@ -105,6 +117,15 @@ export function RepeatableRows({ fields, rows, pkeyField, onAdd, onRemove, addLa
             )}
           </div>
         ))}
+        <button
+          type="button"
+          disabled={adding}
+          onClick={handleAdd}
+          title={addLabel ?? 'Add row'}
+          className="flex-shrink-0 w-9 h-9 flex items-center justify-center rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 text-white transition-colors duration-[180ms]"
+        >
+          <Check className="w-4 h-4" />
+        </button>
       </div>
       {blocked && (
         <p className="text-xs text-[color:var(--color-danger)]">Fill in all required fields before adding this row.</p>

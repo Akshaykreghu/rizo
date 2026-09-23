@@ -3,7 +3,7 @@ import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket } from 'mysql2';
-import { dobError, ageAtDateError, statutoryFieldErrors } from '@/lib/validation';
+import { dobError, ageAtDateError, statutoryFieldErrors, mobileError } from '@/lib/validation';
 
 // The edit form submits blank optional fields as '', not undefined — `x ?? null` leaves those
 // as '', which MySQL rejects for DATE / INT columns (e.g. date_of_birth, attr1) under strict
@@ -88,7 +88,10 @@ export async function GET(
       [empPkey]
     ),
     pool.execute<RowDataPacket[]>(
-      'SELECT * FROM emp_proff WHERE emp_fkey = ?',
+      `SELECT p.*, cd.contract_end_date
+       FROM emp_proff p
+       LEFT JOIN contracted_days cd ON cd.emp_fkey = p.emp_fkey AND cd.status = 1
+       WHERE p.emp_fkey = ?`,
       [empPkey]
     ),
     pool.execute<RowDataPacket[]>(
@@ -141,10 +144,16 @@ export async function PUT(
   const validationError =
     (body.first_name !== undefined && !body.first_name?.trim() ? 'First name is required' : null) ||
     (body.classification !== undefined && !body.classification ? 'Gender is required' : null) ||
+    (body.nationality_id !== undefined && !body.nationality_id ? 'Nationality is required' : null) ||
     (body.date_of_birth !== undefined
       ? (body.date_of_birth ? dobError(body.date_of_birth) : 'Date of birth is required')
       : null) ||
     (!finalIdCard ? 'Aadhaar/ID Card is required' : null) ||
+    (body.mobile_no !== undefined ? mobileError(body.mobile_no) : null) ||
+    (body.emp_type === 'Contract' && !body.contract_end_date ? 'Contract end date is required' : null) ||
+    (body.contract_end_date && body.joining_date && body.contract_end_date <= body.joining_date
+      ? 'Contract end date must be after the joining date'
+      : null) ||
     statutoryFieldErrors(body) ||
     (body.date_of_birth && body.joining_date ? ageAtDateError(body.date_of_birth, body.joining_date) : null);
   if (validationError) {
@@ -158,7 +167,7 @@ export async function PUT(
     await connection.execute(
       `UPDATE emp_details SET
          first_name = ?, last_name = ?, date_of_birth = ?, mobile_no = ?, email = ?,
-         classification = ?, blood = ?, maritual_status = ?, profile_pic = ?,
+         classification = ?, nationality_id = ?, blood = ?, maritual_status = ?, profile_pic = ?,
          id_card = ?, lwf_code = ?,
          pan_no = ?, pf = ?, company_pf = ?, eps = ?, esi = ?, esi_dispensary = ?,
          bank_name = ?, branch_name = ?, branch_address = ?, ifsc_code = ?, account_no = ?,
@@ -169,7 +178,7 @@ export async function PUT(
       [
         body.first_name, body.last_name, nn(body.date_of_birth),
         nn(body.mobile_no), nn(body.email),
-        nn(body.classification), nn(body.blood), nn(body.maritual_status), nn(body.profile_pic),
+        nn(body.classification), nn(body.nationality_id), nn(body.blood), nn(body.maritual_status), nn(body.profile_pic),
         nn(body.id_card), nn(body.lwf_code),
         nn(body.pan_no), nn(body.pf), nn(body.company_pf),
         nn(body.eps), nn(body.esi), nn(body.esi_dispensary),
@@ -189,9 +198,10 @@ export async function PUT(
     // section on ESS About Me, and this skip is what actually enforces that server-side.
     if (isAdmin) {
       const [existingProff] = await connection.execute<RowDataPacket[]>(
-        'SELECT emp_fkey FROM emp_proff WHERE emp_fkey = ?',
+        'SELECT emp_fkey, emp_type FROM emp_proff WHERE emp_fkey = ?',
         [empPkey]
       );
+      const previousEmpType: string | null = existingProff[0]?.emp_type ?? null;
 
       // Salary structure and CTC are not edited from the employee form — matching legacy, they
       // are managed via Bulk Policies -> Salary and the CTC-upload step. emp_proff.structure_id
@@ -231,6 +241,35 @@ export async function PUT(
             body.leavepolicy_group_id ? Number(body.leavepolicy_group_id) : null,
           ]
         );
+      }
+
+      // Contract period tracking (contracted_days) — ports legacy EmployeeController.php:3527-3563.
+      // Legacy keeps at most one *active* row per employee (status = 1, end_date_effective NULL);
+      // a type change away from Contract closes it out rather than deleting it, so contract
+      // history survives even after the employee is reclassified.
+      if (body.emp_type !== undefined) {
+        const wasContract = previousEmpType === 'Contract';
+        const isContract = body.emp_type === 'Contract';
+        if (wasContract && !isContract) {
+          await connection.execute(
+            `UPDATE contracted_days SET status = 0, end_date_effective = CURDATE()
+             WHERE emp_fkey = ? AND status = 1`,
+            [empPkey]
+          );
+        } else if (!wasContract && isContract) {
+          await connection.execute(
+            `INSERT INTO contracted_days
+               (emp_fkey, contract_start_date, contract_end_date, start_date_effective, status, created_by, created_time)
+             VALUES (?, ?, ?, CURDATE(), 1, ?, NOW())`,
+            [empPkey, nn(body.joining_date), nn(body.contract_end_date), session.user.loginUserId]
+          );
+        } else if (wasContract && isContract) {
+          await connection.execute(
+            `UPDATE contracted_days SET contract_start_date = ?, contract_end_date = ?, modified_by = ?, modified_time = NOW()
+             WHERE emp_fkey = ? AND status = 1`,
+            [nn(body.joining_date), nn(body.contract_end_date), session.user.loginUserId, empPkey]
+          );
+        }
       }
     }
 

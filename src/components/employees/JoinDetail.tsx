@@ -54,16 +54,27 @@ const EMPTY_FORM: Record<string, string> = {
 const EMPTY_ONBOARD_FORM = {
   emp_company_id: '', password: '',
   joining_date: '', emp_branch: '', emp_dept: '', designation: '', emp_grade: '',
-  emp_type: '', attr1: '', probation: '', notice_days: '',
+  emp_type: '', attr1: '', probation: '', notice_days: '', contract_end_date: '',
   day_time_seq: '', holiday_group_id: '', leavepolicy_group_id: '',
 };
+
+// Ports legacy EmployeeController.php:3527-3563's contracted_days bookkeeping — a Contract hire
+// needs a real end date (after the joining date) before onboarding can create its initial row.
+function contractEndDateError(v: { emp_type: string; joining_date: string; contract_end_date: string }): string {
+  if (v.emp_type !== 'Contract') return '';
+  if (!v.contract_end_date) return 'Contract end date is required';
+  if (v.joining_date && v.contract_end_date <= v.joining_date) {
+    return 'Contract end date must be after the joining date';
+  }
+  return '';
+}
 
 // Three tabs matching the legacy Employee Join screen (setup.ctp Tab1+2 + onboarding.ctp
 // Tab3) and the same grouping used by the Employee Details port.
 const STEPS = [
-  { key: 'personal-info', label: 'Personal Info', title: 'Personal Info', subtitle: 'Personal, statutory and bank details.', accent: 'var(--color-primary)', accentSoft: 'var(--color-primary-soft)' },
-  { key: 'other-details', label: 'Other Details', title: 'Other Details', subtitle: 'Documents, education, experience and family information.', accent: 'var(--color-accent)', accentSoft: 'var(--color-accent-soft)' },
-  { key: 'onboarding', label: 'Onboarding', title: 'Onboarding', subtitle: 'Login access, company information and policies & rules.', accent: 'var(--color-success)', accentSoft: 'var(--color-success-soft)' },
+  { key: 'personal-info', label: 'Personal Info', accent: 'var(--color-primary)', accentSoft: 'var(--color-primary-soft)' },
+  { key: 'other-details', label: 'Other Details', accent: 'var(--color-accent)', accentSoft: 'var(--color-accent-soft)' },
+  { key: 'onboarding', label: 'Onboarding', accent: 'var(--color-success)', accentSoft: 'var(--color-success-soft)' },
 ] as const;
 
 const GATED_MESSAGE = 'Save the previous step first — this tab is available once the record exists.';
@@ -76,9 +87,9 @@ const MAX_DOB = (() => {
   return d.toISOString().slice(0, 10);
 })();
 
-const INPUT_CLASS = 'w-full px-3.5 py-2.5 border border-slate-200 rounded-xl text-sm text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/40 focus:border-[color:var(--color-primary)]/40 transition-colors duration-[180ms]';
+const INPUT_CLASS = 'w-full px-3 py-2 border border-slate-200 rounded-lg text-sm text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/40 focus:border-[color:var(--color-primary)]/40 transition-colors duration-[180ms]';
 const ERROR_INPUT_CLASS = 'border-[color:var(--color-danger)] focus:ring-[color:var(--color-danger)]/25 focus:border-[color:var(--color-danger)]';
-const LABEL_CLASS = 'block text-[13.5px] font-medium text-slate-600 mb-2';
+const LABEL_CLASS = 'block text-[12.5px] font-medium text-slate-600 mb-1';
 
 function toFormState(join: Record<string, string>): Record<string, string> {
   const form: Record<string, string> = { ...join };
@@ -105,13 +116,9 @@ interface JoinDetailProps {
   onOnboarded?: (empPkey: number) => void;
   /** Opens the wizard on a given tab index instead of 0 — used by "Continue Onboarding". */
   initialStep?: number;
-  /** False hides the Onboarding tab entirely, capping the wizard at Other Details — used for
-   *  "New Join", where creating the login is a separate, later action (via "Continue Onboarding"
-   *  from the Employee Join hub) rather than part of the initial create flow. Default true. */
-  includeOnboarding?: boolean;
 }
 
-export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onCreated, onOnboarded, initialStep, includeOnboarding = true }: JoinDetailProps) {
+export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onCreated, onOnboarded, initialStep }: JoinDetailProps) {
   const queryClient = useQueryClient();
   const [createdId, setCreatedId] = useState<number | null>(null);
   const effectiveId = id ?? (createdId != null ? String(createdId) : undefined);
@@ -234,8 +241,8 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
     },
   });
 
-  const steps = includeOnboarding ? STEPS : STEPS.slice(0, 2);
-  const isOnboardingStep = includeOnboarding && step === STEPS.length - 1;
+  const steps = STEPS;
+  const isOnboardingStep = step === STEPS.length - 1;
   const pending = isOnboardingStep ? onboardMutation.isPending : (isCreate ? createJoin.isPending : savePersonal.isPending);
 
   // Single source of truth for both live (on-type) and step-submit validation, so the two never
@@ -271,9 +278,13 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
   }
 
   function updateOnboardField(key: keyof typeof EMPTY_ONBOARD_FORM, value: string) {
-    setOnboardForm((prev) => ({ ...prev, [key]: value }));
+    const next = { ...onboardForm, [key]: value };
+    setOnboardForm(next);
     if (key === 'password') {
       setOnboardFieldErrors((prev) => ({ ...prev, [key]: value.trim() ? '' : prev[key] }));
+    }
+    if (key === 'emp_type' || key === 'joining_date' || key === 'contract_end_date') {
+      setOnboardFieldErrors((prev) => ({ ...prev, contract_end_date: contractEndDateError(next) }));
     }
   }
 
@@ -386,6 +397,7 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
   function validateOnboardingStep(): boolean {
     const errors = {
       password: onboardForm.password.trim() ? '' : 'Password is required',
+      contract_end_date: contractEndDateError(onboardForm),
     };
     setOnboardFieldErrors(errors);
     return !Object.values(errors).some(Boolean);
@@ -436,14 +448,6 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
     }
   }
 
-  // Reached when Other Details is the last VISIBLE step (includeOnboarding=false, e.g. "New
-  // Join") — everything is already saved (persist() below, plus each Other Details row already
-  // saves itself on add), so this just confirms the save and leaves the wizard; onboarding is a
-  // separate, later action via "Continue Onboarding" on the Employee Join hub.
-  async function finishWithoutOnboarding() {
-    if (await persist()) onBack();
-  }
-
   function FieldError({ children }: { children?: string }) {
     if (!children) return null;
     return <p className="text-xs text-[color:var(--color-danger)] mt-1.5">{children}</p>;
@@ -479,242 +483,237 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
 
   function renderStepFields(idx: number) {
     if (idx === 0) {
+      // One continuous dense grid — matches legacy's Employee Details / Personal Info tab, which
+      // runs Name through LWF Registration Number as a single flat form with no sub-section
+      // headers or extra spacing between "Personal" / "Statutory" / "Bank" groups.
       return (
-        <div className="space-y-8">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-5 gap-y-4">
           <div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-5">
-              <div>
-                <label className={LABEL_CLASS}>First Name <span className="text-[color:var(--color-danger)]">*</span></label>
-                <input className={cn(INPUT_CLASS, fieldErrors.first_name && ERROR_INPUT_CLASS)} {...f('first_name')} />
-                <FieldError>{fieldErrors.first_name}</FieldError>
-              </div>
-              <div>
-                <label className={LABEL_CLASS}>Last Name</label>
-                <input className={INPUT_CLASS} {...f('last_name')} />
-              </div>
-              <div>
-                <label className={LABEL_CLASS}>Date of Birth <span className="text-[color:var(--color-danger)]">*</span></label>
-                <input
-                  type="date"
-                  max={MAX_DOB}
-                  className={cn(INPUT_CLASS, fieldErrors.date_of_birth && ERROR_INPUT_CLASS)}
-                  {...f('date_of_birth')}
-                />
-                <FieldError>{fieldErrors.date_of_birth}</FieldError>
-              </div>
-              <div>
-                <label className={LABEL_CLASS}>Gender <span className="text-[color:var(--color-danger)]">*</span></label>
-                <SearchableSelect
-                  value={form.classification ?? ''}
-                  onChange={(v) => updateField('classification', v)}
-                  options={[{ value: 'male', label: 'Male' }, { value: 'female', label: 'Female' }, { value: 'others', label: 'Other' }]}
-                  placeholder="Select gender"
-                  buttonClassName={cn(INPUT_CLASS, fieldErrors.classification && ERROR_INPUT_CLASS)}
-                />
-                <FieldError>{fieldErrors.classification}</FieldError>
-              </div>
-              <div>
-                <label className={LABEL_CLASS}>Mobile</label>
-                <input
-                  type="tel"
-                  maxLength={10}
-                  className={cn(INPUT_CLASS, fieldErrors.mobile_no && ERROR_INPUT_CLASS)}
-                  {...f('mobile_no')}
-                />
-                <FieldError>{fieldErrors.mobile_no}</FieldError>
-              </div>
-              <div>
-                <label className={LABEL_CLASS}>Email</label>
-                <input type="email" className={INPUT_CLASS} {...f('email')} />
-              </div>
-              <div>
-                <label className={LABEL_CLASS}>Aadhaar / ID Card <span className="text-[color:var(--color-danger)]">*</span></label>
-                <input
-                  maxLength={12}
-                  className={cn(INPUT_CLASS, fieldErrors.id_card && ERROR_INPUT_CLASS)}
-                  {...f('id_card')}
-                />
-                <FieldError>{fieldErrors.id_card}</FieldError>
-              </div>
-              <div>
-                <label className={LABEL_CLASS}>Blood Group</label>
-                <SearchableSelect
-                  value={form.blood ?? ''}
-                  onChange={(v) => updateField('blood', v)}
-                  options={['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'].map((bg) => ({ value: bg, label: bg }))}
-                  placeholder="Select blood group"
-                  buttonClassName={INPUT_CLASS}
-                />
-              </div>
-              <div>
-                <label className={LABEL_CLASS}>Marital Status</label>
-                <SearchableSelect
-                  value={form.maritual_status ?? ''}
-                  onChange={(v) => updateField('maritual_status', v)}
-                  options={['Single', 'Married', 'Divorced', 'Widowed'].map((s) => ({ value: s, label: s }))}
-                  placeholder="Select status"
-                  buttonClassName={INPUT_CLASS}
-                />
-              </div>
-              <div>
-                <label className={LABEL_CLASS}>Nationality <span className="text-[color:var(--color-danger)]">*</span></label>
-                <SearchableSelect
-                  value={form.nationality_id ?? ''}
-                  onChange={(v) => updateField('nationality_id', v)}
-                  options={nationalities.map((n) => ({ value: String(n.id), label: n.country_name }))}
-                  placeholder="Select nationality"
-                  buttonClassName={cn(INPUT_CLASS, fieldErrors.nationality_id && ERROR_INPUT_CLASS)}
-                />
-                <FieldError>{fieldErrors.nationality_id}</FieldError>
-              </div>
-              <div>
-                <label className={LABEL_CLASS}>Guardian Name</label>
-                <input className={INPUT_CLASS} {...f('guradian')} />
-              </div>
-              <div>
-                <label className={LABEL_CLASS}>Relation to Guardian</label>
-                <input className={INPUT_CLASS} {...f('relation_guardian')} />
-              </div>
-            </div>
-            <div className="mt-5">
-              <label className={LABEL_CLASS}>Address</label>
-              <textarea className={INPUT_CLASS} rows={2} value={form.address ?? ''} onChange={(e) => setForm((p) => ({ ...p, address: e.target.value }))} />
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-6 gap-y-5 mt-5">
-              <div>
-                <label className={LABEL_CLASS}>District</label>
-                <input className={INPUT_CLASS} {...f('district')} />
-              </div>
-              <div>
-                <label className={LABEL_CLASS}>State</label>
-                <input className={INPUT_CLASS} {...f('state')} />
-              </div>
-              <div>
-                <label className={LABEL_CLASS}>Pincode</label>
-                <input
-                  maxLength={6}
-                  className={cn(INPUT_CLASS, fieldErrors.pincode && ERROR_INPUT_CLASS)}
-                  {...f('pincode')}
-                />
-                <FieldError>{fieldErrors.pincode}</FieldError>
-              </div>
-            </div>
+            <label className={LABEL_CLASS}>Name <span className="text-[color:var(--color-danger)]">*</span></label>
+            <input maxLength={100} className={cn(INPUT_CLASS, fieldErrors.first_name && ERROR_INPUT_CLASS)} {...f('first_name')} placeholder="First name" />
+            <FieldError>{fieldErrors.first_name}</FieldError>
+          </div>
+          <div>
+            <label className={LABEL_CLASS}>Last Name</label>
+            <input className={INPUT_CLASS} {...f('last_name')} />
+          </div>
+          <div>
+            <label className={LABEL_CLASS}>Birth Date <span className="text-[color:var(--color-danger)]">*</span></label>
+            <input
+              type="date"
+              max={MAX_DOB}
+              className={cn(INPUT_CLASS, fieldErrors.date_of_birth && ERROR_INPUT_CLASS)}
+              {...f('date_of_birth')}
+            />
+            <FieldError>{fieldErrors.date_of_birth}</FieldError>
           </div>
 
           <div>
-            <SectionHeading>Statutory Details</SectionHeading>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-5">
-              <div>
-                <label className={LABEL_CLASS}>PAN Number</label>
-                <input
-                  maxLength={10}
-                  className={cn(INPUT_CLASS, fieldErrors.pan_no && ERROR_INPUT_CLASS)}
-                  {...f('pan_no')}
-                  onChange={(e) => updateField('pan_no', e.target.value.toUpperCase())}
-                  placeholder="ABCDE1234D"
-                />
-                <FieldError>{fieldErrors.pan_no}</FieldError>
-              </div>
-              <div>
-                <label className={LABEL_CLASS}>PF Number</label>
-                <input
-                  maxLength={22}
-                  className={cn(INPUT_CLASS, fieldErrors.pf && ERROR_INPUT_CLASS)}
-                  {...f('pf')}
-                />
-                <FieldError>{fieldErrors.pf}</FieldError>
-              </div>
-              <div>
-                <label className={LABEL_CLASS}>UAN No</label>
-                <input
-                  maxLength={12}
-                  className={cn(INPUT_CLASS, fieldErrors.company_pf && ERROR_INPUT_CLASS)}
-                  {...f('company_pf')}
-                />
-                <FieldError>{fieldErrors.company_pf}</FieldError>
-              </div>
-              <div>
-                <label className={LABEL_CLASS}>Previous PF Member ID</label>
-                <input maxLength={15} className={INPUT_CLASS} {...f('previous_member_id')} />
-              </div>
-              <div>
-                <label className={LABEL_CLASS}>ESI Number</label>
-                <input
-                  maxLength={10}
-                  className={cn(INPUT_CLASS, fieldErrors.esi && ERROR_INPUT_CLASS)}
-                  {...f('esi')}
-                />
-                <FieldError>{fieldErrors.esi}</FieldError>
-              </div>
-              <div>
-                <label className={LABEL_CLASS}>ESI Dispensary</label>
-                <input className={INPUT_CLASS} {...f('esi_dispensary')} />
-              </div>
-              <div>
-                <label className={LABEL_CLASS}>LWF Code</label>
-                <input
-                  maxLength={15}
-                  className={cn(INPUT_CLASS, fieldErrors.lwf_code && ERROR_INPUT_CLASS)}
-                  {...f('lwf_code')}
-                  onChange={(e) => updateField('lwf_code', e.target.value.toUpperCase())}
-                />
-                <FieldError>{fieldErrors.lwf_code}</FieldError>
-              </div>
-              <div>
-                <label className={LABEL_CLASS}>WPS Code</label>
-                <input maxLength={15} className={INPUT_CLASS} {...f('wps_code')} />
-              </div>
-            </div>
-            <div className="flex items-center gap-6 mt-5 flex-wrap">
-              <div className="flex items-center gap-3">
-                {checkbox('international_worker', 'International Worker')}
-                <SearchableSelect
-                  value={form.country_origin ?? ''}
-                  onChange={(v) => updateField('country_origin', v)}
-                  options={nationalities.map((n) => ({ value: String(n.id), label: n.country_name }))}
-                  placeholder="Country of origin"
-                  buttonClassName={cn(INPUT_CLASS, 'w-44 py-1.5 shrink-0')}
-                  disabled={form.international_worker !== 'Y'}
-                />
-              </div>
-              {checkbox('physical_handicap', 'Physical Handicap')}
-              {checkbox('eps', 'EPS Eligibility')}
-            </div>
-            {form.physical_handicap === 'Y' && (
-              <div className="flex flex-wrap gap-4 mt-4 pl-1">
-                {checkbox('locomotive', 'Locomotive Disability')}
-                {checkbox('hearing', 'Hearing Disability')}
-                {checkbox('visual', 'Visual Disability')}
-              </div>
-            )}
+            <label className={LABEL_CLASS}>Gender <span className="text-[color:var(--color-danger)]">*</span></label>
+            <SearchableSelect
+              value={form.classification ?? ''}
+              onChange={(v) => updateField('classification', v)}
+              options={[{ value: 'male', label: 'Male' }, { value: 'female', label: 'Female' }, { value: 'others', label: 'Other' }]}
+              placeholder="Select gender"
+              buttonClassName={cn(INPUT_CLASS, fieldErrors.classification && ERROR_INPUT_CLASS)}
+            />
+            <FieldError>{fieldErrors.classification}</FieldError>
+          </div>
+          <div>
+            <label className={LABEL_CLASS}>Email Address</label>
+            <input type="email" className={INPUT_CLASS} {...f('email')} />
+          </div>
+          <div>
+            <label className={LABEL_CLASS}>Phone Number</label>
+            <input
+              type="tel"
+              maxLength={10}
+              className={cn(INPUT_CLASS, fieldErrors.mobile_no && ERROR_INPUT_CLASS)}
+              {...f('mobile_no')}
+            />
+            <FieldError>{fieldErrors.mobile_no}</FieldError>
+          </div>
+
+          <div className="sm:col-span-2">
+            <label className={LABEL_CLASS}>Address</label>
+            <input className={INPUT_CLASS} value={form.address ?? ''} onChange={(e) => setForm((p) => ({ ...p, address: e.target.value }))} />
+          </div>
+          <div>
+            <label className={LABEL_CLASS}>Pin Code</label>
+            <input
+              maxLength={6}
+              className={cn(INPUT_CLASS, fieldErrors.pincode && ERROR_INPUT_CLASS)}
+              {...f('pincode')}
+            />
+            <FieldError>{fieldErrors.pincode}</FieldError>
           </div>
 
           <div>
-            <SectionHeading>Bank Details</SectionHeading>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-5">
-              <div>
-                <label className={LABEL_CLASS}>Bank Name</label>
-                <input className={INPUT_CLASS} {...f('bank')} />
-              </div>
-              <div>
-                <label className={LABEL_CLASS}>Bank Branch</label>
-                <input className={INPUT_CLASS} {...f('bank_branch')} />
-              </div>
-              <div>
-                <label className={LABEL_CLASS}>IFSC Code</label>
-                <input maxLength={12} className={INPUT_CLASS} {...f('ifsc_code')} />
-              </div>
-              <div>
-                <label className={LABEL_CLASS}>Account Number</label>
-                <input
-                  maxLength={18}
-                  className={cn(INPUT_CLASS, fieldErrors.account_no && ERROR_INPUT_CLASS)}
-                  {...f('account_no')}
-                />
-                <FieldError>{fieldErrors.account_no}</FieldError>
-              </div>
-            </div>
+            <label className={LABEL_CLASS}>Nationality <span className="text-[color:var(--color-danger)]">*</span></label>
+            <SearchableSelect
+              value={form.nationality_id ?? ''}
+              onChange={(v) => updateField('nationality_id', v)}
+              options={nationalities.map((n) => ({ value: String(n.id), label: n.country_name }))}
+              placeholder="Select nationality"
+              buttonClassName={cn(INPUT_CLASS, fieldErrors.nationality_id && ERROR_INPUT_CLASS)}
+            />
+            <FieldError>{fieldErrors.nationality_id}</FieldError>
           </div>
+          <div>
+            <label className={LABEL_CLASS}>District</label>
+            <input className={INPUT_CLASS} {...f('district')} />
+          </div>
+          <div>
+            <label className={LABEL_CLASS}>State</label>
+            <input className={INPUT_CLASS} {...f('state')} />
+          </div>
+
+          <div>
+            <label className={LABEL_CLASS}>Marital Status</label>
+            <SearchableSelect
+              value={form.maritual_status ?? ''}
+              onChange={(v) => updateField('maritual_status', v)}
+              options={['Single', 'Married', 'Divorced', 'Widowed'].map((s) => ({ value: s, label: s }))}
+              placeholder="Select status"
+              buttonClassName={INPUT_CLASS}
+            />
+          </div>
+          <div>
+            <label className={LABEL_CLASS}>Guardian Name</label>
+            <input className={INPUT_CLASS} {...f('guradian')} />
+          </div>
+          <div>
+            <label className={LABEL_CLASS}>Relation</label>
+            <input className={INPUT_CLASS} {...f('relation_guardian')} />
+          </div>
+
+          <div>
+            <label className={LABEL_CLASS}>Blood Group</label>
+            <SearchableSelect
+              value={form.blood ?? ''}
+              onChange={(v) => updateField('blood', v)}
+              options={['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'].map((bg) => ({ value: bg, label: bg }))}
+              placeholder="Select blood group"
+              buttonClassName={INPUT_CLASS}
+            />
+          </div>
+          <div>
+            <label className={LABEL_CLASS}>Aadhaar No <span className="text-[color:var(--color-danger)]">*</span></label>
+            <input
+              maxLength={12}
+              className={cn(INPUT_CLASS, fieldErrors.id_card && ERROR_INPUT_CLASS)}
+              {...f('id_card')}
+            />
+            <FieldError>{fieldErrors.id_card}</FieldError>
+          </div>
+          <div>
+            <label className={LABEL_CLASS}>PAN No</label>
+            <input
+              maxLength={10}
+              className={cn(INPUT_CLASS, fieldErrors.pan_no && ERROR_INPUT_CLASS)}
+              {...f('pan_no')}
+              onChange={(e) => updateField('pan_no', e.target.value.toUpperCase())}
+              placeholder="ABCDE1234D"
+            />
+            <FieldError>{fieldErrors.pan_no}</FieldError>
+          </div>
+
+          <div>
+            <label className={LABEL_CLASS}>Bank Name</label>
+            <input className={INPUT_CLASS} {...f('bank')} />
+          </div>
+          <div>
+            <label className={LABEL_CLASS}>Branch</label>
+            <input className={INPUT_CLASS} {...f('bank_branch')} />
+          </div>
+          <div>
+            <label className={LABEL_CLASS}>IFSC Code</label>
+            <input maxLength={12} className={INPUT_CLASS} {...f('ifsc_code')} />
+          </div>
+
+          <div>
+            <label className={LABEL_CLASS}>Account Number</label>
+            <input
+              maxLength={18}
+              className={cn(INPUT_CLASS, fieldErrors.account_no && ERROR_INPUT_CLASS)}
+              {...f('account_no')}
+            />
+            <FieldError>{fieldErrors.account_no}</FieldError>
+          </div>
+          <div>
+            <label className={LABEL_CLASS}>ESI No</label>
+            <input
+              maxLength={10}
+              className={cn(INPUT_CLASS, fieldErrors.esi && ERROR_INPUT_CLASS)}
+              {...f('esi')}
+            />
+            <FieldError>{fieldErrors.esi}</FieldError>
+          </div>
+          <div>
+            <label className={LABEL_CLASS}>ESI Dispensary</label>
+            <input className={INPUT_CLASS} {...f('esi_dispensary')} />
+          </div>
+
+          <div>
+            <label className={LABEL_CLASS}>PF No</label>
+            <input
+              maxLength={22}
+              className={cn(INPUT_CLASS, fieldErrors.pf && ERROR_INPUT_CLASS)}
+              {...f('pf')}
+            />
+            <FieldError>{fieldErrors.pf}</FieldError>
+          </div>
+          <div>
+            <label className={LABEL_CLASS}>UAN No</label>
+            <input
+              maxLength={12}
+              className={cn(INPUT_CLASS, fieldErrors.company_pf && ERROR_INPUT_CLASS)}
+              {...f('company_pf')}
+            />
+            <FieldError>{fieldErrors.company_pf}</FieldError>
+          </div>
+          <div>
+            <label className={LABEL_CLASS}>Previous Member ID</label>
+            <input maxLength={15} className={INPUT_CLASS} {...f('previous_member_id')} />
+          </div>
+
+          <div>
+            <label className={LABEL_CLASS}>WPS ID</label>
+            <input maxLength={15} className={INPUT_CLASS} {...f('wps_code')} />
+          </div>
+          <div>
+            <label className={LABEL_CLASS}>LWF Registration Number</label>
+            <input
+              maxLength={15}
+              className={cn(INPUT_CLASS, fieldErrors.lwf_code && ERROR_INPUT_CLASS)}
+              {...f('lwf_code')}
+              onChange={(e) => updateField('lwf_code', e.target.value.toUpperCase())}
+            />
+            <FieldError>{fieldErrors.lwf_code}</FieldError>
+          </div>
+          <div className="flex items-end">
+            <SearchableSelect
+              value={form.country_origin ?? ''}
+              onChange={(v) => updateField('country_origin', v)}
+              options={nationalities.map((n) => ({ value: String(n.id), label: n.country_name }))}
+              placeholder="Country of origin"
+              buttonClassName={INPUT_CLASS}
+              disabled={form.international_worker !== 'Y'}
+            />
+          </div>
+
+          <div className="sm:col-span-3 flex items-center gap-6 flex-wrap pt-1">
+            {checkbox('eps', 'EPS Eligibility')}
+            {checkbox('physical_handicap', 'Physical Handicap')}
+            {checkbox('international_worker', 'International Worker')}
+          </div>
+          {form.physical_handicap === 'Y' && (
+            <div className="sm:col-span-3 flex flex-wrap gap-4 pl-1">
+              {checkbox('locomotive', 'Locomotive Disability')}
+              {checkbox('hearing', 'Hearing Disability')}
+              {checkbox('visual', 'Visual Disability')}
+            </div>
+          )}
         </div>
       );
     }
@@ -733,10 +732,10 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
               onAdd={addChild('education')}
               onRemove={removeChild('education')}
               fields={[
-                { key: 'course', label: 'Course', required: true },
-                { key: 'university', label: 'University', required: true },
-                { key: 'duration', label: 'Duration', required: true },
-                { key: 'mark', label: 'Marks', required: true },
+                { key: 'course', label: 'Course', required: true, maxLength: 100 },
+                { key: 'university', label: 'University', required: true, maxLength: 100 },
+                { key: 'duration', label: 'Duration', required: true, maxLength: 10 },
+                { key: 'mark', label: 'Marks', required: true, maxLength: 6 },
               ]}
             />
           </CollapsibleSection>
@@ -749,9 +748,9 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
               onAdd={addChild('experience')}
               onRemove={removeChild('experience')}
               fields={[
-                { key: 'company', label: 'Company', required: true },
-                { key: 'designation', label: 'Designation', required: true },
-                { key: 'department', label: 'Department', required: true },
+                { key: 'company', label: 'Company', required: true, maxLength: 100 },
+                { key: 'designation', label: 'Designation', required: true, maxLength: 100 },
+                { key: 'department', label: 'Department', required: true, maxLength: 100 },
                 { key: 'from_date', label: 'From', type: 'date', required: true },
                 { key: 'to_date', label: 'To', type: 'date', required: true },
                 { key: 'salary', label: 'Salary', type: 'number', required: true },
@@ -767,12 +766,12 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
               onAdd={addChild('family')}
               onRemove={removeChild('family')}
               fields={[
-                { key: 'name', label: 'Name', required: true },
-                { key: 'relation', label: 'Relation', required: true },
+                { key: 'name', label: 'Name', required: true, maxLength: 100 },
+                { key: 'relation', label: 'Relation', required: true, maxLength: 100 },
                 { key: 'gender', label: 'Gender', required: true },
                 { key: 'DOB', label: 'Date of Birth', type: 'date', required: true },
-                { key: 'nationality', label: 'Nationality' },
-                { key: 'contact_number', label: 'Contact Number', required: true },
+                { key: 'nationality', label: 'Nationality', maxLength: 100 },
+                { key: 'contact_number', label: 'Contact Number', required: true, maxLength: 10 },
               ]}
             />
           </CollapsibleSection>
@@ -790,10 +789,10 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
               onRemove={removeChild('documents')}
               fields={[
                 { key: 'document_type', label: 'Type', type: 'select', options: DOCUMENT_TYPES.map((d) => ({ value: d, label: d })), required: true },
-                { key: 'document_number', label: 'Number', required: true },
-                { key: 'name', label: 'Name on Document', required: true },
-                { key: 'relation', label: 'Relation', required: true },
-                { key: 'nationality', label: 'Nationality' },
+                { key: 'document_number', label: 'Number', required: true, maxLength: 50 },
+                { key: 'name', label: 'Name on Document', required: true, maxLength: 100 },
+                { key: 'relation', label: 'Relation', required: true, maxLength: 100 },
+                { key: 'nationality', label: 'Nationality', maxLength: 100 },
                 { key: 'valid_from', label: 'Valid From', type: 'date', required: true },
                 { key: 'valid_till', label: 'Valid Till', type: 'date' },
               ]}
@@ -812,7 +811,7 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
       <div className="space-y-8">
         <div>
           <SectionHeading>Identity &amp; Login</SectionHeading>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-5">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-6 gap-y-5">
             <div>
               <label className={LABEL_CLASS}>Employee ID</label>
               <input className={INPUT_CLASS} {...fOnboard('emp_company_id')} placeholder="Leave blank if no ID" />
@@ -835,7 +834,7 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
 
         <div>
           <SectionHeading>Company Information</SectionHeading>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-5">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-6 gap-y-5">
             <div>
               <label className={LABEL_CLASS}>Joining Date</label>
               <input type="date" className={INPUT_CLASS} {...fOnboard('joining_date')} />
@@ -881,6 +880,24 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
               <label className={LABEL_CLASS}>Probation Period (days)</label>
               <input type="number" className={INPUT_CLASS} {...fOnboard('probation')} />
             </div>
+            {onboardForm.emp_type === 'Contract' && (
+              <>
+                <div>
+                  <label className={LABEL_CLASS}>Contract Start Date</label>
+                  <input type="date" readOnly className={cn(INPUT_CLASS, 'bg-slate-50 text-slate-500')} value={onboardForm.joining_date} />
+                </div>
+                <div>
+                  <label className={LABEL_CLASS}>Contract End Date <span className="text-[color:var(--color-danger)]">*</span></label>
+                  <input
+                    type="date"
+                    min={onboardForm.joining_date || undefined}
+                    className={cn(INPUT_CLASS, onboardFieldErrors.contract_end_date && ERROR_INPUT_CLASS)}
+                    {...fOnboard('contract_end_date')}
+                  />
+                  <FieldError>{onboardFieldErrors.contract_end_date}</FieldError>
+                </div>
+              </>
+            )}
             <div>
               <label className={LABEL_CLASS}>Reporting Manager</label>
               <EmployeeSearch
@@ -893,7 +910,7 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
 
         <div>
           <SectionHeading>Policies &amp; Rules</SectionHeading>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-5">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-6 gap-y-5">
             {[
               { key: 'day_time_seq' as const, label: 'Shift Policy', opts: shifts },
               { key: 'holiday_group_id' as const, label: 'Holiday Calendar', opts: holidayGroups },
@@ -917,20 +934,13 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
   }
 
   function renderStepContent(idx: number) {
-    const s = STEPS[idx];
-    return (
-      <div>
-        <h2 className="font-heading text-[20px] font-bold text-[#0F172A] tracking-tight">{s.title}</h2>
-        <p className="text-[13.5px] text-slate-500 mt-1 mb-6">{s.subtitle}</p>
-        {renderStepFields(idx)}
-      </div>
-    );
+    return <div>{renderStepFields(idx)}</div>;
   }
 
   const turnGlow = transitioning ? STEPS[transitioning.to].accent : undefined;
 
   return (
-    <div className={cn('flex flex-col -m-6', embedded && 'max-h-[calc(90vh-3rem)]')}>
+    <div className={cn('flex flex-col -m-6', embedded && 'max-h-[calc(95vh-3rem)]')}>
       {/* Sticky header + stepper */}
       <div className="flex-shrink-0 bg-white/95 backdrop-blur-sm border-b border-slate-100 px-6 pt-6 pb-4 rounded-t-2xl">
         {showBackLink && (
@@ -1062,21 +1072,13 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
             </button>
           )}
 
-          {isLast && includeOnboarding ? (
+          {isLast ? (
             <button
               onClick={finish}
               disabled={pending || isCreate}
               className="px-5 py-2.5 rounded-xl text-sm font-semibold bg-[color:var(--color-primary)] hover:scale-[1.03] disabled:opacity-50 disabled:hover:scale-100 text-white shadow-lg shadow-[color:var(--color-primary)]/20 transition-all duration-[180ms]"
             >
               {pending ? 'Onboarding…' : 'Complete Onboarding'}
-            </button>
-          ) : isLast ? (
-            <button
-              onClick={finishWithoutOnboarding}
-              disabled={pending || isCreate}
-              className="px-5 py-2.5 rounded-xl text-sm font-semibold bg-[color:var(--color-primary)] hover:scale-[1.03] disabled:opacity-50 disabled:hover:scale-100 text-white shadow-lg shadow-[color:var(--color-primary)]/20 transition-all duration-[180ms]"
-            >
-              {pending ? 'Saving…' : 'Done'}
             </button>
           ) : (
             <button

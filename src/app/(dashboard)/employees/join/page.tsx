@@ -56,10 +56,6 @@ export default function EmployeeJoinPage() {
   const [dragActive, setDragActive] = useState(false);
   const [joinInitialStep, setJoinInitialStep] = useState<number | undefined>(undefined);
   const [joinEditDirty, setJoinEditDirty] = useState(false);
-  // Fixed at the moment the modal opens (New Join vs Continue Onboarding) — must NOT be derived
-  // from selectedJoinId, since handleJoinCreated adopts the new draft's id into selectedJoinId
-  // partway through a New Join, which would otherwise flip the Onboarding tab back on mid-flow.
-  const [joinIncludeOnboarding, setJoinIncludeOnboarding] = useState(true);
 
   function closeJoinEditModal() {
     if (joinEditDirty && !window.confirm('You have unsaved changes. Discard them and close?')) return;
@@ -238,7 +234,6 @@ export default function EmployeeJoinPage() {
               setSelectedJoinId(row.original.emp_join_pkey);
               setJoinEditDirty(false);
               setJoinInitialStep(2);
-              setJoinIncludeOnboarding(true);
               setModalOpen(true);
             }}
             className="flex items-center gap-1.5 text-xs font-medium text-[color:var(--color-success)] hover:bg-[color:var(--color-success)]/10 px-2.5 py-1.5 rounded-lg transition-colors duration-[180ms]"
@@ -331,7 +326,7 @@ export default function EmployeeJoinPage() {
           <div className="flex items-center gap-2">
             <button
               key={`new-join-${tab}`}
-              onClick={() => { setSelectedJoinId(null); setJoinEditDirty(false); setJoinInitialStep(undefined); setJoinIncludeOnboarding(false); setModalOpen(true); }}
+              onClick={() => { setSelectedJoinId(null); setJoinEditDirty(false); setJoinInitialStep(undefined); setModalOpen(true); }}
               className="cta-pulse flex items-center gap-1.5 bg-[color:var(--color-primary)] hover:bg-[#1E88E5] active:bg-[#1976D2] hover:scale-[1.03] active:scale-100 text-white px-3 py-1.5 rounded-[9px] text-[12.5px] font-semibold shadow-sm transition-all duration-[180ms]"
             >
               <Plus className="w-3.5 h-3.5" />
@@ -450,7 +445,7 @@ export default function EmployeeJoinPage() {
       {tab === 'joining' && (
         <>
           <FloatingActionPanel visible={selectedJoinId !== null} actions={joinPanelActions} />
-          <Modal open={modalOpen} onClose={closeJoinEditModal} className="max-w-[1000px] rounded-[22px]">
+          <Modal open={modalOpen} onClose={closeJoinEditModal} className="max-w-[1100px] max-h-[95vh] rounded-[22px]">
             {modalOpen && (
               <JoinDetail
                 id={selectedJoinId !== null ? String(selectedJoinId) : undefined}
@@ -460,9 +455,6 @@ export default function EmployeeJoinPage() {
                 onDirtyChange={setJoinEditDirty}
                 onCreated={handleJoinCreated}
                 onOnboarded={handleOnboarded}
-                // A brand-new "New Join" stops at Other Details; onboarding is only ever reached
-                // later, deliberately, via "Continue Onboarding" on an existing row.
-                includeOnboarding={joinIncludeOnboarding}
               />
             )}
           </Modal>
