@@ -46,7 +46,7 @@ async function verifyAndUpgradePassword(
 
 async function tryAdminLogin(username: string, password: string): Promise<AuthUser | null> {
   const [rows] = await controlPool.execute<mysql.RowDataPacket[]>(
-    `SELECT user_pkey, password, company_code, reset_login_flag, plan_id
+    `SELECT user_pkey, password, company_code, reset_login_flag, plan_id, attr1
      FROM user_credentials
      WHERE (user_id = ? OR email = ?) AND UPPER(access_allowed) = 'Y'`,
     [username, username]
@@ -65,11 +65,16 @@ async function tryAdminLogin(username: string, password: string): Promise<AuthUs
   if (!passwordValid) return null;
 
   if (user.reset_login_flag === 'Y') {
-    const token = crypto.randomBytes(32).toString('hex');
-    await controlPool.execute(`UPDATE user_credentials SET attr1 = ? WHERE user_pkey = ?`, [
-      token,
-      user.user_pkey,
-    ]);
+    // Reuse an existing, unused token instead of always minting a fresh one — otherwise a second
+    // login attempt (page reload, resubmit, double-click) silently invalidates a reset-password link
+    // the user may already have open in another tab, since the old token stops matching any row.
+    const token = user.attr1 || crypto.randomBytes(32).toString('hex');
+    if (!user.attr1) {
+      await controlPool.execute(`UPDATE user_credentials SET attr1 = ? WHERE user_pkey = ?`, [
+        token,
+        user.user_pkey,
+      ]);
+    }
     throw new Error(`RESET_REQUIRED::admin::::${token}`);
   }
 
@@ -117,7 +122,7 @@ async function tryEmployeeLogin(username: string, password: string): Promise<Aut
 
   const [rows] = await companyPool.execute<mysql.RowDataPacket[]>(
     `SELECT user_pkey, password, emp_fkey, access_allowed, locked, incorrect_login_attempt,
-            end_date, reset_login_flag
+            end_date, reset_login_flag, attr1
      FROM user_credentials
      WHERE user_id = ?`,
     [username]
@@ -140,11 +145,16 @@ async function tryEmployeeLogin(username: string, password: string): Promise<Aut
   );
 
   if (passwordValid && user.reset_login_flag === 'Y') {
-    const token = crypto.randomBytes(32).toString('hex');
-    await companyPool.execute(`UPDATE user_credentials SET attr1 = ? WHERE user_pkey = ?`, [
-      token,
-      user.user_pkey,
-    ]);
+    // Reuse an existing, unused token instead of always minting a fresh one — otherwise a second
+    // login attempt (page reload, resubmit, double-click) silently invalidates a reset-password link
+    // the user may already have open in another tab, since the old token stops matching any row.
+    const token = user.attr1 || crypto.randomBytes(32).toString('hex');
+    if (!user.attr1) {
+      await companyPool.execute(`UPDATE user_credentials SET attr1 = ? WHERE user_pkey = ?`, [
+        token,
+        user.user_pkey,
+      ]);
+    }
     throw new Error(`RESET_REQUIRED::employee::${companyCode}::${token}`);
   }
 
