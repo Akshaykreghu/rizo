@@ -1006,6 +1006,9 @@
     0 0 0 0.5px rgba(170,205,235,0.28),
     0 4px 16px rgba(13,31,46,0.08),
     0 12px 32px rgba(13,31,46,0.06);
+}.ess-legacy .app-tabs.app-tabs-compact {
+  display: inline-grid;
+  grid-template-columns: repeat(var(--app-tab-count, 2), minmax(140px, auto));
 }.ess-legacy .app-tab-indicator {
   position: absolute;
   top: 4px; bottom: 4px; left: 4px;

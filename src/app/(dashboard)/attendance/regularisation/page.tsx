@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useSetupOptions } from '@/lib/setupOptions';
 import { EmployeeSearch } from '@/components/employees/EmployeeSearch';
-import { Plus, Check, X, CheckCheck, Pencil, Trash2 } from 'lucide-react';
+import { Plus, X, CheckCheck, Pencil, Trash2 } from 'lucide-react';
 import type { ColumnDef } from '@tanstack/react-table';
 import { cn } from '@/lib/utils';
 import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
@@ -49,7 +49,7 @@ export default function RegularisationPage() {
   const { slotEl } = useHeaderSlot();
   const [month, setMonth] = useState(currentMonth());
   const [branch, setBranch] = useState('');
-  const [status, setStatus] = useState('pending');
+  const [status, setStatus] = useState('');
   const [showRaise, setShowRaise] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [form, setForm] = useState({ empFkey: '', attDate: '', direction: 'in' as 'in' | 'out', logTime: '', remarks: '' });
@@ -217,50 +217,44 @@ export default function RegularisationPage() {
       ),
     },
     {
-      id: 'punch-actions',
+      id: 'actions',
       header: 'Action',
-      meta: { className: 'w-16' },
+      meta: { className: 'w-40' },
       cell: ({ row }) => (
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            setPunchModal({
-              empId: row.original.emp_id,
-              attDate: row.original.att_date,
-              label: `${row.original.first_name} ${row.original.last_name} (${row.original.emp_id})`,
-            });
-            setNewPunch({ direction: 'in', logTime: '', remarks: '' });
-          }}
-          className="p-1.5 rounded-lg text-slate-400 hover:text-[color:var(--color-primary-dark)] hover:bg-[color:var(--color-primary-light)] transition-colors duration-150"
-          title="Edit punches"
-        >
-          <Pencil className="w-3.5 h-3.5" />
-        </button>
+        <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+          <button
+            onClick={() => {
+              setPunchModal({
+                empId: row.original.emp_id,
+                attDate: row.original.att_date,
+                label: `${row.original.first_name} ${row.original.last_name} (${row.original.emp_id})`,
+              });
+              setNewPunch({ direction: 'in', logTime: '', remarks: '' });
+            }}
+            title="Edit punches"
+            className="p-1.5 rounded-lg text-slate-400 hover:text-[color:var(--color-primary-dark)] hover:bg-[color:var(--color-primary-light)] transition-colors duration-150"
+          >
+            <Pencil className="w-3.5 h-3.5" />
+          </button>
+          {row.original.approved === 'P' && (
+            <>
+              <button
+                onClick={() => decide.mutate({ id: row.original.id, decision: 'approve' })}
+                className="inline-flex items-center px-2 py-1 rounded-md text-[11px] font-semibold bg-[color:var(--color-success-soft)] text-[color:var(--color-success-dark)] hover:opacity-80 transition-opacity"
+              >
+                Approve
+              </button>
+              <button
+                onClick={() => decide.mutate({ id: row.original.id, decision: 'reject' })}
+                className="inline-flex items-center px-2 py-1 rounded-md text-[11px] font-semibold bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors"
+              >
+                Reject
+              </button>
+            </>
+          )}
+        </div>
       ),
     },
-    ...(status === 'pending'
-      ? [{
-          id: 'actions',
-          header: '',
-          meta: { className: 'w-16' },
-          cell: ({ row }: { row: { original: RegRow } }) => (
-            <div className="flex items-center gap-1">
-              <button
-                onClick={(e) => { e.stopPropagation(); decide.mutate({ id: row.original.id, decision: 'approve' }); }}
-                className="p-1.5 rounded-lg text-slate-400 hover:text-[color:var(--color-success-dark)] hover:bg-[color:var(--color-success-soft)] transition-colors duration-150"
-              >
-                <Check className="w-3.5 h-3.5" />
-              </button>
-              <button
-                onClick={(e) => { e.stopPropagation(); decide.mutate({ id: row.original.id, decision: 'reject' }); }}
-                className="p-1.5 rounded-lg text-slate-400 hover:text-[color:var(--color-danger)] hover:bg-[color:var(--color-danger)]/10 transition-colors duration-150"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          ),
-        } as ColumnDef<RegRow, unknown>]
-      : []),
   ];
 
   return (
@@ -405,7 +399,7 @@ export default function RegularisationPage() {
                   )}
                 >
                   <span className="capitalize font-medium">{p.C1}</span>
-                  <span className="flex-1">{new Date(p.LOGDATE).toLocaleString()}</span>
+                  <span className="flex-1">{p.LOGDATE}</span>
                   <span className="text-slate-400 truncate max-w-[120px]">{p.C3}</span>
                   {p.status === 'Y' && (
                     <button

@@ -14,10 +14,13 @@ interface Tab {
   icon?: ReactNode;
 }
 
-export default function AppTabs({ tabs, active, onChange }: { tabs: Tab[]; active: string; onChange: (key: string) => void }) {
+export default function AppTabs({ tabs, active, onChange, compact }: { tabs: Tab[]; active: string; onChange: (key: string) => void; compact?: boolean }) {
   const activeIdx = Math.max(0, tabs.findIndex((t) => t.key === active));
   return (
-    <div className="app-tabs" style={{ '--app-tab-count': tabs.length } as CSSProperties}>
+    <div
+      className={`app-tabs${compact ? ' app-tabs-compact' : ''}`}
+      style={{ '--app-tab-count': tabs.length } as CSSProperties}
+    >
       <div className="app-tab-indicator" style={{ transform: `translateX(calc(${activeIdx} * 100%))` }} />
       {tabs.map((t) => (
         <button key={t.key} className={`app-tab${active === t.key ? ' active' : ''}`} onClick={() => onChange(t.key)}>

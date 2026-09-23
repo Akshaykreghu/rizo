@@ -234,6 +234,11 @@ function currentMonth() {
 }
 
 function RegularisationApprovalsTab() {
+  // Regularisation is single-stage (P -> A or P -> R, no separate Authorize step like leave —
+  // confirmed by RegularisationController::listhierarchyregularization(), which only ever supports
+  // a flat `regStatus` filter over approved IN ('P','A','R')), so the hierarchy queue here only
+  // needs Pending / Approved — no "Authorized" tab exists for this feature at all.
+  const [subTab, setSubTab] = useState<'pending' | 'approved'>('pending');
   const [rows, setRows] = useState<RegRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<number | null>(null);
@@ -241,12 +246,13 @@ function RegularisationApprovalsTab() {
   const month = currentMonth();
 
   const load = useCallback(() => {
-    fetch(`/api/attendance/regularisation?month=${month}&scope=hierarchy&status=pending`)
+    setLoading(true);
+    fetch(`/api/attendance/regularisation?month=${month}&scope=hierarchy&status=${subTab}`)
       .then((r) => (r.ok ? r.json() : { data: [] }))
       .then((d) => setRows(d.data || []))
       .catch(() => setRows([]))
       .finally(() => setLoading(false));
-  }, [month]);
+  }, [month, subTab]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -268,52 +274,69 @@ function RegularisationApprovalsTab() {
   }
 
   return (
-    <div style={{ background: 'var(--bg-card)', border: '1.5px solid var(--border)', borderRadius: 14, overflow: 'hidden' }}>
-      {message && <div style={{ padding: '10px 16px', fontSize: 12, color: '#dc2626', borderBottom: '1px solid var(--border)' }}>{message}</div>}
-      {loading ? (
-        <div style={{ padding: 48, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>Loading…</div>
-      ) : rows.length === 0 ? (
-        <div style={{ padding: 60, textAlign: 'center' }}>
-          <div style={{ fontSize: 40, marginBottom: 10 }}>✅</div>
-          <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>No pending regularisation requests — you&apos;re all caught up!</div>
-        </div>
-      ) : (
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr>
-                {['Employee', 'Date', 'Direction', 'Time', 'Remarks', 'Status'].map((h) => <th key={h} style={thS}>{h}</th>)}
-                <th style={{ ...thS, textAlign: 'center' }}>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <tr key={row.id}>
-                  <td style={tdS}>
-                    <div style={{ fontWeight: 700 }}>{row.first_name} {row.last_name}</div>
-                    <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{row.emp_id}</div>
-                  </td>
-                  <td style={tdS}>{row.att_date}</td>
-                  <td style={{ ...tdS, textTransform: 'capitalize' }}>{row.direction}</td>
-                  <td style={tdS}>{row.LOGTIME}</td>
-                  <td style={{ ...tdS, color: 'var(--text-muted)' }}>{row.remarks || '—'}</td>
-                  <td style={tdS}>
-                    <span style={{ ...REG_STATUS_STYLE[row.approved], padding: '3px 10px', borderRadius: 12, fontSize: 11, fontWeight: 700, display: 'inline-block' }}>
-                      {REG_STATUS_LABEL[row.approved]}
-                    </span>
-                  </td>
-                  <td style={{ ...tdS, textAlign: 'center' }}>
-                    <div style={{ display: 'flex', gap: 6, justifyContent: 'center' }}>
-                      <button disabled={busyId === row.id} style={btnSm('#16a34a', '#fff')} onClick={() => decide(row.id, 'approve')}>Approve</button>
-                      <button disabled={busyId === row.id} style={btnSm('#dc2626', '#fff')} onClick={() => decide(row.id, 'reject')}>Reject</button>
-                    </div>
-                  </td>
+    <div>
+      <div style={{ marginBottom: 14 }}>
+        <AppTabs
+          compact
+          active={subTab}
+          onChange={(k) => setSubTab(k as 'pending' | 'approved')}
+          tabs={[
+            { key: 'pending', label: 'Pending' },
+            { key: 'approved', label: 'Approved' },
+          ]}
+        />
+      </div>
+      <div style={{ background: 'var(--bg-card)', border: '1.5px solid var(--border)', borderRadius: 14, overflow: 'hidden' }}>
+        {message && <div style={{ padding: '10px 16px', fontSize: 12, color: '#dc2626', borderBottom: '1px solid var(--border)' }}>{message}</div>}
+        {loading ? (
+          <div style={{ padding: 48, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>Loading…</div>
+        ) : rows.length === 0 ? (
+          <div style={{ padding: 60, textAlign: 'center' }}>
+            <div style={{ fontSize: 40, marginBottom: 10 }}>✅</div>
+            <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>
+              {subTab === 'pending' ? "No pending regularisation requests — you're all caught up!" : 'No approved regularisation requests yet.'}
+            </div>
+          </div>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr>
+                  {['Employee', 'Date', 'Direction', 'Time', 'Remarks', 'Status'].map((h) => <th key={h} style={thS}>{h}</th>)}
+                  {subTab === 'pending' && <th style={{ ...thS, textAlign: 'center' }}>Actions</th>}
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+              </thead>
+              <tbody>
+                {rows.map((row) => (
+                  <tr key={row.id}>
+                    <td style={tdS}>
+                      <div style={{ fontWeight: 700 }}>{row.first_name} {row.last_name}</div>
+                      <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{row.emp_id}</div>
+                    </td>
+                    <td style={tdS}>{row.att_date}</td>
+                    <td style={{ ...tdS, textTransform: 'capitalize' }}>{row.direction}</td>
+                    <td style={tdS}>{row.LOGTIME}</td>
+                    <td style={{ ...tdS, color: 'var(--text-muted)' }}>{row.remarks || '—'}</td>
+                    <td style={tdS}>
+                      <span style={{ ...REG_STATUS_STYLE[row.approved], padding: '3px 10px', borderRadius: 12, fontSize: 11, fontWeight: 700, display: 'inline-block' }}>
+                        {REG_STATUS_LABEL[row.approved]}
+                      </span>
+                    </td>
+                    {subTab === 'pending' && (
+                      <td style={{ ...tdS, textAlign: 'center' }}>
+                        <div style={{ display: 'flex', gap: 6, justifyContent: 'center' }}>
+                          <button disabled={busyId === row.id} style={btnSm('#16a34a', '#fff')} onClick={() => decide(row.id, 'approve')}>Approve</button>
+                          <button disabled={busyId === row.id} style={btnSm('#dc2626', '#fff')} onClick={() => decide(row.id, 'reject')}>Reject</button>
+                        </div>
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
