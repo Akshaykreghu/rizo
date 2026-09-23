@@ -1060,3 +1060,35 @@
 }.ess-legacy[data-theme="dark"] .app-tab { color: #5d7f96; }.ess-legacy[data-theme="dark"] .app-tab:hover:not(.active) { color: #8fb5cc; }.ess-legacy[data-theme="dark"] .app-tab.active { color: #e2f4ff; }
 @media (prefers-color-scheme: dark) {.ess-legacy:not([data-theme="light"]) .app-tabs { background: rgba(8,22,36,0.82); border-color: rgba(255,255,255,0.08); }.ess-legacy:not([data-theme="light"]) .app-tab-indicator { background: linear-gradient(140deg, #0e3a56 0%, #163f5a 45%, #1a4d6c 100%); }.ess-legacy:not([data-theme="light"]) .app-tab { color: #5d7f96; }.ess-legacy:not([data-theme="light"]) .app-tab:hover:not(.active) { color: #8fb5cc; }.ess-legacy:not([data-theme="light"]) .app-tab.active { color: #e2f4ff; }
 }
+
+/* ══════════════════════════════════════════
+   APP TABS SECONDARY — flat outlined pills for a
+   tab bar nested under a primary AppTabs, so the two
+   levels read as distinct rather than four look-alike buttons.
+══════════════════════════════════════════ */
+.ess-legacy .app-tabs-secondary {
+  display: inline-flex;
+  gap: 6px;
+}.ess-legacy .app-tabs-secondary.app-tabs-compact {
+  display: inline-flex;
+}.ess-legacy .app-tab-secondary {
+  display: flex; align-items: center; justify-content: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border: 1.5px solid rgba(30,81,110,0.18);
+  background: transparent;
+  border-radius: 8px;
+  font-size: 12px; font-weight: 600;
+  color: #7a8fa0;
+  cursor: pointer;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  transition: color 0.18s, border-color 0.18s, background 0.18s;
+}.ess-legacy .app-tab-secondary:hover:not(.active) { color: #3d5568; border-color: rgba(30,81,110,0.32); }.ess-legacy .app-tab-secondary.active {
+  color: #1E516E;
+  border-color: #1E516E;
+  background: rgba(30,81,110,0.08);
+  font-weight: 700;
+}.ess-legacy[data-theme="dark"] .app-tab-secondary { color: #5d7f96; border-color: rgba(255,255,255,0.14); }.ess-legacy[data-theme="dark"] .app-tab-secondary:hover:not(.active) { color: #8fb5cc; border-color: rgba(255,255,255,0.24); }.ess-legacy[data-theme="dark"] .app-tab-secondary.active { color: #7fd4ff; border-color: #7fd4ff; background: rgba(127,212,255,0.10); }
+@media (prefers-color-scheme: dark) {.ess-legacy:not([data-theme="light"]) .app-tab-secondary { color: #5d7f96; border-color: rgba(255,255,255,0.14); }.ess-legacy:not([data-theme="light"]) .app-tab-secondary:hover:not(.active) { color: #8fb5cc; border-color: rgba(255,255,255,0.24); }.ess-legacy:not([data-theme="light"]) .app-tab-secondary.active { color: #7fd4ff; border-color: #7fd4ff; background: rgba(127,212,255,0.10); }
+}

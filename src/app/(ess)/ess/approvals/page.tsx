@@ -278,6 +278,7 @@ function RegularisationApprovalsTab() {
       <div style={{ marginBottom: 14 }}>
         <AppTabs
           compact
+          variant="secondary"
           active={subTab}
           onChange={(k) => setSubTab(k as 'pending' | 'approved')}
           tabs={[
@@ -407,6 +408,7 @@ export default function EssApprovalsPage() {
       <div style={{ marginBottom: 20 }}>
         <AppTabs
           compact
+          variant="secondary"
           active={tab}
           onChange={changeTab}
           tabs={[
