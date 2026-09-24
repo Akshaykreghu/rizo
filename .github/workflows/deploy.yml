@@ -5,6 +5,14 @@ on:
     branches: [master]
   workflow_dispatch:
 
+# One deploy at a time. Every push to master starts a run, and all runs install/build in the
+# same ~/rizo-app folder — two overlapping runs delete each other's node_modules and .next
+# mid-build ("npm warn tar ENOENT", "ENOENT ... _buildManifest.js.tmp"). Queue them instead;
+# the later run still deploys the newest commit.
+concurrency:
+  group: deploy-dev-server
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
