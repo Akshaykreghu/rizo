@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useSearchParams } from 'next/navigation';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { EmployeeSearch } from '@/components/employees/EmployeeSearch';
 import { Plus, X, Eye, CalendarCheck } from 'lucide-react';
 import type { ColumnDef } from '@tanstack/react-table';
@@ -61,6 +61,7 @@ const BTN_BASE =
 
 function LeaveRequestsContent() {
   const { slotEl } = useHeaderSlot();
+  const queryClient = useQueryClient();
   const searchParams = useSearchParams();
   const [employee, setEmployee] = useState('');
   // Seeds from ?status= so a deep link (e.g. Year-End's pending-leave nudge) can land already
@@ -152,6 +153,11 @@ function LeaveRequestsContent() {
       setShowApply(false);
       setForm({ empFkey: '', salaryHeadItemFkey: '', fromDate: '', fromHalf: '1', toDate: '', toHalf: '2', reason: '', contactNo: '', contactPerson: '' });
       setToast({ message: `Leave applied successfully (${b.leaveDays} day(s))`, type: 'success' });
+      // The just-submitted leave changes this employee's balance server-side (via
+      // leave_transaction_prc) — without this, a cached balance-preview result for the same
+      // employee/leaveType/fromDate combination would still show the pre-submit figure the next
+      // time this exact combination is selected, even though the real balance already changed.
+      queryClient.invalidateQueries({ queryKey: ['leave', 'balance-preview'] });
       refetch();
     },
     onError: (err: Error) => setToast({ message: err.message, type: 'error' }),

@@ -27,6 +27,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ rows });
   } catch (err) {
     if (err instanceof CriteriaRequiredError) return NextResponse.json({ error: err.message }, { status: 400 });
-    throw err;
+    const message = err instanceof Error ? err.message : 'Failed to generate report';
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

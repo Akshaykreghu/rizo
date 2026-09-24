@@ -20,6 +20,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ rows });
   } catch (err) {
     if (err instanceof CriteriaRequiredError) return NextResponse.json({ error: err.message }, { status: 400 });
-    throw err;
+    // Surfaced as JSON instead of rethrown — a rethrow here hits Next's default error handler,
+    // which on this deployment returns an empty body (the client then fails on res.json() with
+    // "unexpected end of data" instead of showing the real cause).
+    const message = err instanceof Error ? err.message : 'Failed to generate report';
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
