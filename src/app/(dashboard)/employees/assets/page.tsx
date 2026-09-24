@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, X, RotateCcw, Search, Pencil, History, Inbox, ListChecks, Check, Ban, RefreshCw } from 'lucide-react';
+import { Plus, X, RotateCcw, Search, Pencil, History } from 'lucide-react';
 import { cn, formatDate } from '@/lib/utils';
 import { futureDateError } from '@/lib/validation';
 import { EmployeeSearch } from '@/components/employees/EmployeeSearch';
@@ -106,344 +106,6 @@ function AdditionalDetails({ values, onChange }: { values: MetaValues; onChange:
   );
 }
 
-/** Condition + Notes — shared by the manual Allocate modal and the Approve-and-allocate modal
- * (approving a request now performs a real allocation and should collect the same fields). */
-function AssetConditionNotesFields({ assetState, description, onChange }: {
-  assetState: string;
-  description: string;
-  onChange: (patch: { asset_state?: string; description?: string }) => void;
-}) {
-  return (
-    <>
-      <div>
-        <label className="block text-[12px] font-medium text-slate-600 mb-1.5">Condition</label>
-        <select className={cn(INPUT_CLASS, 'w-full')} value={assetState} onChange={(e) => onChange({ asset_state: e.target.value })}>
-          {ASSET_STATES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
-        </select>
-      </div>
-      <div>
-        <label className="block text-[12px] font-medium text-slate-600 mb-1.5">Notes</label>
-        <input className={cn(INPUT_CLASS, 'w-full')} value={description} onChange={(e) => onChange({ description: e.target.value })} />
-      </div>
-    </>
-  );
-}
-
-interface AssetRequestRow {
-  request_pkey: number;
-  first_name: string;
-  last_name: string | null;
-  emp_id: string;
-  asset_type_name: string | null;
-  asset_pkey: number | null;
-  asset_name: string;
-  reason: string | null;
-  status: string;
-  remarks: string | null;
-  created_date: string;
-  /** asset_management.status for asset_pkey, joined live — null if the catalog item was removed
-   * or the request predates asset_pkey being captured. Drives the Approve-disabled state below. */
-  live_asset_status: string | null;
-}
-
-const REQUEST_STATUS_OPTIONS = ['Pending', 'Approved', 'Rejected', 'Cancelled'];
-
-/** Second view on this page (toggled alongside "Allocations"): the employee-submitted asset
- * requests queue (emp_asset_request) — approving one here allocates the actual asset in the same
- * action (see decideAssetRequest() in src/lib/assetRequests.ts), so a row whose asset has since
- * been allocated elsewhere can't be approved — see `unavailable` below. */
-interface DecideVars {
-  requestId: number;
-  decision: 'approve' | 'reject';
-  remarks?: string;
-  approveDetails?: {
-    assetState: string; description: string;
-    officialMail: string; officialContact: string; crmId: string; allocatedOfcSpace: string;
-  };
-}
-
-const EMPTY_APPROVE_FORM = { asset_state: '1', description: '', official_mail: '', official_contact: '', crm_id: '', allocated_ofc_space: '', remarks: '' };
-
-function AssetRequestsPanel() {
-  const queryClient = useQueryClient();
-  const [status, setStatus] = useState('Pending');
-  // Reject stays the small remarks-only modal (rejecting doesn't allocate anything).
-  const [rejectRow, setRejectRow] = useState<AssetRequestRow | null>(null);
-  const [remarks, setRemarks] = useState('');
-  // Approve opens the full Allocate-style modal below (Employee/Asset Type/Asset/Date locked).
-  const [approveRow, setApproveRow] = useState<AssetRequestRow | null>(null);
-  const [approveForm, setApproveForm] = useState(EMPTY_APPROVE_FORM);
-
-  const { data, isLoading, isFetching, refetch } = useQuery<{ data: AssetRequestRow[] }>({
-    queryKey: ['employees/asset-requests', status],
-    queryFn: () => fetch(`/api/employees/asset-requests${status ? `?status=${status}` : ''}`).then((r) => r.json()),
-  });
-
-  const decide = useMutation({
-    mutationFn: (vars: DecideVars) => fetch(`/api/employees/asset-requests/${vars.requestId}/decide`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        decision: vars.decision,
-        remarks: vars.remarks || undefined,
-        ...(vars.approveDetails && {
-          assetState: vars.approveDetails.assetState,
-          description: vars.approveDetails.description,
-          officialMail: vars.approveDetails.officialMail,
-          officialContact: vars.approveDetails.officialContact,
-          crmId: vars.approveDetails.crmId,
-          allocatedOfcSpace: vars.approveDetails.allocatedOfcSpace,
-        }),
-      }),
-    }).then(async (res) => {
-      if (!res.ok) throw new Error((await res.json()).error ?? 'Failed to update request');
-    }),
-    onSuccess: (_data, vars) => {
-      queryClient.invalidateQueries({ queryKey: ['employees/asset-requests'] });
-      if (vars.decision === 'approve') {
-        // Approving actually allocates the asset now — the Allocations table and the asset
-        // catalog (used to fill the Allocate Asset dropdowns) both genuinely changed too.
-        queryClient.invalidateQueries({ queryKey: ['employees/assets'] });
-        queryClient.invalidateQueries({ queryKey: ['assets'] });
-        setApproveRow(null);
-        setApproveForm(EMPTY_APPROVE_FORM);
-      } else {
-        setRejectRow(null);
-        setRemarks('');
-      }
-    },
-  });
-
-  function openApprove(row: AssetRequestRow) {
-    setApproveForm({ ...EMPTY_APPROVE_FORM, description: row.reason ?? '' });
-    setApproveRow(row);
-  }
-
-  const rows = data?.data ?? [];
-
-  return (
-    <div>
-      <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
-        <select
-          value={status}
-          onChange={(e) => setStatus(e.target.value)}
-          className={cn(INPUT_CLASS)}
-          aria-label="Filter by status"
-        >
-          <option value="">All statuses</option>
-          {REQUEST_STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
-        </select>
-        <button
-          onClick={() => refetch()}
-          disabled={isFetching}
-          className={cn(BTN_BASE, 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50')}
-        >
-          <RefreshCw className={cn('w-3.5 h-3.5', isFetching && 'animate-spin')} /> Reload
-        </button>
-      </div>
-
-      <div className="border border-slate-200 rounded-xl overflow-hidden bg-white">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="bg-slate-50 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-              <th className="px-4 py-2.5">Employee</th>
-              <th className="px-4 py-2.5">Asset Type</th>
-              <th className="px-4 py-2.5">Description</th>
-              <th className="px-4 py-2.5">Reason</th>
-              <th className="px-4 py-2.5">Requested</th>
-              <th className="px-4 py-2.5">Status</th>
-              <th className="px-4 py-2.5"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {isLoading ? (
-              <tr><td colSpan={7} className="px-4 py-6 text-center text-slate-400">Loading…</td></tr>
-            ) : rows.length === 0 ? (
-              <tr><td colSpan={7} className="px-4 py-6 text-center text-slate-400">No asset requests found</td></tr>
-            ) : rows.map((r) => (
-              <tr key={r.request_pkey} className="border-t border-slate-100">
-                <td className="px-4 py-2.5">
-                  <div className="font-medium text-gray-900">{r.first_name} {r.last_name ?? ''}</div>
-                  <div className="text-xs text-gray-400">{r.emp_id}</div>
-                </td>
-                <td className="px-4 py-2.5 text-gray-700">{r.asset_type_name || '—'}</td>
-                <td className="px-4 py-2.5 text-gray-700">{r.asset_name}</td>
-                <td className="px-4 py-2.5 text-gray-500">{r.reason || '—'}</td>
-                <td className="px-4 py-2.5 text-gray-500">{formatDate(r.created_date)}</td>
-                <td className="px-4 py-2.5">
-                  <span
-                    className={cn(
-                      'text-xs font-medium px-2 py-0.5 rounded-full',
-                      r.status === 'Approved' && 'bg-emerald-50 text-emerald-600',
-                      r.status === 'Rejected' && 'bg-red-50 text-red-600',
-                      r.status === 'Pending' && 'bg-amber-50 text-amber-600',
-                      r.status === 'Cancelled' && 'bg-slate-100 text-slate-500'
-                    )}
-                  >
-                    {r.status}
-                  </span>
-                  {r.remarks && <div className="text-[11px] text-gray-400 mt-0.5">{r.remarks}</div>}
-                </td>
-                <td className="px-4 py-2.5">
-                  {r.status === 'Pending' && (() => {
-                    const unavailable = r.live_asset_status === 'Allocated';
-                    return (
-                      <div className="flex items-center gap-3">
-                        <button
-                          onClick={() => { if (unavailable) return; openApprove(r); }}
-                          disabled={unavailable}
-                          title={unavailable ? 'Asset already allocated' : undefined}
-                          className={cn(
-                            'flex items-center gap-1 text-xs font-medium',
-                            unavailable
-                              ? 'text-emerald-600/40 opacity-40 cursor-not-allowed'
-                              : 'text-emerald-600 hover:text-emerald-800'
-                          )}
-                        >
-                          <Check className="w-3.5 h-3.5" /> Approve
-                        </button>
-                        <button
-                          onClick={() => { setRejectRow(r); setRemarks(''); }}
-                          className="flex items-center gap-1 text-xs text-red-600 hover:text-red-800 font-medium"
-                        >
-                          <Ban className="w-3.5 h-3.5" /> Reject
-                        </button>
-                      </div>
-                    );
-                  })()}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      {rejectRow && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/25 backdrop-blur-[2px] p-4 animate-fade-in" onClick={() => setRejectRow(null)}>
-          <div onClick={(e) => e.stopPropagation()} className="relative bg-white rounded-[20px] border border-black/[0.06] shadow-[0_25px_70px_-15px_rgba(0,0,0,0.25)] p-6 w-full max-w-sm animate-modal-in">
-            <h2 className="text-[16px] font-semibold text-[#0F172A] mb-1">Reject Asset Request</h2>
-            <p className="text-[12.5px] text-slate-500 mb-3">
-              {rejectRow.first_name} {rejectRow.last_name ?? ''} — {rejectRow.asset_name}
-            </p>
-            <label className="block text-[12px] font-medium text-slate-600 mb-1.5">Remarks</label>
-            <textarea
-              className={cn(INPUT_CLASS, 'w-full')}
-              rows={3}
-              value={remarks}
-              onChange={(e) => setRemarks(e.target.value)}
-              placeholder="Reason for rejection"
-            />
-            {decide.isError && <p className="text-[color:var(--color-danger)] text-[12.5px] mt-2">{String(decide.error)}</p>}
-            <div className="flex justify-end gap-2 mt-5">
-              <button onClick={() => setRejectRow(null)} className={cn(BTN_BASE, 'bg-slate-100 hover:bg-slate-200 text-slate-600')}>Cancel</button>
-              <button
-                onClick={() => decide.mutate({ requestId: rejectRow.request_pkey, decision: 'reject', remarks })}
-                disabled={decide.isPending}
-                className={cn(BTN_BASE, 'bg-red-600 hover:bg-red-700 text-white')}
-              >
-                {decide.isPending ? 'Saving…' : 'Reject'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {approveRow && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/25 backdrop-blur-[2px] p-4 animate-fade-in" onClick={() => setApproveRow(null)}>
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="modal-scroll relative bg-white rounded-[20px] border border-black/[0.06] shadow-[0_25px_70px_-15px_rgba(0,0,0,0.25)] p-6 w-full max-w-md max-h-[90vh] overflow-y-auto animate-modal-in"
-          >
-            <div className="flex items-center justify-between mb-5">
-              <h2 className="text-[19px] font-semibold text-[#0F172A] tracking-tight">Approve &amp; Allocate</h2>
-              <button onClick={() => setApproveRow(null)} aria-label="Close" className="p-1 rounded-full hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors duration-150">
-                <X className="w-4.5 h-4.5" />
-              </button>
-            </div>
-
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                decide.mutate({
-                  requestId: approveRow.request_pkey,
-                  decision: 'approve',
-                  remarks: approveForm.remarks,
-                  approveDetails: {
-                    assetState: approveForm.asset_state,
-                    description: approveForm.description,
-                    officialMail: approveForm.official_mail,
-                    officialContact: approveForm.official_contact,
-                    crmId: approveForm.crm_id,
-                    allocatedOfcSpace: approveForm.allocated_ofc_space,
-                  },
-                });
-              }}
-              className="space-y-4"
-            >
-              <div>
-                <label className="block text-[12px] font-medium text-slate-600 mb-1.5">Employee</label>
-                <div className={cn(INPUT_CLASS, 'w-full bg-slate-50 text-slate-500')}>{approveRow.first_name} {approveRow.last_name ?? ''}</div>
-              </div>
-              <div>
-                <label className="block text-[12px] font-medium text-slate-600 mb-1.5">Asset Type</label>
-                <div className={cn(INPUT_CLASS, 'w-full bg-slate-50 text-slate-500')}>{approveRow.asset_type_name || '—'}</div>
-              </div>
-              <div>
-                <label className="block text-[12px] font-medium text-slate-600 mb-1.5">Asset</label>
-                <div className={cn(INPUT_CLASS, 'w-full bg-slate-50 text-slate-500')}>{approveRow.asset_name}</div>
-              </div>
-              <div>
-                <label className="block text-[12px] font-medium text-slate-600 mb-1.5">Allocated Date</label>
-                <div className={cn(INPUT_CLASS, 'w-full bg-slate-50 text-slate-500')}>{formatDate(TODAY)}</div>
-              </div>
-
-              <AssetConditionNotesFields
-                assetState={approveForm.asset_state}
-                description={approveForm.description}
-                onChange={(patch) => setApproveForm((f) => ({ ...f, ...patch }))}
-              />
-
-              <AdditionalDetails
-                values={approveForm}
-                onChange={(patch) => setApproveForm((f) => ({ ...f, ...patch }))}
-              />
-
-              <div>
-                <label className="block text-[12px] font-medium text-slate-600 mb-1.5">Remarks</label>
-                <textarea
-                  className={cn(INPUT_CLASS, 'w-full')}
-                  rows={2}
-                  value={approveForm.remarks}
-                  onChange={(e) => setApproveForm((f) => ({ ...f, remarks: e.target.value }))}
-                  placeholder="Optional note"
-                />
-              </div>
-
-              {decide.isError && <p className="text-[color:var(--color-danger)] text-[12.5px]">{String(decide.error)}</p>}
-
-              <div className="flex justify-end gap-2 pt-2">
-                <button type="button" onClick={() => setApproveRow(null)} className="px-4 py-2 text-sm font-medium text-slate-500 hover:bg-slate-100 rounded-xl transition-colors duration-150">
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={decide.isPending}
-                  className={cn(
-                    'px-4 py-2.5 text-sm font-semibold text-white rounded-xl shadow-sm transition-colors duration-150',
-                    decide.isPending ? 'bg-emerald-600/60 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-700'
-                  )}
-                >
-                  {decide.isPending ? 'Allocating…' : 'Approve & Allocate'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
 interface AllocateAssetsPageProps {
   /** When set, the page runs scoped to this one employee: no header title, no search, employee locked. */
   embeddedEmpPkey?: number;
@@ -454,7 +116,6 @@ export default function AllocateAssetsPage({ embeddedEmpPkey, embeddedEmpName }:
   const embedded = embeddedEmpPkey != null;
   const { slotEl } = useHeaderSlot();
   const queryClient = useQueryClient();
-  const [tab, setTab] = useState<'allocations' | 'requests'>('allocations');
   const EMPTY_META = { official_mail: '', official_contact: '', crm_id: '', allocated_ofc_space: '' };
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState({ emp_fkey: embedded ? String(embeddedEmpPkey) : '', asset: '', asset_type: '', allocated_date: '', asset_state: '1', description: '', ...EMPTY_META });
@@ -474,7 +135,7 @@ export default function AllocateAssetsPage({ embeddedEmpPkey, embeddedEmpName }:
   // Reset to the first page whenever a filter narrows the result set.
   useEffect(() => { setPage(1); }, [search, branch]);
 
-  const { data, isLoading, isFetching, refetch } = useQuery<{ data: AllocationRow[]; total: number }>({
+  const { data, isLoading } = useQuery<{ data: AllocationRow[]; total: number }>({
     queryKey: ['employees/assets', page, pageSize, search, branch, embeddedEmpPkey ?? null],
     queryFn: () => fetch(
       `/api/employees/assets?page=${page}&pageSize=${pageSize}&search=${encodeURIComponent(search)}`
@@ -653,53 +314,6 @@ export default function AllocateAssetsPage({ embeddedEmpPkey, embeddedEmpName }:
     },
   ];
 
-  // Not embedded (e.g. Employee Join detail's single-employee allocate widget doesn't need a
-  // requests queue) — a simple pill switcher between the existing Allocations list and the new
-  // asset-requests queue, both living on this one admin page.
-  const viewSwitcher = !embedded && (
-    <div className="inline-flex items-center gap-1 p-1 bg-slate-100 rounded-[10px] mb-4">
-      <button
-        onClick={() => setTab('allocations')}
-        className={cn(
-          'flex items-center gap-1.5 px-3 py-1.5 rounded-[8px] text-[12.5px] font-semibold transition-colors',
-          tab === 'allocations' ? 'bg-white text-[#0F172A] shadow-sm' : 'text-slate-500 hover:text-slate-700'
-        )}
-      >
-        <ListChecks className="w-3.5 h-3.5" /> Allocations
-      </button>
-      <button
-        onClick={() => setTab('requests')}
-        className={cn(
-          'flex items-center gap-1.5 px-3 py-1.5 rounded-[8px] text-[12.5px] font-semibold transition-colors',
-          tab === 'requests' ? 'bg-white text-[#0F172A] shadow-sm' : 'text-slate-500 hover:text-slate-700'
-        )}
-      >
-        <Inbox className="w-3.5 h-3.5" /> Requests
-      </button>
-    </div>
-  );
-
-  if (!embedded && tab === 'requests') {
-    return (
-      <div>
-        {slotEl &&
-          createPortal(
-            <div className="min-w-0">
-              <h1 className="font-heading text-2xl font-bold text-[#0F172A] tracking-tight leading-tight truncate">
-                Allocate Assets
-              </h1>
-              <p className="text-sm text-[#64748B] mt-0.5 truncate">
-                Assign company assets to employees and track returns
-              </p>
-            </div>,
-            slotEl
-          )}
-        {viewSwitcher}
-        <AssetRequestsPanel />
-      </div>
-    );
-  }
-
   return (
     <div>
       {!embedded && slotEl &&
@@ -718,8 +332,6 @@ export default function AllocateAssetsPage({ embeddedEmpPkey, embeddedEmpName }:
       {embedded && (
         <h2 className="font-heading text-[20px] font-bold text-[#0F172A] tracking-tight mb-4">Allocate Assets</h2>
       )}
-
-      {viewSwitcher}
 
       <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
         {!embedded ? (
@@ -746,21 +358,12 @@ export default function AllocateAssetsPage({ embeddedEmpPkey, embeddedEmpName }:
           </div>
         ) : <span />}
 
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => refetch()}
-            disabled={isFetching}
-            className={cn(BTN_BASE, 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50')}
-          >
-            <RefreshCw className={cn('w-3.5 h-3.5', isFetching && 'animate-spin')} /> Reload
-          </button>
-          <button
-            onClick={() => setShowModal(true)}
-            className={cn(BTN_BASE, 'bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)] text-white')}
-          >
-            <Plus className="w-3.5 h-3.5" /> Allocate Asset
-          </button>
-        </div>
+        <button
+          onClick={() => setShowModal(true)}
+          className={cn(BTN_BASE, 'bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)] text-white')}
+        >
+          <Plus className="w-3.5 h-3.5" /> Allocate Asset
+        </button>
       </div>
 
       <DataTable
@@ -827,11 +430,16 @@ export default function AllocateAssetsPage({ embeddedEmpPkey, embeddedEmpName }:
                 <label className="block text-[12px] font-medium text-slate-600 mb-1.5">Allocated Date <span className="text-[color:var(--color-danger)]">*</span></label>
                 <input required type="date" max={TODAY} className={cn(INPUT_CLASS, 'w-full')} value={form.allocated_date} onChange={(e) => setForm((f) => ({ ...f, allocated_date: e.target.value }))} />
               </div>
-              <AssetConditionNotesFields
-                assetState={form.asset_state}
-                description={form.description}
-                onChange={(patch) => setForm((f) => ({ ...f, ...patch }))}
-              />
+              <div>
+                <label className="block text-[12px] font-medium text-slate-600 mb-1.5">Condition</label>
+                <select className={cn(INPUT_CLASS, 'w-full')} value={form.asset_state} onChange={(e) => setForm((f) => ({ ...f, asset_state: e.target.value }))}>
+                  {ASSET_STATES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-[12px] font-medium text-slate-600 mb-1.5">Notes</label>
+                <input className={cn(INPUT_CLASS, 'w-full')} value={form.description} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} />
+              </div>
 
               <AdditionalDetails values={form} onChange={(patch) => setForm((f) => ({ ...f, ...patch }))} />
 
