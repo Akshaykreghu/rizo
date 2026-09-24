@@ -36,3 +36,10 @@ export function currentYearMonth(): string {
   const m = String(now.getMonth() + 1).padStart(2, '0');
   return `${y}-${m}`;
 }
+
+// A real uploaded photo URL, or null — legacy stores a relative placeholder path
+// ('img/placeholdermen.jpeg') that doesn't exist here, which should fall back to initials.
+export function photoUrl(v: unknown): string | null {
+  const s = v == null ? '' : String(v).trim();
+  return s.startsWith('/') || /^https?:\/\//.test(s) ? s : null;
+}

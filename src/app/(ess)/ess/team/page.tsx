@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useSession } from 'next-auth/react';
+import { photoUrl } from '@/lib/utils';
 
 // Port of New Rizo's pages/ESS/ESSTeam.jsx, backed by /api/employees/[id]/team (hierarchy)
 // and /api/ess/directory (search) — see those routes' comments for why they're separate
@@ -11,7 +12,8 @@ interface Person {
   emp_pkey: number;
   first_name: string;
   last_name: string | null;
-  emp_code?: string | null;
+  emp_code?: string | null; // Employee ID (e.g. GRTL100016)
+  profile_pic?: string | null;
   mobile_no: string | null;
   email: string | null;
   desig_name: string | null;
@@ -29,6 +31,14 @@ interface FullTeamMember extends Person {
   manager_id: number | null;
 }
 
+// Profile photo when the employee has one, otherwise their initials — fills the avatar circle.
+function Face({ emp }: { emp?: Person | null }) {
+  const url = photoUrl(emp?.profile_pic);
+  // eslint-disable-next-line @next/next/no-img-element -- user-uploaded photo URL
+  if (url) return <img src={url} alt="" style={{ width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover' }} />;
+  return <>{initials(emp?.first_name, emp?.last_name)}</>;
+}
+
 function initials(a?: string | null, b?: string | null) {
   return ((a?.[0] || '') + (b?.[0] || '')).toUpperCase() || '?';
 }
@@ -42,7 +52,7 @@ function EmpNode({ emp, isYou = false, size = 'sm' }: { emp?: Person | null; isY
     return (
       <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'flex-start', gap: 10, padding: '10px 14px', background: 'var(--bg-card)', border: '1.5px solid var(--border)', borderRadius: 12, minWidth: 180, maxWidth: 210, opacity: 0.88, boxShadow: '0 1px 6px rgba(0,0,0,0.05)' }}>
         <div style={{ width: 36, height: 36, borderRadius: '50%', flexShrink: 0, background: `linear-gradient(135deg, ${accent}99, ${accent})`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 900, color: '#fff' }}>
-          {initials(emp?.first_name, emp?.last_name)}
+          <Face emp={emp} />
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1.3 }}>{emp?.first_name} {emp?.last_name}</div>
@@ -60,7 +70,7 @@ function EmpNode({ emp, isYou = false, size = 'sm' }: { emp?: Person | null; isY
     return (
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, padding: '18px 24px', background: 'linear-gradient(135deg, #0c1f2c, #1E516E)', border: '2px solid #2d7fb8', borderRadius: 16, minWidth: 200, boxShadow: '0 8px 32px rgba(30,81,110,0.35)' }}>
         <div style={{ width: avatarSz, height: avatarSz, borderRadius: '50%', background: 'linear-gradient(135deg, #1e7bb8, #5cb8f0)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize, fontWeight: 900, color: '#fff', boxShadow: '0 0 0 4px rgba(255,255,255,0.15)', border: '3px solid rgba(255,255,255,0.25)' }}>
-          {initials(emp?.first_name, emp?.last_name)}
+          <Face emp={emp} />
         </div>
         <div style={{ textAlign: 'center' }}>
           <div style={{ fontSize: 15, fontWeight: 800, color: '#fff', lineHeight: 1.3 }}>{emp?.first_name} {emp?.last_name}</div>
@@ -93,7 +103,7 @@ function EmpNode({ emp, isYou = false, size = 'sm' }: { emp?: Person | null; isY
   return (
     <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'flex-start', gap: 12, padding: '12px 16px', background: 'var(--bg-card)', border: '1.5px solid var(--border)', borderRadius: 14, minWidth: 220, boxShadow: '0 2px 10px rgba(0,0,0,0.06)' }}>
       <div style={{ width: avatarSz, height: avatarSz, borderRadius: '50%', flexShrink: 0, background: `linear-gradient(135deg, ${accent}aa, ${accent})`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize, fontWeight: 900, color: '#fff' }}>
-        {initials(emp?.first_name, emp?.last_name)}
+        <Face emp={emp} />
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--text-primary)', lineHeight: 1.3 }}>{emp?.first_name} {emp?.last_name}</div>
@@ -128,11 +138,12 @@ function SearchCard({ emp }: { emp: Person }) {
     <div style={{ padding: '12px 14px', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 12, marginBottom: 8 }}>
       <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
         <div style={{ width: 40, height: 40, borderRadius: '50%', flexShrink: 0, background: `linear-gradient(135deg, ${accent}aa, ${accent})`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, fontWeight: 900, color: '#fff' }}>
-          {initials(emp.first_name, emp.last_name)}
+          <Face emp={emp} />
         </div>
         <div style={{ flex: 1 }}>
           <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--text-primary)' }}>{emp.first_name} {emp.last_name}</div>
           {emp.desig_name && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1 }}>{emp.desig_name}</div>}
+          {emp.emp_code && <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2, fontFamily: 'monospace' }}>{emp.emp_code}</div>}
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 5 }}>
             {emp.dept_name && <span style={{ padding: '1px 8px', borderRadius: 20, fontSize: 10, fontWeight: 700, background: `${accent}12`, color: accent }}>{emp.dept_name}</span>}
             {emp.branch_name && <span style={{ padding: '1px 8px', borderRadius: 20, fontSize: 10, fontWeight: 600, background: 'var(--bg-page)', color: 'var(--text-muted)', border: '1px solid var(--border)' }}>📍 {emp.branch_name}</span>}

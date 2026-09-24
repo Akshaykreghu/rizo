@@ -28,6 +28,10 @@ export async function DELETE(
   if (entry.expense_status === 'Approved') {
     return NextResponse.json({ error: 'Cannot remove an already-approved claim' }, { status: 409 });
   }
+  // Legacy employeerequests.ctp: an employee may only remove their own request while it's still Applied.
+  if (session.user.userGroup !== 1 && entry.expense_status !== 'Applied') {
+    return NextResponse.json({ error: 'Applied status expenses are only removable.' }, { status: 409 });
+  }
 
   await pool.execute(
     `UPDATE emp_expense SET status = 0, expense_status = 'Removed' WHERE emp_expenses_pkey = ?`,

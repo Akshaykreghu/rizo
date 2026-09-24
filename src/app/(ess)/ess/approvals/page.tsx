@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useSession } from 'next-auth/react';
 import AppTabs from '@/components/ess/AppTabs';
 import { EssPagination } from '@/components/ess/EssPagination';
+import { essPortal } from '@/components/ess/essPortal';
 
 // Port of New Rizo's pages/ESS/ESSApprovals.jsx, backed by the approver-queue mode added to
 // GET /api/leave/requests (?authorizerFkey=/?approverFkey=, forced server-side to the caller's
@@ -136,9 +137,9 @@ function RemarkModal({ row, action, onClose, onDone }: { row: LeaveRow; action: 
     }
   }
 
-  return (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: 'var(--bg-card)', borderRadius: 14, padding: 28, width: 420, boxShadow: '0 8px 40px rgba(0,0,0,0.18)' }}>
+  return essPortal(
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.35)', backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: 'var(--bg-card)', borderRadius: 14, padding: 28, width: 420, maxWidth: '95vw', maxHeight: '90vh', overflowY: 'auto', boxSizing: 'border-box', boxShadow: '0 8px 40px rgba(0,0,0,0.18)' }}>
         <h3 style={{ margin: '0 0 6px', color: BRAND, fontSize: 16, fontWeight: 800 }}>{labels[action]} Leave Request</h3>
         <p style={{ margin: '0 0 16px', fontSize: 13, color: 'var(--text-muted)' }}>
           {row.first_name} {row.last_name} · {row.leave_type} · {row.FROMDATE.slice(0, 10)} – {row.TODATE.slice(0, 10)} ({row.leave_days}d)
@@ -191,9 +192,9 @@ function CancellationModal({ row, action, onClose, onDone }: { row: LeaveRow; ac
     }
   }
 
-  return (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: 'var(--bg-card)', borderRadius: 14, padding: 28, width: 420, boxShadow: '0 8px 40px rgba(0,0,0,0.18)' }}>
+  return essPortal(
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.35)', backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: 'var(--bg-card)', borderRadius: 14, padding: 28, width: 420, maxWidth: '95vw', maxHeight: '90vh', overflowY: 'auto', boxSizing: 'border-box', boxShadow: '0 8px 40px rgba(0,0,0,0.18)' }}>
         <h3 style={{ margin: '0 0 6px', color: BRAND, fontSize: 16, fontWeight: 800 }}>
           {action === 'confirm' ? 'Confirm Leave Cancellation' : 'Reject Leave Cancellation'}
         </h3>

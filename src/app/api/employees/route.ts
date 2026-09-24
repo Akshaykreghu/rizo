@@ -5,11 +5,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket, ResultSetHeader } from 'mysql2';
 import { generateNextEmpId } from '@/lib/empId';
 import { dobError, statutoryFieldErrors } from '@/lib/validation';
+import { employeeListFilterSql, isEmployeeListFilter, profileCompletion } from '@/lib/employeeList';
 
 const LIST_SELECT = `
   SELECT e.emp_pkey, e.emp_id, e.first_name, e.last_name, e.status, e.profile_pic,
          e.mobile_no, e.email, e.date_of_birth,
-         p.joining_date, p.emp_branch, p.emp_dept, p.designation,
+         p.emp_company_id, p.joining_date, p.emp_branch, p.emp_dept, p.designation,
          b.branch_name, d.dept_name, ds.desig_name
   FROM emp_details e
   LEFT JOIN emp_proff p ON p.emp_fkey = e.emp_pkey
@@ -29,6 +30,9 @@ export async function GET(request: NextRequest) {
   const search = searchParams.get('search') ?? '';
   const branch = searchParams.get('branch') ?? '';
   const status = searchParams.get('status') ?? '1';
+  // 'recent' = newest employee first (the Employees list); default stays alphabetical, which the
+  // employee pickers and payroll screens that also call this route rely on.
+  const orderBy = searchParams.get('sort') === 'recent' ? 'e.emp_pkey DESC' : 'e.first_name, e.last_name';
   const offset = (page - 1) * pageSize;
 
   // Employees can only see themselves
@@ -40,14 +44,23 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ data: rows, total: rows.length });
   }
 
-  const conditions: string[] = ['e.status = ?'];
-  const statusValue = Number.isNaN(Number(status)) ? 1 : Number(status);
-  const params: (string | number)[] = [statusValue];
+  // `filter` = the All Employees Filter menu (active / resigned / notice / this_month /
+  // previous_month, see lib/employeeList.ts). Other callers (pickers, payroll screens) keep using
+  // the plain `status` param.
+  const filter = searchParams.get('filter') ?? '';
+  const conditions: string[] = [];
+  const params: (string | number)[] = [];
+  if (isEmployeeListFilter(filter)) {
+    conditions.push(employeeListFilterSql(filter));
+  } else {
+    conditions.push('e.status = ?');
+    params.push(Number.isNaN(Number(status)) ? 1 : Number(status));
+  }
 
   if (search) {
-    conditions.push('(e.first_name LIKE ? OR e.last_name LIKE ? OR e.emp_id LIKE ?)');
+    conditions.push('(e.first_name LIKE ? OR e.last_name LIKE ? OR e.emp_id LIKE ? OR p.emp_company_id LIKE ?)');
     const like = `%${search}%`;
-    params.push(like, like, like);
+    params.push(like, like, like, like);
   }
   if (branch) {
     conditions.push('p.emp_branch = ?');
@@ -62,10 +75,15 @@ export async function GET(request: NextRequest) {
       params
     ),
     pool.execute<RowDataPacket[]>(
-      `${LIST_SELECT} ${where} ORDER BY e.first_name, e.last_name LIMIT ${pageSize} OFFSET ${offset}`,
+      `${LIST_SELECT} ${where} ORDER BY ${orderBy} LIMIT ${pageSize} OFFSET ${offset}`,
       params
     ),
   ]);
+
+  if (searchParams.get('withCompletion') === '1') {
+    const completion = await profileCompletion(pool, rows.map((r) => Number(r.emp_pkey)));
+    for (const r of rows) r.profile_completion = completion.get(Number(r.emp_pkey)) ?? 0;
+  }
 
   return NextResponse.json({ data: rows, total: countRow[0]?.total ?? 0 });
 }

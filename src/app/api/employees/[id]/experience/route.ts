@@ -1,8 +1,10 @@
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
+import { selfEditLockedResponse } from '@/lib/employeeEditLock';
 import { NextRequest, NextResponse } from 'next/server';
-import type { RowDataPacket, ResultSetHeader } from 'mysql2';
+import type { RowDataPacket, ResultSetHeader } from 'mysql2';
+import { childRowError } from '@/lib/childRowValidation';
 
 // Ports legacy EmployeeController::getExperience($emp_pkey) — reads `history` directly by
 // emp_fkey. See ../education/route.ts for why this replaces the old work_experience-via-emp_join
@@ -50,7 +52,11 @@ export async function POST(
   // (company) — RepeatableRows uses one fields[] key list for both display and the add-form
   // draft, so the two directions have to speak the same names.
   const body = await request.json();
+  const rowError = childRowError('experience', body);
+  if (rowError) return NextResponse.json({ error: rowError }, { status: 400 });
   const pool = await getCompanyPool(session.user.companyCode);
+  const locked = await selfEditLockedResponse(pool, session, parseInt(id));
+  if (locked) return locked;
 
   const [result] = await pool.execute<ResultSetHeader>(
     `INSERT INTO history (emp_fkey, company, designation, department, from_date, to_date, salary, status)

@@ -3,8 +3,10 @@
 import { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useSetupOptions, useSetupRows } from '@/lib/setupOptions';
-import { Check, GraduationCap, History, Users, FileText } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { Check, GraduationCap, History, Users, FileText, Plus, Trash2, Eye, Pencil } from 'lucide-react';
+import { cn, formatDate } from '@/lib/utils';
+import { RequiredMark } from '@/components/ui/RequiredMark';
+import { FilePreviewModal } from '@/components/ui/FilePreviewModal';
 import { AvatarUpload } from '@/components/ui/AvatarUpload';
 import { SearchableSelect } from '@/components/ui/SearchableSelect';
 import { CollapsibleSection, SectionHeading } from '@/components/ui/CollapsibleSection';
@@ -12,6 +14,11 @@ import { RepeatableRows } from '@/components/employees/RepeatableRows';
 import { DocumentUploadField } from '@/components/employees/DocumentUploadField';
 import { EmployeeSearch } from '@/components/employees/EmployeeSearch';
 import { EMP_TYPES } from '@/lib/employeeOptions';
+import { EMPLOYEE_FIELD_LIMITS, CHILD_FIELD_LIMITS } from '@/lib/employeeFieldLimits';
+import {
+  FAMILY_GENDERS, marksError, salaryError, contactNumberError, documentNumberError,
+  onlyDigits, onlyAlphanumeric, onlyPercent,
+} from '@/lib/childRowValidation';
 import {
   dobError, mobileError, aadhaarError, panError, esiError, uanError, lwfError,
   accountNoError, pfNumberError, pincodeError,
@@ -30,6 +37,8 @@ interface NationalityOption { id: number; nationality: string; country_name: str
 const DATE_KEYS = new Set(['date_of_birth']);
 
 const DOCUMENT_TYPES = ['Aadhaar', 'PAN', 'Passport', 'Driving License', 'Voter ID', 'Educational Certificate', 'Offer Letter', 'Relieving Letter', 'Other'];
+
+const EMPTY_DOC = { document_type: '', document_number: '', name: '', relation: '', nationality: '', valid_from: '', valid_till: '' };
 
 const PKEY_FIELD: Record<'documents' | 'education' | 'experience' | 'family', string> = {
   documents: 'emp_doc_pkey', education: 'education_pkey', experience: 'experience_pkey', family: 'emp_family_pkey',
@@ -93,6 +102,11 @@ const LABEL_CLASS = 'block text-[12.5px] font-medium text-slate-600 mb-1';
 
 function toFormState(join: Record<string, string>): Record<string, string> {
   const form: Record<string, string> = { ...join };
+  // Numeric ids (nationality_id, country_origin) come back as numbers, but the dropdowns match
+  // their string option values by strict equality — stringify them so saved picks show again.
+  for (const [key, value] of Object.entries(form)) {
+    if (typeof value === 'number') form[key] = String(value);
+  }
   for (const key of DATE_KEYS) {
     if (form[key]) form[key] = String(form[key]).slice(0, 10);
   }
@@ -116,9 +130,13 @@ interface JoinDetailProps {
   onOnboarded?: (empPkey: number) => void;
   /** Opens the wizard on a given tab index instead of 0 — used by "Continue Onboarding". */
   initialStep?: number;
+  /** False hides the Onboarding tab entirely, capping the wizard at Other Details — used for
+   *  "New Join", where creating the login is a separate, later action (via "Continue Onboarding"
+   *  from the Employee Join hub) rather than part of the initial create flow. Default true. */
+  includeOnboarding?: boolean;
 }
 
-export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onCreated, onOnboarded, initialStep }: JoinDetailProps) {
+export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onCreated, onOnboarded, initialStep, includeOnboarding = true }: JoinDetailProps) {
   const queryClient = useQueryClient();
   const [createdId, setCreatedId] = useState<number | null>(null);
   const effectiveId = id ?? (createdId != null ? String(createdId) : undefined);
@@ -130,6 +148,12 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
   const [onboardFieldErrors, setOnboardFieldErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState('');
   const [docFile, setDocFile] = useState('');
+  const [showDocForm, setShowDocForm] = useState(false);
+  const [docDraft, setDocDraft] = useState(EMPTY_DOC);
+  const [docErrors, setDocErrors] = useState<Record<string, string>>({});
+  const [replacingPkey, setReplacingPkey] = useState<number | null>(null);
+  const [docSaving, setDocSaving] = useState(false);
+  const [previewDoc, setPreviewDoc] = useState<{ url: string; title: string } | null>(null);
   const [step, setStep] = useState(initialStep ?? 0);
   const [completed, setCompleted] = useState<Set<number>>(new Set());
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
@@ -241,8 +265,8 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
     },
   });
 
-  const steps = STEPS;
-  const isOnboardingStep = step === STEPS.length - 1;
+  const steps = includeOnboarding ? STEPS : STEPS.slice(0, 2);
+  const isOnboardingStep = includeOnboarding && step === STEPS.length - 1;
   const pending = isOnboardingStep ? onboardMutation.isPending : (isCreate ? createJoin.isPending : savePersonal.isPending);
 
   // Single source of truth for both live (on-type) and step-submit validation, so the two never
@@ -264,7 +288,9 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
     account_no: (v) => accountNoError(v) ?? '',
   };
 
-  function updateField(key: string, value: string) {
+  function updateField(key: string, raw: string) {
+    // Also caps number inputs, which ignore the maxLength attribute.
+    const value = EMPLOYEE_FIELD_LIMITS[key] ? raw.slice(0, EMPLOYEE_FIELD_LIMITS[key]) : raw;
     setForm((prev) => ({ ...prev, [key]: value }));
     const validator = fieldValidators[key];
     if (validator) setFieldErrors((prev) => ({ ...prev, [key]: validator(value) }));
@@ -273,12 +299,16 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
   function f(key: string) {
     return {
       value: form[key] ?? '',
+      maxLength: EMPLOYEE_FIELD_LIMITS[key],
       onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => updateField(key, e.target.value),
     };
   }
 
-  function updateOnboardField(key: keyof typeof EMPTY_ONBOARD_FORM, value: string) {
+  function updateOnboardField(key: keyof typeof EMPTY_ONBOARD_FORM, raw: string) {
+    const value = EMPLOYEE_FIELD_LIMITS[key] ? raw.slice(0, EMPLOYEE_FIELD_LIMITS[key]) : raw;
     const next = { ...onboardForm, [key]: value };
+    // Probation days only apply to a Probation hire (the field is hidden otherwise).
+    if (key === 'emp_type' && value !== 'Probation') next.probation = '';
     setOnboardForm(next);
     if (key === 'password') {
       setOnboardFieldErrors((prev) => ({ ...prev, [key]: value.trim() ? '' : prev[key] }));
@@ -291,6 +321,7 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
   function fOnboard(key: keyof typeof EMPTY_ONBOARD_FORM) {
     return {
       value: onboardForm[key],
+      maxLength: EMPLOYEE_FIELD_LIMITS[key],
       onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => updateOnboardField(key, e.target.value),
     };
   }
@@ -332,8 +363,10 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(type === 'documents' ? { ...values, files: docFile } : values),
       });
+      // Throw rather than return quietly, so the caller keeps its draft and shows the error
+      // instead of looking like the row saved.
+      if (!res.ok) throw new Error('Could not save this row — please check the values and try again.');
       if (type === 'documents') setDocFile('');
-      if (!res.ok) return;
       const created = await res.json() as Record<string, number>;
       // Patch the cache directly rather than invalidate/refetch — right after "New Join" creates
       // the record, the query's very first fetch for this effectiveId can still be in flight when
@@ -342,6 +375,24 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
       // response already has everything needed to build the row locally, with no race possible.
       queryClient.setQueryData<JoinDetailData>(['employees/join', effectiveId], (old) =>
         old ? { ...old, [type]: [...old[type], { ...values, ...created }] } : old
+      );
+    };
+  }
+
+  // Edit saves over the existing row (same pkey) via PUT, then patches that row in the cache —
+  // same no-refetch reasoning as addChild above.
+  function updateChild(type: 'documents' | 'education' | 'experience' | 'family') {
+    return async (rowId: number, values: Record<string, string>) => {
+      if (!effectiveId) return;
+      const res = await fetch(`/api/employees/join/${effectiveId}/${type}/${rowId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(values),
+      });
+      if (!res.ok) throw new Error('Could not save this row — please check the values and try again.');
+      const pkeyField = PKEY_FIELD[type];
+      queryClient.setQueryData<JoinDetailData>(['employees/join', effectiveId], (old) =>
+        old ? { ...old, [type]: old[type].map((r) => (Number(r[pkeyField]) === rowId ? { ...r, ...values } : r)) } : old
       );
     };
   }
@@ -356,6 +407,63 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
         old ? { ...old, [type]: old[type].filter((r) => Number(r[pkeyField]) !== rowId) } : old
       );
     };
+  }
+
+  // Documents use the same card list + add/replace form as the Employee view (EmployeeDetail),
+  // rather than the generic RepeatableRows table — which had no way to open the attached file.
+  function openAddDocument() {
+    setDocDraft(EMPTY_DOC);
+    setDocFile('');
+    setReplacingPkey(null);
+    setDocErrors({});
+    setShowDocForm(true);
+  }
+
+  function openReplaceDocument(row: Record<string, unknown>) {
+    setDocDraft({
+      document_type: String(row.document_type ?? ''),
+      document_number: String(row.document_number ?? ''),
+      name: String(row.name ?? ''),
+      relation: String(row.relation ?? ''),
+      nationality: String(row.nationality ?? ''),
+      valid_from: String(row.valid_from ?? '').slice(0, 10),
+      valid_till: String(row.valid_till ?? '').slice(0, 10),
+    });
+    setDocFile(String(row.files ?? ''));
+    setReplacingPkey(Number(row.emp_doc_pkey));
+    setDocErrors({});
+    setShowDocForm(true);
+  }
+
+  async function submitDocument() {
+    const errors = {
+      document_type: docDraft.document_type ? '' : 'Document type is required',
+      document_number: docDraft.document_number.trim() ? (documentNumberError(docDraft.document_number) ?? '') : 'Document number is required',
+      name: docDraft.name.trim() ? '' : 'Name on document is required',
+      relation: docDraft.relation.trim() ? '' : 'Relation is required',
+      valid_from: docDraft.valid_from ? '' : 'Valid from date is required',
+      valid_till: docDraft.valid_till && docDraft.valid_from && docDraft.valid_till < docDraft.valid_from
+        ? 'Valid till cannot be before valid from' : '',
+    };
+    if (Object.values(errors).some(Boolean)) {
+      setDocErrors(errors);
+      return;
+    }
+    setDocErrors({});
+    setDocSaving(true);
+    try {
+      if (replacingPkey != null) {
+        await updateChild('documents')(replacingPkey, { ...docDraft, files: docFile });
+        setDocFile('');
+      } else {
+        await addChild('documents')(docDraft);
+      }
+      setShowDocForm(false);
+    } catch (err) {
+      setDocErrors({ form: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setDocSaving(false);
+    }
   }
 
   function goToStep(target: number) {
@@ -448,6 +556,14 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
     }
   }
 
+  // Reached when Other Details is the last VISIBLE step (includeOnboarding=false, e.g. "New
+  // Join") — everything is already saved (persist() below, plus each Other Details row already
+  // saves itself on add), so this just confirms the save and leaves the wizard; onboarding is a
+  // separate, later action via "Continue Onboarding" on the Employee Join hub.
+  async function finishWithoutOnboarding() {
+    if (await persist()) onBack();
+  }
+
   function FieldError({ children }: { children?: string }) {
     if (!children) return null;
     return <p className="text-xs text-[color:var(--color-danger)] mt-1.5">{children}</p>;
@@ -490,7 +606,7 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-5 gap-y-4">
           <div>
             <label className={LABEL_CLASS}>Name <span className="text-[color:var(--color-danger)]">*</span></label>
-            <input maxLength={100} className={cn(INPUT_CLASS, fieldErrors.first_name && ERROR_INPUT_CLASS)} {...f('first_name')} placeholder="First name" />
+            <input className={cn(INPUT_CLASS, fieldErrors.first_name && ERROR_INPUT_CLASS)} {...f('first_name')} placeholder="First name" />
             <FieldError>{fieldErrors.first_name}</FieldError>
           </div>
           <div>
@@ -524,10 +640,9 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
             <input type="email" className={INPUT_CLASS} {...f('email')} />
           </div>
           <div>
-            <label className={LABEL_CLASS}>Phone Number</label>
+            <label className={LABEL_CLASS}>Mobile Number</label>
             <input
               type="tel"
-              maxLength={10}
               className={cn(INPUT_CLASS, fieldErrors.mobile_no && ERROR_INPUT_CLASS)}
               {...f('mobile_no')}
             />
@@ -536,12 +651,11 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
 
           <div className="sm:col-span-2">
             <label className={LABEL_CLASS}>Address</label>
-            <input className={INPUT_CLASS} value={form.address ?? ''} onChange={(e) => setForm((p) => ({ ...p, address: e.target.value }))} />
+            <input maxLength={EMPLOYEE_FIELD_LIMITS.address} className={INPUT_CLASS} value={form.address ?? ''} onChange={(e) => setForm((p) => ({ ...p, address: e.target.value }))} />
           </div>
           <div>
             <label className={LABEL_CLASS}>Pin Code</label>
             <input
-              maxLength={6}
               className={cn(INPUT_CLASS, fieldErrors.pincode && ERROR_INPUT_CLASS)}
               {...f('pincode')}
             />
@@ -600,7 +714,6 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
           <div>
             <label className={LABEL_CLASS}>Aadhaar No <span className="text-[color:var(--color-danger)]">*</span></label>
             <input
-              maxLength={12}
               className={cn(INPUT_CLASS, fieldErrors.id_card && ERROR_INPUT_CLASS)}
               {...f('id_card')}
             />
@@ -609,7 +722,6 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
           <div>
             <label className={LABEL_CLASS}>PAN No</label>
             <input
-              maxLength={10}
               className={cn(INPUT_CLASS, fieldErrors.pan_no && ERROR_INPUT_CLASS)}
               {...f('pan_no')}
               onChange={(e) => updateField('pan_no', e.target.value.toUpperCase())}
@@ -628,13 +740,12 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
           </div>
           <div>
             <label className={LABEL_CLASS}>IFSC Code</label>
-            <input maxLength={12} className={INPUT_CLASS} {...f('ifsc_code')} />
+            <input className={INPUT_CLASS} {...f('ifsc_code')} />
           </div>
 
           <div>
             <label className={LABEL_CLASS}>Account Number</label>
             <input
-              maxLength={18}
               className={cn(INPUT_CLASS, fieldErrors.account_no && ERROR_INPUT_CLASS)}
               {...f('account_no')}
             />
@@ -643,7 +754,6 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
           <div>
             <label className={LABEL_CLASS}>ESI No</label>
             <input
-              maxLength={10}
               className={cn(INPUT_CLASS, fieldErrors.esi && ERROR_INPUT_CLASS)}
               {...f('esi')}
             />
@@ -657,7 +767,6 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
           <div>
             <label className={LABEL_CLASS}>PF No</label>
             <input
-              maxLength={22}
               className={cn(INPUT_CLASS, fieldErrors.pf && ERROR_INPUT_CLASS)}
               {...f('pf')}
             />
@@ -666,7 +775,6 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
           <div>
             <label className={LABEL_CLASS}>UAN No</label>
             <input
-              maxLength={12}
               className={cn(INPUT_CLASS, fieldErrors.company_pf && ERROR_INPUT_CLASS)}
               {...f('company_pf')}
             />
@@ -674,17 +782,16 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
           </div>
           <div>
             <label className={LABEL_CLASS}>Previous Member ID</label>
-            <input maxLength={15} className={INPUT_CLASS} {...f('previous_member_id')} />
+            <input className={INPUT_CLASS} {...f('previous_member_id')} />
           </div>
 
           <div>
             <label className={LABEL_CLASS}>WPS ID</label>
-            <input maxLength={15} className={INPUT_CLASS} {...f('wps_code')} />
+            <input className={INPUT_CLASS} {...f('wps_code')} />
           </div>
           <div>
             <label className={LABEL_CLASS}>LWF Registration Number</label>
             <input
-              maxLength={15}
               className={cn(INPUT_CLASS, fieldErrors.lwf_code && ERROR_INPUT_CLASS)}
               {...f('lwf_code')}
               onChange={(e) => updateField('lwf_code', e.target.value.toUpperCase())}
@@ -731,11 +838,12 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
               addLabel="Add education"
               onAdd={addChild('education')}
               onRemove={removeChild('education')}
+              onUpdate={updateChild('education')}
               fields={[
-                { key: 'course', label: 'Course', required: true, maxLength: 100 },
-                { key: 'university', label: 'University', required: true, maxLength: 100 },
-                { key: 'duration', label: 'Duration', required: true, maxLength: 10 },
-                { key: 'mark', label: 'Marks', required: true, maxLength: 6 },
+                { key: 'course', label: 'Course', required: true, maxLength: CHILD_FIELD_LIMITS.course },
+                { key: 'university', label: 'University', required: true, maxLength: CHILD_FIELD_LIMITS.university },
+                { key: 'duration', label: 'Duration', required: true, maxLength: CHILD_FIELD_LIMITS.duration },
+                { key: 'mark', label: 'Marks (%)', required: true, maxLength: CHILD_FIELD_LIMITS.mark, inputMode: 'decimal', sanitize: onlyPercent, validate: marksError },
               ]}
             />
           </CollapsibleSection>
@@ -747,13 +855,14 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
               addLabel="Add experience"
               onAdd={addChild('experience')}
               onRemove={removeChild('experience')}
+              onUpdate={updateChild('experience')}
               fields={[
-                { key: 'company', label: 'Company', required: true, maxLength: 100 },
-                { key: 'designation', label: 'Designation', required: true, maxLength: 100 },
-                { key: 'department', label: 'Department', required: true, maxLength: 100 },
+                { key: 'company', label: 'Company', required: true, maxLength: CHILD_FIELD_LIMITS.company },
+                { key: 'designation', label: 'Designation', required: true, maxLength: CHILD_FIELD_LIMITS.designation },
+                { key: 'department', label: 'Department', required: true, maxLength: CHILD_FIELD_LIMITS.department },
                 { key: 'from_date', label: 'From', type: 'date', required: true },
-                { key: 'to_date', label: 'To', type: 'date', required: true },
-                { key: 'salary', label: 'Salary', type: 'number', required: true },
+                { key: 'to_date', label: 'To', type: 'date', required: true, minFromKey: 'from_date' },
+                { key: 'salary', label: 'Salary', required: true, maxLength: CHILD_FIELD_LIMITS.salary, inputMode: 'numeric', sanitize: onlyDigits, validate: salaryError },
               ]}
             />
           </CollapsibleSection>
@@ -765,38 +874,203 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
               addLabel="Add family member"
               onAdd={addChild('family')}
               onRemove={removeChild('family')}
+              onUpdate={updateChild('family')}
               fields={[
-                { key: 'name', label: 'Name', required: true, maxLength: 100 },
-                { key: 'relation', label: 'Relation', required: true, maxLength: 100 },
-                { key: 'gender', label: 'Gender', required: true },
+                { key: 'name', label: 'Name', required: true, maxLength: CHILD_FIELD_LIMITS.name },
+                { key: 'relation', label: 'Relation', required: true, maxLength: CHILD_FIELD_LIMITS.relation },
+                { key: 'gender', label: 'Gender', type: 'select', required: true, options: FAMILY_GENDERS.map((g) => ({ value: g, label: g })) },
                 { key: 'DOB', label: 'Date of Birth', type: 'date', required: true },
-                { key: 'nationality', label: 'Nationality', maxLength: 100 },
-                { key: 'contact_number', label: 'Contact Number', required: true, maxLength: 10 },
+                { key: 'nationality', label: 'Nationality', maxLength: CHILD_FIELD_LIMITS.nationality },
+                { key: 'contact_number', label: 'Contact Number', required: true, maxLength: CHILD_FIELD_LIMITS.contact_number, inputMode: 'numeric', sanitize: onlyDigits, validate: (v) => contactNumberError(v) },
               ]}
             />
           </CollapsibleSection>
 
           <CollapsibleSection title="Documents" icon={FileText}>
-            <div className="mb-3 max-w-sm">
-              <label className={LABEL_CLASS}>Upload file (attach before adding a row below)</label>
-              <DocumentUploadField value={docFile} onChange={setDocFile} />
-            </div>
-            <RepeatableRows
-              pkeyField="emp_doc_pkey"
-              rows={documents}
-              addLabel="Add document"
-              onAdd={addChild('documents')}
-              onRemove={removeChild('documents')}
-              fields={[
-                { key: 'document_type', label: 'Type', type: 'select', options: DOCUMENT_TYPES.map((d) => ({ value: d, label: d })), required: true },
-                { key: 'document_number', label: 'Number', required: true, maxLength: 50 },
-                { key: 'name', label: 'Name on Document', required: true, maxLength: 100 },
-                { key: 'relation', label: 'Relation', required: true, maxLength: 100 },
-                { key: 'nationality', label: 'Nationality', maxLength: 100 },
-                { key: 'valid_from', label: 'Valid From', type: 'date', required: true },
-                { key: 'valid_till', label: 'Valid Till', type: 'date' },
-              ]}
-            />
+            {documents.length === 0 && !showDocForm && (
+              <p className="text-sm text-slate-400 py-6 text-center border border-dashed border-slate-200 rounded-lg">
+                No documents added yet.
+              </p>
+            )}
+            {/* The document being edited is shown only in the form below, not repeated here. */}
+            {documents.some((r) => !(showDocForm && Number(r.emp_doc_pkey) === replacingPkey)) && (
+              <div className="space-y-2.5">
+                {documents.filter((r) => !(showDocForm && Number(r.emp_doc_pkey) === replacingPkey)).map((row) => {
+                  const validity = row.valid_from
+                    ? `Valid ${formatDate(row.valid_from as string)}${row.valid_till ? ` – ${formatDate(row.valid_till as string)}` : ''}`
+                    : '';
+                  return (
+                    <div
+                      key={String(row.emp_doc_pkey)}
+                      className="flex items-center gap-3.5 rounded-lg border border-slate-100 bg-white px-4 py-3.5 hover:border-slate-200 transition-colors duration-150"
+                    >
+                      <span className="w-9 h-9 rounded-lg bg-[color:var(--color-primary)]/8 text-[color:var(--color-primary)] flex items-center justify-center flex-shrink-0">
+                        <FileText className="w-4 h-4" />
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium text-[#0F172A] truncate">
+                          {String(row.document_type || 'Document')} · {String(row.document_number || '—')}
+                        </p>
+                        <p className="text-xs text-slate-400 mt-0.5 truncate">
+                          {String(row.name || '')}{validity ? ` · ${validity}` : ''}
+                        </p>
+                      </div>
+                      {row.files ? (
+                        <span className="text-[11px] font-medium px-2 py-1 rounded-full bg-[color:var(--color-success)]/10 text-[color:var(--color-success)] flex-shrink-0">
+                          Uploaded
+                        </span>
+                      ) : null}
+                      <div className="flex items-center gap-0.5 flex-shrink-0">
+                        {row.files ? (
+                          <button
+                            type="button"
+                            onClick={() => setPreviewDoc({ url: String(row.files), title: `${String(row.document_type || 'Document')} · ${String(row.document_number || '')}` })}
+                            className="p-2 rounded-lg text-slate-400 hover:text-[color:var(--color-primary)] hover:bg-slate-50 transition-colors duration-150"
+                            title="View"
+                          >
+                            <Eye className="w-4 h-4" />
+                          </button>
+                        ) : null}
+                        <button
+                          type="button"
+                          onClick={() => openReplaceDocument(row)}
+                          className="p-2 rounded-lg text-slate-400 hover:text-[color:var(--color-primary)] hover:bg-slate-50 transition-colors duration-150"
+                          title="Edit"
+                        >
+                          <Pencil className="w-4 h-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => removeChild('documents')(Number(row.emp_doc_pkey))}
+                          className="p-2 rounded-lg text-slate-400 hover:text-[color:var(--color-danger)] hover:bg-slate-50 transition-colors duration-150"
+                          title="Delete"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {!showDocForm && (
+              <button
+                type="button"
+                onClick={openAddDocument}
+                className="mt-4 inline-flex items-center gap-1.5 text-sm font-medium text-[color:var(--color-primary)] hover:opacity-80 transition-opacity duration-150"
+              >
+                <Plus className="w-4 h-4" /> Add Document
+              </button>
+            )}
+
+            {showDocForm && (
+              <div className="mt-4 rounded-xl border border-slate-100 bg-slate-50/60 p-5">
+                <h3 className="text-sm font-semibold text-[#0F172A] mb-4">
+                  {replacingPkey != null ? 'Edit Document' : 'Add Document'}
+                </h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-5 gap-y-4">
+                  <div>
+                    <label className={LABEL_CLASS}>Document Type<RequiredMark /></label>
+                    <SearchableSelect
+                      value={docDraft.document_type}
+                      onChange={(v) => setDocDraft((p) => ({ ...p, document_type: v }))}
+                      options={DOCUMENT_TYPES.map((d) => ({ value: d, label: d }))}
+                      placeholder="Select type"
+                      buttonClassName={cn(INPUT_CLASS, docErrors.document_type && ERROR_INPUT_CLASS)}
+                    />
+                    <FieldError>{docErrors.document_type}</FieldError>
+                  </div>
+                  <div>
+                    <label className={LABEL_CLASS}>Document Number<RequiredMark /></label>
+                    <input
+                      maxLength={CHILD_FIELD_LIMITS.document_number}
+                      className={cn(INPUT_CLASS, docErrors.document_number && ERROR_INPUT_CLASS)}
+                      value={docDraft.document_number}
+                      onChange={(e) => setDocDraft((p) => ({ ...p, document_number: onlyAlphanumeric(e.target.value) }))}
+                    />
+                    <FieldError>{docErrors.document_number}</FieldError>
+                  </div>
+                  <div>
+                    <label className={LABEL_CLASS}>Name on Document<RequiredMark /></label>
+                    <input
+                      maxLength={CHILD_FIELD_LIMITS.name}
+                      className={cn(INPUT_CLASS, docErrors.name && ERROR_INPUT_CLASS)}
+                      value={docDraft.name}
+                      onChange={(e) => setDocDraft((p) => ({ ...p, name: e.target.value }))}
+                    />
+                    <FieldError>{docErrors.name}</FieldError>
+                  </div>
+                  <div>
+                    <label className={LABEL_CLASS}>Relation<RequiredMark /></label>
+                    <input
+                      maxLength={CHILD_FIELD_LIMITS.relation}
+                      className={cn(INPUT_CLASS, docErrors.relation && ERROR_INPUT_CLASS)}
+                      value={docDraft.relation}
+                      onChange={(e) => setDocDraft((p) => ({ ...p, relation: e.target.value }))}
+                    />
+                    <FieldError>{docErrors.relation}</FieldError>
+                  </div>
+                  <div>
+                    <label className={LABEL_CLASS}>Nationality</label>
+                    <input
+                      maxLength={CHILD_FIELD_LIMITS.nationality}
+                      className={INPUT_CLASS}
+                      value={docDraft.nationality}
+                      onChange={(e) => setDocDraft((p) => ({ ...p, nationality: e.target.value }))}
+                    />
+                  </div>
+                  <div>
+                    <label className={LABEL_CLASS}>Valid From<RequiredMark /></label>
+                    <input
+                      type="date"
+                      className={cn(INPUT_CLASS, docErrors.valid_from && ERROR_INPUT_CLASS)}
+                      value={docDraft.valid_from}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        // Moving Valid From past Valid Till clears the now-invalid Valid Till.
+                        setDocDraft((p) => ({ ...p, valid_from: v, valid_till: p.valid_till && v && p.valid_till < v ? '' : p.valid_till }));
+                      }}
+                    />
+                    <FieldError>{docErrors.valid_from}</FieldError>
+                  </div>
+                  <div>
+                    <label className={LABEL_CLASS}>Valid Till</label>
+                    <input
+                      type="date"
+                      min={docDraft.valid_from || undefined}
+                      className={cn(INPUT_CLASS, docErrors.valid_till && ERROR_INPUT_CLASS)}
+                      value={docDraft.valid_till}
+                      onChange={(e) => setDocDraft((p) => ({ ...p, valid_till: e.target.value }))}
+                    />
+                    <FieldError>{docErrors.valid_till}</FieldError>
+                  </div>
+                </div>
+                <div className="mt-4 max-w-sm">
+                  <label className={LABEL_CLASS}>File Upload</label>
+                  <DocumentUploadField value={docFile} onChange={setDocFile} />
+                </div>
+                <FieldError>{docErrors.form}</FieldError>
+                <div className="flex items-center gap-2 mt-5">
+                  <button
+                    type="button"
+                    onClick={submitDocument}
+                    disabled={docSaving}
+                    className="px-4 py-2 text-sm font-medium bg-[color:var(--color-primary)] hover:opacity-90 disabled:opacity-50 text-white rounded-lg transition-opacity duration-150"
+                  >
+                    {docSaving ? 'Saving…' : replacingPkey != null ? 'Save Changes' : 'Save Document'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowDocForm(false)}
+                    className="px-4 py-2 text-sm font-medium text-slate-500 hover:bg-slate-100 rounded-lg transition-colors duration-150"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+            <FilePreviewModal url={previewDoc?.url ?? null} title={previewDoc?.title} onClose={() => setPreviewDoc(null)} />
           </CollapsibleSection>
         </div>
       );
@@ -876,10 +1150,13 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
                 buttonClassName={INPUT_CLASS}
               />
             </div>
-            <div>
-              <label className={LABEL_CLASS}>Probation Period (days)</label>
-              <input type="number" className={INPUT_CLASS} {...fOnboard('probation')} />
-            </div>
+            {/* Legacy onboarding.ctp #probationDaysContainer: only for a Probation hire. */}
+            {onboardForm.emp_type === 'Probation' && (
+              <div>
+                <label className={LABEL_CLASS}>Probation Period (days)</label>
+                <input inputMode="numeric" className={INPUT_CLASS} {...fOnboard('probation')} onChange={(e) => updateOnboardField('probation', onlyDigits(e.target.value))} />
+              </div>
+            )}
             {onboardForm.emp_type === 'Contract' && (
               <>
                 <div>
@@ -903,6 +1180,9 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
               <EmployeeSearch
                 value={onboardForm.attr1}
                 onChange={(empPkey) => setOnboardForm((prev) => ({ ...prev, attr1: empPkey }))}
+                // Match this form's INPUT_CLASS sizing (py-2, no fixed height) so it lines up
+                // with the Shift / Holiday / Leave pickers beside it.
+                className="h-auto py-2 focus:ring-[color:var(--color-primary)]/40 focus:border-[color:var(--color-primary)]/40"
               />
             </div>
           </div>
@@ -1072,13 +1352,21 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
             </button>
           )}
 
-          {isLast ? (
+          {isLast && includeOnboarding ? (
             <button
               onClick={finish}
               disabled={pending || isCreate}
               className="px-5 py-2.5 rounded-xl text-sm font-semibold bg-[color:var(--color-primary)] hover:scale-[1.03] disabled:opacity-50 disabled:hover:scale-100 text-white shadow-lg shadow-[color:var(--color-primary)]/20 transition-all duration-[180ms]"
             >
               {pending ? 'Onboarding…' : 'Complete Onboarding'}
+            </button>
+          ) : isLast ? (
+            <button
+              onClick={finishWithoutOnboarding}
+              disabled={pending || isCreate}
+              className="px-5 py-2.5 rounded-xl text-sm font-semibold bg-[color:var(--color-primary)] hover:scale-[1.03] disabled:opacity-50 disabled:hover:scale-100 text-white shadow-lg shadow-[color:var(--color-primary)]/20 transition-all duration-[180ms]"
+            >
+              {pending ? 'Saving…' : 'Done'}
             </button>
           ) : (
             <button

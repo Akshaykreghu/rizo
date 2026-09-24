@@ -2,6 +2,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
 import { getAuthorizerApprover } from '@/lib/leave';
+import { expenseDateError, getExpensePeople } from '@/lib/expenses';
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket, ResultSetHeader } from 'mysql2';
 
@@ -32,11 +33,18 @@ export async function GET(request: NextRequest) {
             e.expense_date, e.vendor, e.purpose, e.remarks, e.image, e.expense_status,
             e.authorized_by, e.authorized_date, e.remarks_auth,
             e.approved_by, e.approved_date, e.remarks_approved,
-            ed.first_name, ed.last_name, ed.emp_id
+            DATE_FORMAT(e.created_date, '%Y-%m-%d %H:%i:%s') AS created_date,
+            ed.first_name, ed.last_name, ed.emp_id, ed.profile_pic, pp.emp_company_id,
+            -- Legacy viewrequest shows 'Admin' when no employee holds the role.
+            COALESCE(NULLIF(TRIM(CONCAT(IFNULL(au.first_name, ''), ' ', IFNULL(au.last_name, ''))), ''), 'Admin') AS authorized_by_name,
+            COALESCE(NULLIF(TRIM(CONCAT(IFNULL(ap.first_name, ''), ' ', IFNULL(ap.last_name, ''))), ''), 'Admin') AS approved_by_name
      FROM emp_expense e
      JOIN emp_details ed ON ed.emp_pkey = e.emp_fkey
+     LEFT JOIN emp_proff pp ON pp.emp_fkey = e.emp_fkey
+     LEFT JOIN emp_details au ON au.emp_pkey = e.authorized_by
+     LEFT JOIN emp_details ap ON ap.emp_pkey = e.approved_by
      WHERE ${conditions.join(' AND ')}
-     ORDER BY e.emp_expenses_pkey DESC
+     ORDER BY e.created_date DESC, e.emp_expenses_pkey DESC
      LIMIT 200`,
     values
   );
@@ -51,9 +59,10 @@ export async function POST(request: NextRequest) {
   }
 
   const body = await request.json();
-  const { expenseType, expensesAmount, affectedMonth, expenseDate, vendor, purpose, remarks } = body as {
+  const { expenseType, expensesAmount, affectedMonth, expenseDate, vendor, purpose, remarks, image } = body as {
     empFkey?: number; expenseType: string; expensesAmount: number; affectedMonth: string;
-    expenseDate?: string; vendor?: string; purpose?: string; remarks?: string;
+    expenseDate?: string; vendor?: string; purpose?: string; remarks?: string; image?: string;
+    authorizedBy?: number | string; approvedBy?: number | string;
   };
   // Employee self-service can only ever file a claim for themselves.
   const empFkey = session.user.userGroup === 1 ? body.empFkey : session.user.empFkey;
@@ -65,21 +74,47 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  if (Number(expensesAmount) < 1) {
+    return NextResponse.json({ error: 'Please enter a valid amount' }, { status: 400 });
+  }
+
   const pool = await getCompanyPool(session.user.companyCode);
-  const { authorizerIds, approverIds } = await getAuthorizerApprover(pool, session.user.companyCode, empFkey);
-  const authorizerFkey = authorizerIds[0] ?? null;
-  const approverFkey = approverIds[0] ?? null;
+
+  // Legacy salarycheck: no claim before the joining date or for an already-processed salary month.
+  const dateError = await expenseDateError(pool, Number(empFkey), String(expenseDate ?? affectedMonth).slice(0, 10));
+  if (dateError) return NextResponse.json({ error: dateError }, { status: 400 });
+
+  let authorizerFkey: number | null;
+  let approverFkey: number | null;
+  if (session.user.userGroup !== 1) {
+    // Employee self-service picks both people, as on legacy's form (both required) — and only
+    // from the same lists the form offers.
+    const people = await getExpensePeople(pool, session.user.companyCode, Number(empFkey));
+    authorizerFkey = Number(body.authorizedBy) || null;
+    approverFkey = Number(body.approvedBy) || null;
+    if (!authorizerFkey || !people.authorizers.some((p) => p.empFkey === authorizerFkey)) {
+      return NextResponse.json({ error: 'Please select a valid Authorized By' }, { status: 400 });
+    }
+    if (!approverFkey || !people.approvers.some((p) => p.empFkey === approverFkey)) {
+      return NextResponse.json({ error: 'Please select a valid Approved By' }, { status: 400 });
+    }
+  } else {
+    const { authorizerIds, approverIds } = await getAuthorizerApprover(pool, session.user.companyCode, empFkey);
+    authorizerFkey = Number(body.authorizedBy) || authorizerIds[0] || null;
+    approverFkey = Number(body.approvedBy) || approverIds[0] || null;
+  }
 
   const [result] = await pool.execute<ResultSetHeader>(
     `INSERT INTO emp_expense
        (emp_fkey, expense_type, expenses_amount, affected_month, expense_date, vendor, purpose, remarks,
         authorized_by, authorized_date, remarks_auth, approved_by, approved_date, remarks_approved,
         is_credited, expense_status, created_date, created_by, modified_by, modified_date, image, status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '1970-01-01', '', ?, '1970-01-01', '', '', 'Applied', NOW(), ?, ?, NOW(), '', 1)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '1970-01-01', '', ?, '1970-01-01', '', '', 'Applied', NOW(), ?, ?, NOW(), ?, 1)`,
     [
       empFkey, expenseType, Number(expensesAmount), affectedMonth, expenseDate ?? affectedMonth,
       vendor ?? null, purpose ?? null, remarks ?? null,
       authorizerFkey ?? '', approverFkey ?? '', session.user.loginUserId, session.user.loginUserId,
+      image ?? '',
     ]
   );
   return NextResponse.json({ id: result.insertId }, { status: 201 });

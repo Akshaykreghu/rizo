@@ -10,7 +10,9 @@ import type { Pool, RowDataPacket } from 'mysql2/promise';
 // manager set (~62 of 217 here, mostly historical bulk-imported rows) has no defined peer group
 // either — showing everyone else with no manager as "peers" would be meaningless noise.
 
-const PERSON_COLS = 'e.emp_pkey, e.first_name, e.last_name, e.emp_id AS emp_code, e.mobile_no, e.email, ds.desig_name, d.dept_name, b.branch_name';
+// emp_code is the Employee ID (emp_proff.emp_company_id, e.g. GRTL100016) — falls back to emp_id
+// only for legacy rows that never got one.
+const PERSON_COLS = "e.emp_pkey, e.first_name, e.last_name, COALESCE(NULLIF(TRIM(p.emp_company_id), ''), e.emp_id) AS emp_code, e.profile_pic, e.mobile_no, e.email, ds.desig_name, d.dept_name, b.branch_name";
 const PERSON_JOIN = `
   FROM emp_details e
   LEFT JOIN emp_proff p ON p.emp_fkey = e.emp_pkey

@@ -21,6 +21,8 @@ export function EssDropdown({
   placeholder = 'Select…',
   disabled,
   style,
+  buttonStyle,
+  clearable = true,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -28,6 +30,10 @@ export function EssDropdown({
   placeholder?: string;
   disabled?: boolean;
   style?: React.CSSProperties;
+  /** Overrides for the trigger button (e.g. to match a form's own input size, or a dark banner). */
+  buttonStyle?: React.CSSProperties;
+  /** False hides the blank "placeholder" choice — for fields that must always hold a value. */
+  clearable?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -69,12 +75,13 @@ export function EssDropdown({
           padding: '8px 10px', border: '1.5px solid var(--border)', borderRadius: 8,
           background: disabled ? 'var(--bg-page)' : 'var(--bg-page)', color: selected ? 'var(--text-primary)' : 'var(--text-muted)',
           fontSize: 13, textAlign: 'left', cursor: disabled ? 'not-allowed' : 'pointer', boxSizing: 'border-box',
+          ...buttonStyle,
         }}
       >
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {selected ? selected.label : placeholder}
         </span>
-        <span style={{ flexShrink: 0, color: 'var(--text-muted)', fontSize: 10 }}>▾</span>
+        <span style={{ flexShrink: 0, color: buttonStyle?.color ?? 'var(--text-muted)', fontSize: 10, opacity: buttonStyle?.color ? 0.7 : 1 }}>▾</span>
       </button>
 
       {open && (
@@ -97,7 +104,7 @@ export function EssDropdown({
             />
           </div>
           <ul style={{ maxHeight: 224, overflowY: 'auto', listStyle: 'none', margin: 0, padding: '4px 0' }}>
-            <li>
+            {clearable && <li>
               <button
                 type="button"
                 onClick={() => { onChange(''); setOpen(false); setQuery(''); }}
@@ -108,7 +115,7 @@ export function EssDropdown({
               >
                 {placeholder}
               </button>
-            </li>
+            </li>}
             {filtered.map((o) => (
               <li key={o.value}>
                 <button

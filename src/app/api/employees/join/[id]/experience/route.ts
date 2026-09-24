@@ -2,7 +2,8 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
 import { NextRequest, NextResponse } from 'next/server';
-import type { ResultSetHeader } from 'mysql2';
+import type { ResultSetHeader } from 'mysql2';
+import { childRowError } from '@/lib/childRowValidation';
 
 export async function POST(
   request: NextRequest,
@@ -15,6 +16,8 @@ export async function POST(
 
   const { id } = await params;
   const body = await request.json();
+  const rowError = childRowError('experience', body);
+  if (rowError) return NextResponse.json({ error: rowError }, { status: 400 });
   const pool = await getCompanyPool(session.user.companyCode);
 
   const [result] = await pool.execute<ResultSetHeader>(

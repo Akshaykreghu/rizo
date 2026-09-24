@@ -16,6 +16,9 @@ export default function NewJoinPage() {
       // correctly on the edit route since the id is now in the URL).
       onCreated={(empJoinPkey) => window.history.replaceState(null, '', `/employees/join/${empJoinPkey}`)}
       onOnboarded={(empPkey) => router.push(`/employees/${empPkey}`)}
+      // New Join stops at Other Details — activating the login is a separate, later action via
+      // "Continue Onboarding" on the Employee Join hub, not part of the initial create flow.
+      includeOnboarding={false}
     />
   );
 }

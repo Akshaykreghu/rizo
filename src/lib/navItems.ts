@@ -13,6 +13,7 @@ import {
   Sparkles,
   Wand2,
   FolderOpen,
+  Megaphone,
 } from 'lucide-react';
 
 export interface NavChild {
@@ -138,6 +139,12 @@ export const navItems: NavItem[] = [
     icon: Receipt,
     adminOnly: true,
     href: '/expenses',
+  },
+  {
+    label: 'Announcements',
+    icon: Megaphone,
+    adminOnly: true,
+    href: '/announcements',
   },
   {
     label: 'Company Setup',

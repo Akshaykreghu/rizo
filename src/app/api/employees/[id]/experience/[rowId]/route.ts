@@ -1,7 +1,10 @@
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
+import { selfEditLockedResponse } from '@/lib/employeeEditLock';
 import { NextRequest, NextResponse } from 'next/server';
+import type { ResultSetHeader } from 'mysql2';
+import { childRowError } from '@/lib/childRowValidation';
 
 export async function DELETE(
   _request: NextRequest,
@@ -16,6 +19,8 @@ export async function DELETE(
   }
 
   const pool = await getCompanyPool(session.user.companyCode);
+  const locked = await selfEditLockedResponse(pool, session, parseInt(id));
+  if (locked) return locked;
 
   // Soft delete (status=0), matching the emp_family convention — legacy has no remove action for
   // history at all, but leaving no way to correct a mis-entered row isn't worth replicating.
@@ -24,5 +29,37 @@ export async function DELETE(
     [rowId, id]
   );
 
+  return NextResponse.json({ success: true });
+}
+
+// Edit updates the existing row in place (same row id) — the same columns the POST on the
+// parent route writes.
+export async function PUT(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string; rowId: string }> }
+) {
+  const session = await getServerSession(authOptions);
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const { id, rowId } = await params;
+  if (session.user.userGroup !== 1 && session.user.empFkey !== parseInt(id)) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
+  const body = await request.json();
+  const rowError = childRowError('experience', body);
+  if (rowError) return NextResponse.json({ error: rowError }, { status: 400 });
+  const pool = await getCompanyPool(session.user.companyCode);
+  const locked = await selfEditLockedResponse(pool, session, parseInt(id));
+  if (locked) return locked;
+
+  const [result] = await pool.execute<ResultSetHeader>(
+    `UPDATE history SET company = ?, designation = ?, department = ?, from_date = ?, to_date = ?, salary = ?
+     WHERE history_pkey = ? AND emp_fkey = ?`,
+    [
+      body.company_name, body.designation, body.department, body.from_date, body.to_date, body.salary, rowId, id,
+    ]
+  );
+
+  if (result.affectedRows === 0) return NextResponse.json({ error: 'Row not found' }, { status: 404 });
   return NextResponse.json({ success: true });
 }

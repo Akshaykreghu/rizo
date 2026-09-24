@@ -6,17 +6,16 @@ import { useSearchParams } from 'next/navigation';
 import AppTabs from '@/components/ess/AppTabs';
 import { EssDropdown } from '@/components/ess/EssDropdown';
 import { EssPagination } from '@/components/ess/EssPagination';
+import { essPortal } from '@/components/ess/essPortal';
+import { DocumentUploadField } from '@/components/employees/DocumentUploadField';
+import { FilePreviewModal } from '@/components/ui/FilePreviewModal';
 
 // Port of New Rizo's pages/ESS/ESSRequests.jsx (Expense Claims / Regularisation / Salary Advance
 // / Loan Application tabs). Differences from a literal port, driven by what the real backend
 // actually supports:
-// - No receipt-image upload on expenses — the existing admin POST /api/expenses hardcodes
-//   image to '' regardless of what's sent; adding real upload support is a separate feature.
-// - Expenses has no manual Authorized-By/Approved-By picker — /api/expenses auto-resolves the
-//   authorizer/approver from the hierarchy (getAuthorizerApprover) server-side. Leave requests
-//   are different: POST /api/leave/requests does NOT auto-resolve (it only falls back to the
-//   applicant's own empFkey as authorizer, and leaves approver null, when not supplied) — so the
-//   Apply Leave form below has real Authorize By / Approve By pickers, same as legacy's.
+// - Expense Claims follows legacy EmployeeExpenses exactly (see the EXPENSES section): required
+//   Authorized By / Approved By pickers, optional receipt image, and the salarycheck date guard.
+//   The Apply Leave form below likewise has real Authorize By / Approve By pickers, as legacy's does.
 // - Salary Advance shows the CURRENT MONTH's pending advance only, because GET /api/advances
 //   (lib/advances.ts listAdvances) hardcodes is_credited='N' + defaults to the current month —
 //   that's a real constraint of the existing admin feature, not something added for ESS.
@@ -100,8 +99,8 @@ function badge(status: string) {
 }
 
 function Modal({ title, onClose, wide, children }: { title: string; onClose: () => void; wide?: boolean; children: React.ReactNode }) {
-  return (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+  return essPortal(
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.35)', backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
       <div onClick={(e) => e.stopPropagation()} style={{ background: 'var(--bg-card)', borderRadius: 16, width: '100%', maxWidth: wide ? 760 : 540, maxHeight: '90vh', display: 'flex', flexDirection: 'column', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 22px', borderBottom: '1px solid var(--border)' }}>
           <div style={{ fontWeight: 800, fontSize: 14, color: 'var(--text-primary)' }}>{title}</div>
@@ -130,8 +129,8 @@ function AlertModal({ tone = 'error', title, message, onClose, onConfirm, confir
     warning: { icon: '⚠️', color: '#d97706', bg: '#fffbeb' },
     success: { icon: '✅', color: '#16a34a', bg: '#f0fdf4' },
   }[tone];
-  return (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+  return essPortal(
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.35)', backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)', zIndex: 1200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
       <div onClick={(e) => e.stopPropagation()} style={{ background: 'var(--bg-card)', borderRadius: 14, width: '100%', maxWidth: 400, boxShadow: '0 20px 60px rgba(0,0,0,0.3)', overflow: 'hidden' }}>
         <div style={{ padding: '22px 22px 16px', textAlign: 'center' }}>
           <div style={{ width: 48, height: 48, borderRadius: '50%', background: toneCfg.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, margin: '0 auto 12px' }}>{toneCfg.icon}</div>
@@ -150,23 +149,40 @@ function AlertModal({ tone = 'error', title, message, onClose, onConfirm, confir
 }
 
 // ── EXPENSES ──────────────────────────────────────────────────────────────────
+// Matches legacy EmployeeExpenses (employeerequests.ctp list + form.ctp): same list columns, same
+// form fields/order, required Authorized By / Approved By pickers, optional image, the salarycheck
+// date guard, and "only Applied requests are removable".
 interface ExpenseRow {
   emp_expenses_pkey: number; expense_type: string; expenses_amount: number; affected_month: string;
   expense_date: string; vendor: string | null; purpose: string | null; remarks: string | null;
   expense_status: string; authorized_by: string | null; approved_by: string | null;
   remarks_auth: string | null; remarks_approved: string | null;
+  created_date: string | null; authorized_by_name: string | null; approved_by_name: string | null; image: string | null;
 }
 interface ExpenseType { expense_type_pkey: number; expense_type_name: string }
+interface ExpensePerson { empFkey: number; name: string }
+
+const EMPTY_EXPENSE = { expense_type: '', expense_date: '', expenses_amount: '', image: '', purpose: '', vendor: '', authorized_by: '', approved_by: '', remarks: '' };
+
+function fmtDateTime(d?: string | null) {
+  if (!d) return '—';
+  const [date, time] = d.split(' ');
+  return `${fmt(date)}${time ? ` ${time.slice(0, 5)}` : ''}`;
+}
 
 function ExpensesTab() {
   const [rows, setRows] = useState<ExpenseRow[]>([]);
   const [types, setTypes] = useState<ExpenseType[]>([]);
+  const [authorizers, setAuthorizers] = useState<ExpensePerson[]>([]);
+  const [approvers, setApprovers] = useState<ExpensePerson[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
   const [viewRow, setViewRow] = useState<ExpenseRow | null>(null);
+  const [preview, setPreview] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [form, setForm] = useState({ expense_type: '', expense_date: today(), expenses_amount: '', vendor: '', purpose: '', remarks: '' });
+  const [dateError, setDateError] = useState<string | null>(null);
+  const [form, setForm] = useState(EMPTY_EXPENSE);
   const [page, setPage] = useState(1);
 
   const load = useCallback(() => {
@@ -176,29 +192,65 @@ function ExpensesTab() {
   useEffect(() => {
     load();
     fetch('/api/setup/expense-types').then((r) => (r.ok ? r.json() : [])).then(setTypes).catch(() => {});
+    fetch('/api/expenses/people').then((r) => (r.ok ? r.json() : null)).then((d) => {
+      if (!d) return;
+      setAuthorizers(d.authorizers || []);
+      setApprovers(d.approvers || []);
+    }).catch(() => {});
   }, [load]);
+
+  function openNew() {
+    // Like the leave form: when the hierarchy offers exactly one person for a role, pre-pick them.
+    setForm({
+      ...EMPTY_EXPENSE,
+      authorized_by: authorizers.length === 1 ? String(authorizers[0].empFkey) : '',
+      approved_by: approvers.length === 1 ? String(approvers[0].empFkey) : '',
+    });
+    setError(null);
+    setDateError(null);
+    setShowAdd(true);
+  }
+
+  // Legacy salarycheck, run as soon as the date is picked: before joining, or a month whose
+  // salary is already processed, can't take a claim — Save stays disabled with the reason shown.
+  async function changeDate(date: string) {
+    setForm((f) => ({ ...f, expense_date: date }));
+    setDateError(null);
+    if (!date) return;
+    const r = await fetch(`/api/expenses/salary-check?date=${date}`).then((x) => (x.ok ? x.json() : null)).catch(() => null);
+    setDateError(r?.error ?? null);
+  }
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
-    // expense_type is a custom dropdown (no native browser "required" validation), so a missing
-    // selection needs its own explicit message instead of just leaving Submit disabled.
-    if (!form.expense_type) { setError('Please select an expense type.'); return; }
-    if (!form.expenses_amount || Number(form.expenses_amount) <= 0) { setError('Please enter an amount greater than 0.'); return; }
+    const amount = Number(form.expenses_amount);
+    const missing = !form.expense_type ? 'Please select an expense type.'
+      : !form.expense_date ? 'Please choose date'
+      : !form.expenses_amount || Number.isNaN(amount) || amount < 1 ? 'Please Enter A Valid Amount'
+      : !form.authorized_by ? 'Please select Authorized By.'
+      : !form.approved_by ? 'Please select Approved By.'
+      : null;
+    if (missing) { setError(missing); return; }
+    if (dateError) { setError(dateError); return; }
+    if (!confirm('Do you want to save the form?')) return;
     setSaving(true);
     setError(null);
     try {
       const res = await fetch('/api/expenses', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          expenseType: form.expense_type, expensesAmount: Number(form.expenses_amount),
-          affectedMonth: `${form.expense_date.slice(0, 7)}-01`, expenseDate: form.expense_date,
-          vendor: form.vendor || undefined, purpose: form.purpose || undefined, remarks: form.remarks || undefined,
+          // Legacy stores the chosen date in both affected_month and expense_date.
+          expenseType: form.expense_type, expensesAmount: amount,
+          affectedMonth: form.expense_date, expenseDate: form.expense_date,
+          image: form.image || undefined, purpose: form.purpose || undefined, vendor: form.vendor || undefined,
+          authorizedBy: Number(form.authorized_by), approvedBy: Number(form.approved_by),
+          remarks: form.remarks || undefined,
         }),
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error || 'Failed to save expense');
       setShowAdd(false);
-      setForm({ expense_type: '', expense_date: today(), expenses_amount: '', vendor: '', purpose: '', remarks: '' });
+      setForm(EMPTY_EXPENSE);
       load();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save expense');
@@ -208,36 +260,41 @@ function ExpensesTab() {
   }
 
   async function remove(row: ExpenseRow) {
-    if (row.expense_status === 'Approved') { setError('Cannot remove an already-approved claim'); return; }
-    if (!confirm('Remove this expense request?')) return;
+    if (row.expense_status !== 'Applied') { setError('Applied status expenses are only removable.'); return; }
+    if (!confirm('Do you want to delete the selected Record(s)?')) return;
     const res = await fetch(`/api/expenses/${row.emp_expenses_pkey}`, { method: 'DELETE' });
     if (res.ok) load(); else setError((await res.json()).error || 'Failed to remove');
   }
+
+  const personOpts = (list: ExpensePerson[]) => list.map((p) => ({ value: String(p.empFkey), label: p.name }));
 
   return (
     <div>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 10 }}>
         <div style={tabHeaderText}>Submit and track your expense claims.</div>
-        <button style={btnP} onClick={() => setShowAdd(true)}>+ New Expense</button>
+        <button style={btnP} onClick={openNew}>+ New Expense</button>
       </div>
       {!showAdd && error && <div style={{ marginBottom: 12, fontSize: 12, color: '#dc2626' }}>{error}</div>}
 
       <div style={{ ...card, overflow: 'hidden' }}>
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr>{['Sl.No', 'Amount', 'Type', 'Date', 'Vendor', 'Status', ''].map((h) => <th key={h} style={thS}>{h}</th>)}</tr></thead>
+            <thead><tr>{['Sl.No', 'Applied Date & Time', 'Expense Amount', 'Expense Type', 'Expense Date', 'Authorized By', 'Approved By', 'Remarks', 'Status', ''].map((h) => <th key={h} style={thS}>{h}</th>)}</tr></thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={7} style={{ ...tdS, textAlign: 'center', color: 'var(--text-muted)' }}>Loading…</td></tr>
+                <tr><td colSpan={10} style={{ ...tdS, textAlign: 'center', color: 'var(--text-muted)' }}>Loading…</td></tr>
               ) : rows.length === 0 ? (
-                <tr><td colSpan={7} style={{ ...tdS, textAlign: 'center', color: 'var(--text-muted)' }}>No expense requests found</td></tr>
+                <tr><td colSpan={10} style={{ ...tdS, textAlign: 'center', color: 'var(--text-muted)' }}>No expense requests found</td></tr>
               ) : rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map((r, i) => (
                 <tr key={r.emp_expenses_pkey}>
                   <td style={tdS}>{(page - 1) * PAGE_SIZE + i + 1}</td>
+                  <td style={{ ...tdS, whiteSpace: 'nowrap' }}>{fmtDateTime(r.created_date)}</td>
                   <td style={{ ...tdS, fontWeight: 700 }}>{fmtAmt(r.expenses_amount)}</td>
                   <td style={tdS}>{r.expense_type}</td>
-                  <td style={tdS}>{fmt(r.expense_date)}</td>
-                  <td style={tdS}>{r.vendor || '—'}</td>
+                  <td style={{ ...tdS, whiteSpace: 'nowrap' }}>{fmt(r.expense_date)}</td>
+                  <td style={tdS}>{r.authorized_by_name || 'Admin'}</td>
+                  <td style={tdS}>{r.approved_by_name || 'Admin'}</td>
+                  <td style={tdS}>{r.remarks || '—'}</td>
                   <td style={tdS}><span style={badge(r.expense_status)}>{r.expense_status}</span></td>
                   <td style={tdS}>
                     <div style={{ display: 'flex', gap: 6 }}>
@@ -254,7 +311,7 @@ function ExpensesTab() {
       </div>
 
       {showAdd && (
-        <Modal title="New Expense Request" onClose={() => setShowAdd(false)}>
+        <Modal title="Employee Expenses" onClose={() => setShowAdd(false)}>
           <form onSubmit={handleSave}>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 14 }}>
               <div>
@@ -262,35 +319,48 @@ function ExpensesTab() {
                 <EssDropdown
                   value={form.expense_type}
                   onChange={(v) => setForm((f) => ({ ...f, expense_type: v }))}
-                  placeholder="-- Select --"
+                  placeholder="[--Select--]"
                   options={types.map((t) => ({ value: t.expense_type_name, label: t.expense_type_name }))}
                 />
               </div>
               <div>
                 <label style={lbl}>Expense Date *</label>
-                <input type="date" required value={form.expense_date} onChange={(e) => setForm((f) => ({ ...f, expense_date: e.target.value }))} style={inp} />
+                <input type="date" required value={form.expense_date} onChange={(e) => changeDate(e.target.value)} style={inp} />
               </div>
               <div>
-                <label style={lbl}>Amount (₹) *</label>
+                <label style={lbl}>Expense Amount *</label>
                 <input type="number" required min="1" step="0.01" value={form.expenses_amount} onChange={(e) => setForm((f) => ({ ...f, expenses_amount: e.target.value }))} style={inp} />
+              </div>
+              <div style={{ gridColumn: '1 / -1' }}>
+                <label style={lbl}>Image</label>
+                {/* Legacy accepts jpg/jpeg/png/gif/pdf up to 5 MB. */}
+                <DocumentUploadField value={form.image} onChange={(path) => setForm((f) => ({ ...f, image: path }))} accept=".jpg,.jpeg,.png,.gif,.pdf" maxBytes={5_000_000} />
+              </div>
+              <div>
+                <label style={lbl}>Purpose</label>
+                <input value={form.purpose} maxLength={500} placeholder="Enter a Purpose" onChange={(e) => setForm((f) => ({ ...f, purpose: e.target.value }))} style={inp} />
               </div>
               <div>
                 <label style={lbl}>Vendor</label>
-                <input value={form.vendor} onChange={(e) => setForm((f) => ({ ...f, vendor: e.target.value }))} style={inp} />
+                <input value={form.vendor} maxLength={400} placeholder="Enter Vendor Name" onChange={(e) => setForm((f) => ({ ...f, vendor: e.target.value }))} style={inp} />
+              </div>
+              <div>
+                <label style={lbl}>Authorized By *</label>
+                <EssDropdown value={form.authorized_by} onChange={(v) => setForm((f) => ({ ...f, authorized_by: v }))} placeholder="[--Select--]" options={personOpts(authorizers)} />
+              </div>
+              <div>
+                <label style={lbl}>Approved By *</label>
+                <EssDropdown value={form.approved_by} onChange={(v) => setForm((f) => ({ ...f, approved_by: v }))} placeholder="[--Select--]" options={personOpts(approvers)} />
+              </div>
+              <div style={{ gridColumn: '1 / -1' }}>
+                <label style={lbl}>Remark</label>
+                <input value={form.remarks} maxLength={400} placeholder="Enter Remarks" onChange={(e) => setForm((f) => ({ ...f, remarks: e.target.value }))} style={inp} />
               </div>
             </div>
-            <div style={{ marginBottom: 14 }}>
-              <label style={lbl}>Purpose</label>
-              <input value={form.purpose} onChange={(e) => setForm((f) => ({ ...f, purpose: e.target.value }))} style={inp} />
-            </div>
-            <div style={{ marginBottom: 14 }}>
-              <label style={lbl}>Remarks</label>
-              <input value={form.remarks} onChange={(e) => setForm((f) => ({ ...f, remarks: e.target.value }))} style={inp} />
-            </div>
-            {error && <div style={{ marginBottom: 12, fontSize: 12, color: '#dc2626' }}>{error}</div>}
+            {(dateError || error) && <div style={{ marginBottom: 12, fontSize: 12, color: '#dc2626' }}>{dateError || error}</div>}
             <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
               <button type="button" style={btnO} onClick={() => setShowAdd(false)}>Cancel</button>
-              <button type="submit" style={btnP} disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
+              <button type="submit" style={{ ...btnP, opacity: saving || dateError ? 0.5 : 1 }} disabled={saving || !!dateError}>{saving ? 'Saving…' : 'Save'}</button>
             </div>
           </form>
         </Modal>
@@ -299,19 +369,28 @@ function ExpensesTab() {
       {viewRow && (
         <Modal title="Expense Details" onClose={() => setViewRow(null)}>
           {[
-            ['Amount', fmtAmt(viewRow.expenses_amount)], ['Type', viewRow.expense_type], ['Date', fmt(viewRow.expense_date)],
+            ['Applied On', fmtDateTime(viewRow.created_date)], ['Expense Amount', fmtAmt(viewRow.expenses_amount)],
+            ['Expense Type', viewRow.expense_type], ['Expense Date', fmt(viewRow.expense_date)],
             ['Vendor', viewRow.vendor || '—'], ['Purpose', viewRow.purpose || '—'], ['Remarks', viewRow.remarks || '—'],
+            ['Authorized By', viewRow.authorized_by_name || 'Admin'], ['Approved By', viewRow.approved_by_name || 'Admin'],
             ['Status', viewRow.expense_status],
           ].map(([k, v]) => (
             <div key={k} style={{ display: 'flex', gap: 12, padding: '9px 0', borderBottom: '1px solid var(--border)' }}>
-              <div style={{ width: 120, fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', flexShrink: 0 }}>{k}</div>
+              <div style={{ width: 130, fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', flexShrink: 0 }}>{k}</div>
               <div style={{ fontSize: 13, color: 'var(--text-primary)' }}>{v}</div>
             </div>
           ))}
+          {viewRow.image && (
+            <div style={{ display: 'flex', gap: 12, padding: '9px 0', borderBottom: '1px solid var(--border)' }}>
+              <div style={{ width: 130, fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', flexShrink: 0 }}>Image</div>
+              <button type="button" onClick={() => setPreview(viewRow.image)} style={{ fontSize: 13, fontWeight: 700, color: BRAND, background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}>View Attachment</button>
+            </div>
+          )}
           {viewRow.remarks_auth && <div style={{ marginTop: 12, fontSize: 12, color: 'var(--text-muted)' }}><strong>Authorizer remark:</strong> {viewRow.remarks_auth}</div>}
           {viewRow.remarks_approved && <div style={{ marginTop: 6, fontSize: 12, color: 'var(--text-muted)' }}><strong>Approver remark:</strong> {viewRow.remarks_approved}</div>}
         </Modal>
       )}
+      <FilePreviewModal url={preview} title="Expense attachment" onClose={() => setPreview(null)} />
     </div>
   );
 }
@@ -488,15 +567,17 @@ function AssetsTab() {
 // ── REGULARIZATION ────────────────────────────────────────────────────────────
 interface RegRow { id: number; att_date: string; direction: 'in' | 'out'; remarks: string | null; LOGTIME: string; approved: 'P' | 'A' | 'R' }
 
-function RegularizationTab() {
+// initialDate: opened from the Attendance Report's Regularize button (?date=YYYY-MM-DD) — the
+// raise form opens straight away for that day, as legacy's Regularisation/form/{emp}/{date} did.
+function RegularizationTab({ initialDate }: { initialDate?: string }) {
   const [month] = useState(currentMonth());
   const [rows, setRows] = useState<RegRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showForm, setShowForm] = useState(false);
+  const [showForm, setShowForm] = useState(!!initialDate);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [messageTone, setMessageTone] = useState<'success' | 'error'>('error');
-  const [form, setForm] = useState({ attDate: today(), direction: 'in' as 'in' | 'out', logTime: nowTime(), remarks: '' });
+  const [form, setForm] = useState({ attDate: initialDate ?? today(), direction: 'in' as 'in' | 'out', logTime: nowTime(), remarks: '' });
   const [page, setPage] = useState(1);
 
   const load = useCallback(() => {
@@ -548,10 +629,8 @@ function RegularizationTab() {
               </div>
               <div>
                 <label style={lbl}>Direction *</label>
-                <select value={form.direction} onChange={(e) => setForm((f) => ({ ...f, direction: e.target.value as 'in' | 'out' }))} style={inp}>
-                  <option value="in">In</option>
-                  <option value="out">Out</option>
-                </select>
+                <EssDropdown value={form.direction} onChange={(v) => setForm((f) => ({ ...f, direction: v as 'in' | 'out' }))} clearable={false}
+                  options={[{ value: 'in', label: 'In' }, { value: 'out', label: 'Out' }]} />
               </div>
               <div>
                 <label style={lbl}>Time *</label>
@@ -1119,8 +1198,8 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
     doSubmit();
   }
 
-  return (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+  return essPortal(
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.35)', backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
       <div onClick={(e) => e.stopPropagation()} style={{ background: 'var(--bg-card)', borderRadius: 16, width: 540, maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
         <div style={{ background: `linear-gradient(135deg, #0c1f2c, ${BRAND})`, padding: '16px 20px', borderRadius: '16px 16px 0 0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div style={{ fontSize: 14, fontWeight: 900, color: '#fff' }}>🌴 Apply for Leave</div>
@@ -1150,10 +1229,8 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
                 <div key={label}>
                   <label style={lbl}>{label} Date *</label>
                   <input type="date" required style={{ ...inp, marginBottom: 6 }} value={form[dk]} onChange={(e) => setForm((f) => ({ ...f, [dk]: e.target.value }))} />
-                  <select style={inp} value={form[hk]} onChange={(e) => setForm((f) => ({ ...f, [hk]: e.target.value }))}>
-                    <option value="1">First Half</option>
-                    <option value="2">Second Half</option>
-                  </select>
+                  <EssDropdown value={form[hk]} onChange={(v) => setForm((f) => ({ ...f, [hk]: v }))} clearable={false}
+                    options={[{ value: '1', label: 'First Half' }, { value: '2', label: 'Second Half' }]} />
                 </div>
               );
             })}
@@ -1245,8 +1322,8 @@ function LeaveDetailModal({ leave: r, onClose, onCancelled }: { leave: LeaveRow;
   const authorizedByName = r.authorized_by_first_name ? `${r.authorized_by_first_name} ${r.authorized_by_last_name || ''}`.trim() : null;
   const approvedByName = r.approved_by_first_name ? `${r.approved_by_first_name} ${r.approved_by_last_name || ''}`.trim() : null;
 
-  return (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 1050, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+  return essPortal(
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.35)', backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)', zIndex: 1050, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
       <div onClick={(e) => e.stopPropagation()} style={{ background: 'var(--bg-card)', borderRadius: 18, width: 480, maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 24px 60px rgba(0,0,0,0.35)' }}>
         <div style={{ background: `linear-gradient(135deg, #0c1f2c, ${BRAND})`, padding: '16px 20px', borderRadius: '18px 18px 0 0', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
           <div>
@@ -1463,7 +1540,7 @@ function EssRequestsContent() {
       {tab === 'leave' && <LeaveTab empId={empId} />}
       {tab === 'expenses' && <ExpensesTab />}
       {tab === 'assets' && <AssetsTab />}
-      {tab === 'regularization' && <RegularizationTab />}
+      {tab === 'regularization' && <RegularizationTab initialDate={/^\d{4}-\d{2}-\d{2}$/.test(searchParams.get('date') ?? '') ? searchParams.get('date')! : undefined} />}
       {tab === 'advance' && <AdvanceTab />}
       {tab === 'loan' && <LoanTab />}
     </div>

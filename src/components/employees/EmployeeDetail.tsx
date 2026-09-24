@@ -3,19 +3,25 @@
 import { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
-  ArrowLeft, User, Briefcase, FileText, Plus, Trash2, Eye, RefreshCw,
+  ArrowLeft, User, Briefcase, FileText, Plus, Trash2, Eye, Pencil,
   AlertCircle, CheckCircle2, Users, Star, GraduationCap, History,
 } from 'lucide-react';
 import { RepeatableRows } from '@/components/employees/RepeatableRows';
 import { cn, formatDate } from '@/lib/utils';
 import { AvatarUpload } from '@/components/ui/AvatarUpload';
 import { RequiredMark } from '@/components/ui/RequiredMark';
+import { FilePreviewModal } from '@/components/ui/FilePreviewModal';
 import { SearchableSelect } from '@/components/ui/SearchableSelect';
 import { CollapsibleSection, SectionHeading } from '@/components/ui/CollapsibleSection';
 import { EmployeeSearch } from '@/components/employees/EmployeeSearch';
 import { DocumentUploadField } from '@/components/employees/DocumentUploadField';
 import { useSetupOptions, useSetupRows } from '@/lib/setupOptions';
 import { EMP_TYPES } from '@/lib/employeeOptions';
+import { EMPLOYEE_FIELD_LIMITS, CHILD_FIELD_LIMITS } from '@/lib/employeeFieldLimits';
+import {
+  FAMILY_GENDERS, marksError, salaryError, contactNumberError, documentNumberError,
+  onlyDigits, onlyAlphanumeric, onlyPercent,
+} from '@/lib/childRowValidation';
 import {
   dobError, ageAtDateError, aadhaarError, panError, esiError, uanError, lwfError, accountNoError, pfNumberError,
   mobileError, pincodeError,
@@ -106,11 +112,13 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
   const [docErrors, setDocErrors] = useState<Record<string, string>>({});
   const [replacingPkey, setReplacingPkey] = useState<number | null>(null);
   const [docSaving, setDocSaving] = useState(false);
+  const [previewDoc, setPreviewDoc] = useState<{ url: string; title: string } | null>(null);
 
   const [showFamilyForm, setShowFamilyForm] = useState(false);
   const [familyDraft, setFamilyDraft] = useState(EMPTY_FAMILY);
   const [familyErrors, setFamilyErrors] = useState<Record<string, string>>({});
   const [familySaving, setFamilySaving] = useState(false);
+  const [editingFamilyPkey, setEditingFamilyPkey] = useState<number | null>(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ['employee', id],
@@ -172,7 +180,9 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
         guradian: data.employee.guradian ?? '',
         relation_guardian: data.employee.relation_guardian ?? '',
         international_worker: data.employee.international_worker ?? 'N',
-        country: data.employee.country ?? '',
+        // String() like nationality_id above: the dropdown matches options ('1') by strict equality,
+        // so a raw numeric id (1) showed as blank even though it was saved.
+        country: data.employee.country != null ? String(data.employee.country) : '',
         physical_handicap: data.employee.physical_handicap ?? 'N',
         locomotive: data.employee.locomotive ?? 'N',
         hearing: data.employee.hearing ?? 'N',
@@ -225,7 +235,16 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
       if (!res.ok) throw new Error((await res.json()).error ?? 'Failed to update editable status');
       return next;
     },
-    onSuccess: (next) => setEditableState(next),
+    onSuccess: (next) => {
+      setEditableState(next);
+      // Also update the cached employee record — otherwise reopening this employee within the
+      // query's staleTime re-seeds from the old cached `editable` and shows the previous state.
+      queryClient.setQueryData(['employee', id], (old: { employee?: Record<string, unknown> } | undefined) =>
+        old?.employee ? { ...old, employee: { ...old.employee, editable: next ? 1 : 0 } } : old
+      );
+      queryClient.invalidateQueries({ queryKey: ['employee', id] });
+      queryClient.invalidateQueries({ queryKey: ['employees'] });
+    },
     onError: (err) => setFormError(err instanceof Error ? err.message : String(err)),
   });
 
@@ -281,7 +300,8 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
       valid_from: String(row.valid_from ?? '').slice(0, 10),
       valid_till: String(row.valid_till ?? '').slice(0, 10),
     });
-    setDocFile('');
+    // Keep the current attachment unless a new file is uploaded — Edit updates the row in place.
+    setDocFile(String(row.files ?? ''));
     setReplacingPkey(Number(row.emp_passport_visa_pkey));
     setDocErrors({});
     setShowDocForm(true);
@@ -290,7 +310,7 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
   async function submitDocument() {
     const errors = {
       document_type: docDraft.document_type ? '' : 'Document type is required',
-      document_number: docDraft.document_number.trim() ? '' : 'Document number is required',
+      document_number: docDraft.document_number.trim() ? (documentNumberError(docDraft.document_number) ?? '') : 'Document number is required',
       name: docDraft.name.trim() ? '' : 'Name on document is required',
       relation: docDraft.relation.trim() ? '' : 'Relation is required',
       valid_from: docDraft.valid_from ? '' : 'Valid from date is required',
@@ -302,9 +322,11 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
     setDocErrors({});
     setDocSaving(true);
     try {
-      if (replacingPkey != null) await removeDocument(replacingPkey);
-      await addDocument({ ...docDraft, files: docFile });
+      if (replacingPkey != null) await updateRow('documents', replacingPkey, { ...docDraft, files: docFile });
+      else await addDocument({ ...docDraft, files: docFile });
       setShowDocForm(false);
+    } catch (err) {
+      setDocErrors({ form: err instanceof Error ? err.message : String(err) });
     } finally {
       setDocSaving(false);
     }
@@ -365,8 +387,12 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
     update.mutate();
   }
 
-  function updateField(key: string, value: string) {
+  function updateField(key: string, raw: string) {
+    // Also caps number inputs, which ignore the maxLength attribute.
+    const value = EMPLOYEE_FIELD_LIMITS[key] ? raw.slice(0, EMPLOYEE_FIELD_LIMITS[key]) : raw;
     const next = { ...form, [key]: value };
+    // Probation days only apply to a Probation hire (the field is hidden otherwise).
+    if (key === 'emp_type' && value !== 'Probation') next.probation = '';
     setForm(next);
     const validator = fieldValidators[key];
     if (validator) setFieldErrors((prev) => ({ ...prev, [key]: validator(value) }));
@@ -379,6 +405,7 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
   function f(key: string) {
     return {
       value: form[key] ?? '',
+      maxLength: EMPLOYEE_FIELD_LIMITS[key],
       onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => updateField(key, e.target.value),
     };
   }
@@ -410,6 +437,17 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
         {label}
       </label>
     );
+  }
+
+  // Edit saves over the existing row (same pkey) via PUT — never delete + re-add.
+  async function updateRow(section: 'education' | 'experience' | 'family' | 'documents', pkey: number, values: Record<string, string>) {
+    const res = await fetch(`/api/employees/${id}/${section}/${pkey}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(values),
+    });
+    if (!res.ok) throw new Error('Could not save these changes — please check the values and try again.');
+    queryClient.invalidateQueries({ queryKey: ['employee', id, section] });
   }
 
   async function addFamilyMember(values: Record<string, string>) {
@@ -456,6 +494,21 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
 
   function openAddFamily() {
     setFamilyDraft(EMPTY_FAMILY);
+    setEditingFamilyPkey(null);
+    setFamilyErrors({});
+    setShowFamilyForm(true);
+  }
+
+  function openEditFamily(row: Record<string, unknown>) {
+    const str = (k: string, fallback = '') => (row[k] == null ? fallback : String(row[k]));
+    // remarks isn't on the form but is part of the row — carried along so saving doesn't blank it.
+    setFamilyDraft({
+      name: str('name'), relation: str('relation'), gender: str('gender'), DOB: str('DOB').slice(0, 10),
+      blood_group: str('blood_group'), nationality: str('nationality'), contact_number: str('contact_number'),
+      alternate_number: str('alternate_number'), is_nominee: str('is_nominee', 'N'), emergency_contact: str('emergency_contact', 'N'),
+      remarks: str('remarks'),
+    } as typeof EMPTY_FAMILY);
+    setEditingFamilyPkey(Number(row.emp_family_pkey));
     setFamilyErrors({});
     setShowFamilyForm(true);
   }
@@ -466,7 +519,8 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
       relation: familyDraft.relation ? '' : 'Relation is required',
       gender: familyDraft.gender ? '' : 'Gender is required',
       DOB: familyDraft.DOB ? '' : 'Date of birth is required',
-      contact_number: familyDraft.contact_number.trim() ? '' : 'Contact number is required',
+      contact_number: familyDraft.contact_number.trim() ? (contactNumberError(familyDraft.contact_number) ?? '') : 'Contact number is required',
+      alternate_number: contactNumberError(familyDraft.alternate_number, 'Alternative number') ?? '',
     };
     if (Object.values(errors).some(Boolean)) {
       setFamilyErrors(errors);
@@ -475,8 +529,12 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
     setFamilyErrors({});
     setFamilySaving(true);
     try {
-      await addFamilyMember(familyDraft);
+      if (editingFamilyPkey != null) await updateRow('family', editingFamilyPkey, familyDraft);
+      else await addFamilyMember(familyDraft);
       setShowFamilyForm(false);
+      setEditingFamilyPkey(null);
+    } catch (err) {
+      setFamilyErrors({ form: err instanceof Error ? err.message : String(err) });
     } finally {
       setFamilySaving(false);
     }
@@ -490,7 +548,8 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
   const statusInfo = STATUS_BADGE[Number(emp.status)] ?? STATUS_BADGE[1];
   const headerName = `${emp.first_name} ${emp.last_name}`.trim();
   const metaParts = [
-    `EMP ${emp.emp_id}`,
+    // Employee ID (emp_proff.emp_company_id) — same as the Employees list; defaults to the login ID.
+    data.professional?.emp_company_id || emp.emp_id,
     emp.desig_name,
     emp.emp_branch_name,
     emp.dept_name,
@@ -588,12 +647,12 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-5 gap-y-5">
                   <div>
                     <label className={LABEL_CLASS}>First Name<RequiredMark /></label>
-                    <input maxLength={100} className={cn(INPUT_CLASS, fieldErrors.first_name && ERROR_INPUT_CLASS)} {...f('first_name')} />
+                    <input className={cn(INPUT_CLASS, fieldErrors.first_name && ERROR_INPUT_CLASS)} {...f('first_name')} />
                     <FieldError>{fieldErrors.first_name}</FieldError>
                   </div>
                   <div>
                     <label className={LABEL_CLASS}>Last Name</label>
-                    <input maxLength={100} className={INPUT_CLASS} {...f('last_name')} />
+                    <input className={INPUT_CLASS} {...f('last_name')} />
                   </div>
                   <div>
                     <label className={LABEL_CLASS}>Date of Birth<RequiredMark /></label>
@@ -617,18 +676,18 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                     <input type="email" className={INPUT_CLASS} {...f('email')} />
                   </div>
                   <div>
-                    <label className={LABEL_CLASS}>Mobile</label>
-                    <input type="tel" maxLength={10} className={cn(INPUT_CLASS, fieldErrors.mobile_no && ERROR_INPUT_CLASS)} {...f('mobile_no')} />
+                    <label className={LABEL_CLASS}>Mobile Number</label>
+                    <input type="tel" className={cn(INPUT_CLASS, fieldErrors.mobile_no && ERROR_INPUT_CLASS)} {...f('mobile_no')} />
                     <FieldError>{fieldErrors.mobile_no}</FieldError>
                   </div>
 
                   <div className="sm:col-span-2">
                     <label className={LABEL_CLASS}>Address</label>
-                    <input className={INPUT_CLASS} value={form.address ?? ''} onChange={(e) => setForm((prev) => ({ ...prev, address: e.target.value }))} />
+                    <input maxLength={EMPLOYEE_FIELD_LIMITS.address} className={INPUT_CLASS} value={form.address ?? ''} onChange={(e) => setForm((prev) => ({ ...prev, address: e.target.value }))} />
                   </div>
                   <div>
                     <label className={LABEL_CLASS}>Pincode</label>
-                    <input maxLength={6} className={cn(INPUT_CLASS, fieldErrors.pincode && ERROR_INPUT_CLASS)} {...f('pincode')} />
+                    <input className={cn(INPUT_CLASS, fieldErrors.pincode && ERROR_INPUT_CLASS)} {...f('pincode')} />
                     <FieldError>{fieldErrors.pincode}</FieldError>
                   </div>
 
@@ -683,13 +742,12 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                   </div>
                   <div>
                     <label className={LABEL_CLASS}>ID Card Number<RequiredMark /></label>
-                    <input maxLength={12} className={cn(INPUT_CLASS, fieldErrors.id_card && ERROR_INPUT_CLASS)} {...f('id_card')} />
+                    <input className={cn(INPUT_CLASS, fieldErrors.id_card && ERROR_INPUT_CLASS)} {...f('id_card')} />
                     <FieldError>{fieldErrors.id_card}</FieldError>
                   </div>
                   <div>
                     <label className={LABEL_CLASS}>PAN Number</label>
                     <input
-                      maxLength={10}
                       className={cn(INPUT_CLASS, fieldErrors.pan_no && ERROR_INPUT_CLASS)}
                       {...f('pan_no')}
                       onChange={(e) => updateField('pan_no', e.target.value.toUpperCase())}
@@ -699,25 +757,25 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
 
                   <div>
                     <label className={LABEL_CLASS}>Bank Name</label>
-                    <input maxLength={100} className={INPUT_CLASS} {...f('bank_name')} />
+                    <input className={INPUT_CLASS} {...f('bank_name')} />
                   </div>
                   <div>
                     <label className={LABEL_CLASS}>Bank Branch</label>
-                    <input maxLength={100} className={INPUT_CLASS} {...f('bank_branch_name')} />
+                    <input className={INPUT_CLASS} {...f('bank_branch_name')} />
                   </div>
                   <div>
                     <label className={LABEL_CLASS}>IFSC Code</label>
-                    <input maxLength={12} className={INPUT_CLASS} {...f('ifsc_code')} />
+                    <input className={INPUT_CLASS} {...f('ifsc_code')} />
                   </div>
 
                   <div>
                     <label className={LABEL_CLASS}>Account Number</label>
-                    <input maxLength={18} className={cn(INPUT_CLASS, fieldErrors.account_no && ERROR_INPUT_CLASS)} {...f('account_no')} />
+                    <input className={cn(INPUT_CLASS, fieldErrors.account_no && ERROR_INPUT_CLASS)} {...f('account_no')} />
                     <FieldError>{fieldErrors.account_no}</FieldError>
                   </div>
                   <div>
                     <label className={LABEL_CLASS}>ESI Number</label>
-                    <input maxLength={10} className={cn(INPUT_CLASS, fieldErrors.esi && ERROR_INPUT_CLASS)} {...f('esi')} />
+                    <input className={cn(INPUT_CLASS, fieldErrors.esi && ERROR_INPUT_CLASS)} {...f('esi')} />
                     {fieldErrors.esi ? <FieldError>{fieldErrors.esi}</FieldError> : <HelperText>10 digits</HelperText>}
                   </div>
                   <div>
@@ -727,27 +785,26 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
 
                   <div>
                     <label className={LABEL_CLASS}>PF Number</label>
-                    <input maxLength={22} className={cn(INPUT_CLASS, fieldErrors.pf && ERROR_INPUT_CLASS)} {...f('pf')} />
+                    <input className={cn(INPUT_CLASS, fieldErrors.pf && ERROR_INPUT_CLASS)} {...f('pf')} />
                     <FieldError>{fieldErrors.pf}</FieldError>
                   </div>
                   <div>
                     <label className={LABEL_CLASS}>UAN No</label>
-                    <input maxLength={12} className={cn(INPUT_CLASS, fieldErrors.company_pf && ERROR_INPUT_CLASS)} {...f('company_pf')} />
+                    <input className={cn(INPUT_CLASS, fieldErrors.company_pf && ERROR_INPUT_CLASS)} {...f('company_pf')} />
                     <FieldError>{fieldErrors.company_pf}</FieldError>
                   </div>
                   <div>
                     <label className={LABEL_CLASS}>Previous Member ID</label>
-                    <input maxLength={15} className={INPUT_CLASS} {...f('previous_member_id')} />
+                    <input className={INPUT_CLASS} {...f('previous_member_id')} />
                   </div>
 
                   <div>
                     <label className={LABEL_CLASS}>WPS ID</label>
-                    <input maxLength={15} className={INPUT_CLASS} {...f('wps_code')} />
+                    <input className={INPUT_CLASS} {...f('wps_code')} />
                   </div>
                   <div>
                     <label className={LABEL_CLASS}>LWF Registration Number</label>
                     <input
-                      maxLength={15}
                       className={cn(INPUT_CLASS, fieldErrors.lwf_code && ERROR_INPUT_CLASS)}
                       {...f('lwf_code')}
                       onChange={(e) => updateField('lwf_code', e.target.value.toUpperCase())}
@@ -830,10 +887,13 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                           buttonClassName={INPUT_CLASS}
                         />
                       </div>
-                      <div>
-                        <label className={LABEL_CLASS}>Probation Period (days)</label>
-                        <input type="number" className={INPUT_CLASS} {...f('probation')} />
-                      </div>
+                      {/* Legacy setup.ctp #probationDaysContainer: only for a Probation hire. */}
+                      {form.emp_type === 'Probation' && (
+                        <div>
+                          <label className={LABEL_CLASS}>Probation Period (days)</label>
+                          <input inputMode="numeric" className={INPUT_CLASS} {...f('probation')} onChange={(e) => updateField('probation', onlyDigits(e.target.value))} />
+                        </div>
+                      )}
                       {form.emp_type === 'Contract' && (
                         <>
                           <div>
@@ -895,11 +955,12 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                       addLabel="Add education"
                       onAdd={addEducation}
                       onRemove={removeEducation}
+                      onUpdate={(pkey, values) => updateRow('education', pkey, values)}
                       fields={[
-                        { key: 'degree', label: 'Course', required: true },
-                        { key: 'university', label: 'University', required: true },
-                        { key: 'duration', label: 'Duration', required: true },
-                        { key: 'marks', label: 'Marks', required: true },
+                        { key: 'degree', label: 'Course', required: true, maxLength: CHILD_FIELD_LIMITS.course },
+                        { key: 'university', label: 'University', required: true, maxLength: CHILD_FIELD_LIMITS.university },
+                        { key: 'duration', label: 'Duration', required: true, maxLength: CHILD_FIELD_LIMITS.duration },
+                        { key: 'marks', label: 'Marks (%)', required: true, maxLength: CHILD_FIELD_LIMITS.mark, inputMode: 'decimal', sanitize: onlyPercent, validate: marksError },
                       ]}
                     />
                   </CollapsibleSection>
@@ -911,13 +972,14 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                       addLabel="Add experience"
                       onAdd={addExperience}
                       onRemove={removeExperience}
+                      onUpdate={(pkey, values) => updateRow('experience', pkey, values)}
                       fields={[
-                        { key: 'company_name', label: 'Company', required: true },
-                        { key: 'designation', label: 'Designation', required: true },
-                        { key: 'department', label: 'Department', required: true },
+                        { key: 'company_name', label: 'Company', required: true, maxLength: CHILD_FIELD_LIMITS.company },
+                        { key: 'designation', label: 'Designation', required: true, maxLength: CHILD_FIELD_LIMITS.designation },
+                        { key: 'department', label: 'Department', required: true, maxLength: CHILD_FIELD_LIMITS.department },
                         { key: 'from_date', label: 'From', type: 'date', required: true },
-                        { key: 'to_date', label: 'To', type: 'date', required: true },
-                        { key: 'salary', label: 'Salary', type: 'number', required: true },
+                        { key: 'to_date', label: 'To', type: 'date', required: true, minFromKey: 'from_date' },
+                        { key: 'salary', label: 'Salary', required: true, maxLength: CHILD_FIELD_LIMITS.salary, inputMode: 'numeric', sanitize: onlyDigits, validate: salaryError },
                       ]}
                     />
                   </CollapsibleSection>
@@ -928,9 +990,10 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                         No family members added yet.
                       </p>
                     )}
-                    {family.length > 0 && (
+                    {/* The member being edited is shown only in the form below, not repeated here. */}
+                    {family.some((r) => !(showFamilyForm && Number(r.emp_family_pkey) === editingFamilyPkey)) && (
                       <div className="space-y-2.5">
-                        {family.map((row) => {
+                        {family.filter((r) => !(showFamilyForm && Number(r.emp_family_pkey) === editingFamilyPkey)).map((row) => {
                           const dob = row.DOB ? new Date(String(row.DOB)) : null;
                           const age = dob && !Number.isNaN(dob.getTime())
                             ? Math.floor((Date.now() - dob.getTime()) / (365.25 * 24 * 60 * 60 * 1000))
@@ -959,6 +1022,14 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                               )}
                               <button
                                 type="button"
+                                onClick={() => openEditFamily(row)}
+                                className="p-2 rounded-lg text-slate-400 hover:text-[color:var(--color-primary)] hover:bg-slate-50 transition-colors duration-150 flex-shrink-0"
+                                title="Edit"
+                              >
+                                <Pencil className="w-4 h-4" />
+                              </button>
+                              <button
+                                type="button"
                                 onClick={() => removeFamilyMember(Number(row.emp_family_pkey))}
                                 className="p-2 rounded-lg text-slate-400 hover:text-[color:var(--color-danger)] hover:bg-slate-50 transition-colors duration-150 flex-shrink-0"
                                 title="Delete"
@@ -983,12 +1054,12 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
 
                     {showFamilyForm && (
                       <div className="mt-4 rounded-xl border border-slate-100 bg-slate-50/60 p-5">
-                        <h3 className="text-sm font-semibold text-[#0F172A] mb-4">Add Family Member</h3>
+                        <h3 className="text-sm font-semibold text-[#0F172A] mb-4">{editingFamilyPkey != null ? 'Edit Family Member' : 'Add Family Member'}</h3>
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-5 gap-y-4">
                           <div>
                             <label className={LABEL_CLASS}>Name<RequiredMark /></label>
                             <input
-                              maxLength={100}
+                              maxLength={CHILD_FIELD_LIMITS.name}
                               className={cn(INPUT_CLASS, familyErrors.name && ERROR_INPUT_CLASS)}
                               value={familyDraft.name}
                               onChange={(e) => setFamilyDraft((p) => ({ ...p, name: e.target.value }))}
@@ -1011,7 +1082,7 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                             <SearchableSelect
                               value={familyDraft.gender}
                               onChange={(v) => setFamilyDraft((p) => ({ ...p, gender: v }))}
-                              options={[{ value: 'Male', label: 'Male' }, { value: 'Female', label: 'Female' }, { value: 'Other', label: 'Other' }]}
+                              options={FAMILY_GENDERS.map((g) => ({ value: g, label: g }))}
                               placeholder="Select gender"
                               buttonClassName={cn(INPUT_CLASS, familyErrors.gender && ERROR_INPUT_CLASS)}
                             />
@@ -1031,7 +1102,7 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                           <div>
                             <label className={LABEL_CLASS}>Blood Group</label>
                             <input
-                              maxLength={5}
+                              maxLength={CHILD_FIELD_LIMITS.blood_group}
                               className={INPUT_CLASS}
                               value={familyDraft.blood_group}
                               onChange={(e) => setFamilyDraft((p) => ({ ...p, blood_group: e.target.value }))}
@@ -1040,6 +1111,7 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                           <div>
                             <label className={LABEL_CLASS}>Nationality</label>
                             <input
+                              maxLength={CHILD_FIELD_LIMITS.nationality}
                               className={INPUT_CLASS}
                               value={familyDraft.nationality}
                               onChange={(e) => setFamilyDraft((p) => ({ ...p, nationality: e.target.value }))}
@@ -1048,21 +1120,23 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                           <div>
                             <label className={LABEL_CLASS}>Contact Number<RequiredMark /></label>
                             <input
-                              maxLength={10}
+                              maxLength={CHILD_FIELD_LIMITS.contact_number}
                               className={cn(INPUT_CLASS, familyErrors.contact_number && ERROR_INPUT_CLASS)}
                               value={familyDraft.contact_number}
-                              onChange={(e) => setFamilyDraft((p) => ({ ...p, contact_number: e.target.value }))}
+                              onChange={(e) => setFamilyDraft((p) => ({ ...p, contact_number: onlyDigits(e.target.value) }))}
                             />
                             <FieldError>{familyErrors.contact_number}</FieldError>
                           </div>
                           <div>
                             <label className={LABEL_CLASS}>Alternative Number</label>
                             <input
-                              maxLength={10}
-                              className={INPUT_CLASS}
+                              maxLength={CHILD_FIELD_LIMITS.contact_number}
+                              inputMode="numeric"
+                              className={cn(INPUT_CLASS, familyErrors.alternate_number && ERROR_INPUT_CLASS)}
                               value={familyDraft.alternate_number}
-                              onChange={(e) => setFamilyDraft((p) => ({ ...p, alternate_number: e.target.value }))}
+                              onChange={(e) => setFamilyDraft((p) => ({ ...p, alternate_number: onlyDigits(e.target.value) }))}
                             />
+                            <FieldError>{familyErrors.alternate_number}</FieldError>
                           </div>
                         </div>
                         <div className="flex flex-wrap gap-4 mt-4">
@@ -1085,6 +1159,7 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                             Mark as Emergency Contact
                           </label>
                         </div>
+                        <FieldError>{familyErrors.form}</FieldError>
                         <div className="flex items-center gap-2 mt-5">
                           <button
                             type="button"
@@ -1092,7 +1167,7 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                             disabled={familySaving}
                             className="px-4 py-2 text-sm font-medium bg-[color:var(--color-primary)] hover:opacity-90 disabled:opacity-50 text-white rounded-lg transition-opacity duration-150"
                           >
-                            {familySaving ? 'Saving…' : 'Save Family Member'}
+                            {familySaving ? 'Saving…' : editingFamilyPkey != null ? 'Save Changes' : 'Save Family Member'}
                           </button>
                           <button
                             type="button"
@@ -1112,9 +1187,10 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                         No documents added yet.
                       </p>
                     )}
-                    {documents.length > 0 && (
+                    {/* The document being edited is shown only in the form below, not repeated here. */}
+                    {documents.some((r) => !(showDocForm && Number(r.emp_passport_visa_pkey) === replacingPkey)) && (
                       <div className="space-y-2.5">
-                        {documents.map((row) => {
+                        {documents.filter((r) => !(showDocForm && Number(r.emp_passport_visa_pkey) === replacingPkey)).map((row) => {
                           const validity = row.valid_from
                             ? `Valid ${formatDate(row.valid_from as string)}${row.valid_till ? ` – ${formatDate(row.valid_till as string)}` : ''}`
                             : '';
@@ -1139,23 +1215,22 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                               </span>
                               <div className="flex items-center gap-0.5 flex-shrink-0">
                                 {row.files ? (
-                                  <a
-                                    href={String(row.files)}
-                                    target="_blank"
-                                    rel="noreferrer"
+                                  <button
+                                    type="button"
+                                    onClick={() => setPreviewDoc({ url: String(row.files), title: `${String(row.document_type || 'Document')} · ${String(row.document_number || '')}` })}
                                     className="p-2 rounded-lg text-slate-400 hover:text-[color:var(--color-primary)] hover:bg-slate-50 transition-colors duration-150"
                                     title="View"
                                   >
                                     <Eye className="w-4 h-4" />
-                                  </a>
+                                  </button>
                                 ) : null}
                                 <button
                                   type="button"
                                   onClick={() => openReplaceDocument(row)}
                                   className="p-2 rounded-lg text-slate-400 hover:text-[color:var(--color-primary)] hover:bg-slate-50 transition-colors duration-150"
-                                  title="Replace"
+                                  title="Edit"
                                 >
-                                  <RefreshCw className="w-4 h-4" />
+                                  <Pencil className="w-4 h-4" />
                                 </button>
                                 <button
                                   type="button"
@@ -1185,7 +1260,7 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                     {showDocForm && (
                       <div className="mt-4 rounded-xl border border-slate-100 bg-slate-50/60 p-5">
                         <h3 className="text-sm font-semibold text-[#0F172A] mb-4">
-                          {replacingPkey != null ? 'Replace Document' : 'Add Document'}
+                          {replacingPkey != null ? 'Edit Document' : 'Add Document'}
                         </h3>
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-5 gap-y-4">
                           <div>
@@ -1202,15 +1277,17 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                           <div>
                             <label className={LABEL_CLASS}>Document Number<RequiredMark /></label>
                             <input
+                              maxLength={CHILD_FIELD_LIMITS.document_number}
                               className={cn(INPUT_CLASS, docErrors.document_number && ERROR_INPUT_CLASS)}
                               value={docDraft.document_number}
-                              onChange={(e) => setDocDraft((p) => ({ ...p, document_number: e.target.value }))}
+                              onChange={(e) => setDocDraft((p) => ({ ...p, document_number: onlyAlphanumeric(e.target.value) }))}
                             />
                             <FieldError>{docErrors.document_number}</FieldError>
                           </div>
                           <div>
                             <label className={LABEL_CLASS}>Name on Document<RequiredMark /></label>
                             <input
+                              maxLength={CHILD_FIELD_LIMITS.name}
                               className={cn(INPUT_CLASS, docErrors.name && ERROR_INPUT_CLASS)}
                               value={docDraft.name}
                               onChange={(e) => setDocDraft((p) => ({ ...p, name: e.target.value }))}
@@ -1220,6 +1297,7 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                           <div>
                             <label className={LABEL_CLASS}>Relation<RequiredMark /></label>
                             <input
+                              maxLength={CHILD_FIELD_LIMITS.relation}
                               className={cn(INPUT_CLASS, docErrors.relation && ERROR_INPUT_CLASS)}
                               value={docDraft.relation}
                               onChange={(e) => setDocDraft((p) => ({ ...p, relation: e.target.value }))}
@@ -1229,6 +1307,7 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                           <div>
                             <label className={LABEL_CLASS}>Nationality</label>
                             <input
+                              maxLength={CHILD_FIELD_LIMITS.nationality}
                               className={INPUT_CLASS}
                               value={docDraft.nationality}
                               onChange={(e) => setDocDraft((p) => ({ ...p, nationality: e.target.value }))}
@@ -1258,6 +1337,7 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                           <label className={LABEL_CLASS}>File Upload</label>
                           <DocumentUploadField value={docFile} onChange={setDocFile} />
                         </div>
+                        <FieldError>{docErrors.form}</FieldError>
                         <div className="flex items-center gap-2 mt-5">
                           <button
                             type="button"
@@ -1265,7 +1345,7 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                             disabled={docSaving}
                             className="px-4 py-2 text-sm font-medium bg-[color:var(--color-primary)] hover:opacity-90 disabled:opacity-50 text-white rounded-lg transition-opacity duration-150"
                           >
-                            {docSaving ? 'Saving…' : replacingPkey != null ? 'Save Replacement' : 'Save Document'}
+                            {docSaving ? 'Saving…' : replacingPkey != null ? 'Save Changes' : 'Save Document'}
                           </button>
                           <button
                             type="button"
@@ -1277,6 +1357,7 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                         </div>
                       </div>
                     )}
+                    <FilePreviewModal url={previewDoc?.url ?? null} title={previewDoc?.title} onClose={() => setPreviewDoc(null)} />
                   </CollapsibleSection>
                 </div>
               )}

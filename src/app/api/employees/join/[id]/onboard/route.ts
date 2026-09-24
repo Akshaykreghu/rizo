@@ -4,7 +4,6 @@ import { getCompanyPool } from '@/lib/db';
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket, ResultSetHeader } from 'mysql2';
 import bcrypt from 'bcryptjs';
-import { generateNextEmpId } from '@/lib/empId';
 
 export async function POST(
   request: NextRequest,
@@ -73,44 +72,23 @@ export async function POST(
 
   // emp_company_id is optional on this form — including it unconditionally with an undefined
   // value (never sent at all, not even as '') crashes mysql2, which rejects undefined bind
-  // params outright; only check it when it was actually provided, same as emp_id below.
-  const dupChecksPromises: Promise<[RowDataPacket[], unknown]>[] = [];
+  // params outright; only check it when it was actually provided. (emp_id itself is never taken
+  // from the request — it's generated below, as in legacy.)
   if (body.emp_company_id) {
-    dupChecksPromises.push(pool.execute<RowDataPacket[]>('SELECT 1 FROM emp_proff WHERE emp_company_id = ?', [body.emp_company_id]));
-  }
-  if (body.emp_id) {
-    dupChecksPromises.push(pool.execute<RowDataPacket[]>('SELECT 1 FROM emp_details WHERE emp_id = ?', [body.emp_id]));
-  }
-  const results = await Promise.all(dupChecksPromises);
-  let resultIdx = 0;
-  if (body.emp_company_id) {
-    const [dupCompanyId] = results[resultIdx++];
+    const [dupCompanyId] = await pool.execute<RowDataPacket[]>('SELECT 1 FROM emp_proff WHERE emp_company_id = ?', [body.emp_company_id]);
     if (dupCompanyId.length) return NextResponse.json({ error: 'Employee Company ID already in use' }, { status: 409 });
-  }
-  if (body.emp_id) {
-    const [dupEmpId] = results[resultIdx++];
-    if (dupEmpId.length) return NextResponse.json({ error: 'Employee ID already in use' }, { status: 409 });
   }
 
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
 
-    const empId = body.emp_id || (await generateNextEmpId(connection));
-
-    // Login is no longer typed by the admin — auto-generate it from the company code + emp_id,
-    // matching the CompanyCode+digits convention tryEmployeeLogin (lib/auth.ts) parses a
-    // username back into (e.g. GRTL10024). Falls back to a numeric suffix on the rare collision.
-    let username = `${session.user.companyCode}${empId}`;
-    for (let suffix = 1; suffix <= 20; suffix++) {
-      const [existing] = await connection.execute<RowDataPacket[]>(
-        'SELECT 1 FROM user_credentials WHERE user_id = ?',
-        [username]
-      );
-      if (!existing.length) break;
-      username = `${session.user.companyCode}${empId}${suffix}`;
-    }
-
+    // IDs are assigned exactly as legacy EmployeeJoinController::saveonboarding does: emp_details
+    // goes in with a blank emp_id and user_credentials with user_id '0', then the
+    // Linkemp_deviceanddatabase procedure (called below) fills in emp_id = DeviceId + next device
+    // number (e.g. 1000229), user_id = company code + emp_id (GRTL1000229), a blank
+    // emp_company_id with the same, and records the employee in the control DB's
+    // emp_device_comp_branch — the company-wide counter the next ID continues from.
     const [empResult] = await connection.execute<ResultSetHeader>(
       `INSERT INTO emp_details
          (company_code, branch_code, emp_id, first_name, last_name, date_of_birth, mobile_no, email,
@@ -118,10 +96,10 @@ export async function POST(
           guradian, relation_guardian, id_card, pan_no, wps_code, lwf_code, esi_dispensary, esi, eps,
           international_worker, physical_handicap, locomotive, hearing, visual,
           bank_name, branch_name, ifsc_code, account_no, pf, company_pf,
-          profile_pic, status, editable, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?)`,
+          previous_member_id, country, profile_pic, status, editable, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?)`,
       [
-        session.user.companyCode, body.emp_branch ?? '', empId,
+        session.user.companyCode, body.emp_branch ?? '', '',
         join.first_name, join.last_name, join.date_of_birth, join.mobile_no, join.email,
         join.address, join.district ?? null, join.state, join.nationality_id, join.pincode,
         join.maritual_status, join.blood, join.classification,
@@ -130,6 +108,8 @@ export async function POST(
         join.international_worker, join.physical_handicap, join.locomotive, join.hearing, join.visual,
         join.bank, join.bank_branch, join.ifsc_code, join.account_no,
         join.company_pf, join.pf, // swapped per legacy quirk: emp_details.pf <- join.company_pf, emp_details.company_pf <- join.pf
+        // Legacy EmployeeJoinController.php:10853/10859 — emp_details.country <- join.country_origin.
+        join.previous_member_id ?? null, join.country_origin ?? null,
         join.profile_image_url ?? null,
         session.user.loginUserId,
       ]
@@ -179,8 +159,24 @@ export async function POST(
          (emp_fkey, company_code, user_id, password, access_allowed, first_name, last_name, email,
           reset_login_flag, locked, incorrect_login_attempt, user_group)
        VALUES (?, ?, ?, ?, 'Y', ?, ?, ?, 'N', 0, 0, 1)`,
-      [empPkey, session.user.companyCode, username, passwordHash, join.first_name, join.last_name, join.email]
+      [empPkey, session.user.companyCode, '0', passwordHash, join.first_name, join.last_name, join.email]
     );
+
+    // Same call and arguments as legacy saveonboarding (company code, branch, unused start id).
+    // Run on this transaction's connection so it sees the rows above and rolls back with them.
+    await connection.query('CALL Linkemp_deviceanddatabase(?, ?, NULL, @perr_msg)', [
+      session.user.companyCode, body.emp_branch ?? '',
+    ]);
+    const [[linked]] = await connection.execute<RowDataPacket[]>(
+      `SELECT e.emp_id, u.user_id FROM emp_details e
+       LEFT JOIN user_credentials u ON u.emp_fkey = e.emp_pkey
+       WHERE e.emp_pkey = ?`,
+      [empPkey]
+    );
+    if (!linked?.emp_id || !linked.user_id || linked.user_id === '0') {
+      throw new Error('Employee ID generation failed — please try onboarding again.');
+    }
+    const username = String(linked.user_id);
 
     await connection.execute(
       'UPDATE emp_join SET status = 0, emp_fkey = ? WHERE emp_join_pkey = ?',

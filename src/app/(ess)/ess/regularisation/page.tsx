@@ -3,8 +3,10 @@
 import { useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Plus, X } from 'lucide-react';
+import { EssDropdown } from '@/components/ess/EssDropdown';
 import { cn } from '@/lib/utils';
 import { EssPagination } from '@/components/ess/EssPagination';
+import { essPortal } from '@/components/ess/essPortal';
 
 const PAGE_SIZE = 10;
 
@@ -149,11 +151,11 @@ export default function EssRegularisationPage() {
         )}
       </div>
 
-      {showRaise && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/25 backdrop-blur-[2px] p-4 animate-fade-in" onClick={() => setShowRaise(false)}>
+      {showRaise && essPortal(
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 backdrop-blur-[4px] p-4 animate-fade-in" onClick={() => setShowRaise(false)}>
           <div
             onClick={(e) => e.stopPropagation()}
-            className="relative bg-white rounded-[20px] border border-black/[0.06] shadow-[0_25px_70px_-15px_rgba(0,0,0,0.25)] p-6 w-full max-w-md animate-modal-in"
+            className="relative bg-white rounded-[20px] border border-black/[0.06] shadow-[0_25px_70px_-15px_rgba(0,0,0,0.25)] p-6 w-full max-w-md max-h-[90vh] overflow-y-auto animate-modal-in"
           >
             <div className="flex items-center justify-between mb-5">
               <h2 className="text-[19px] font-semibold text-[#0F172A] tracking-tight">Raise Regularisation</h2>
@@ -168,10 +170,8 @@ export default function EssRegularisationPage() {
               </div>
               <div>
                 <label className="block text-[12px] font-medium text-slate-600 mb-1.5">Direction</label>
-                <select value={form.direction} onChange={(e) => setForm((f) => ({ ...f, direction: e.target.value as 'in' | 'out' }))} className={cn(INPUT_CLASS, 'w-full')}>
-                  <option value="in">In</option>
-                  <option value="out">Out</option>
-                </select>
+                <EssDropdown value={form.direction} onChange={(v) => setForm((f) => ({ ...f, direction: v as 'in' | 'out' }))} clearable={false}
+                  options={[{ value: 'in', label: 'In' }, { value: 'out', label: 'Out' }]} />
               </div>
               <div>
                 <label className="block text-[12px] font-medium text-slate-600 mb-1.5">Time</label>

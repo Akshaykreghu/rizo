@@ -20,16 +20,17 @@ export async function GET(request: NextRequest) {
   const like = `%${search}%`;
   const [rows] = await pool.execute<RowDataPacket[]>(
     `SELECT e.emp_pkey, e.first_name, e.last_name, e.mobile_no, e.email,
+            COALESCE(NULLIF(TRIM(p.emp_company_id), ''), e.emp_id) AS emp_code, e.profile_pic,
             ds.desig_name, d.dept_name, b.branch_name
      FROM emp_details e
      LEFT JOIN emp_proff p ON p.emp_fkey = e.emp_pkey
      LEFT JOIN branches b ON b.branch_code = p.emp_branch
      LEFT JOIN department d ON d.dept_code = p.emp_dept
      LEFT JOIN designation ds ON ds.desig_code = p.designation
-     WHERE e.status = 1 AND (e.first_name LIKE ? OR e.last_name LIKE ? OR e.emp_id LIKE ?)
+     WHERE e.status = 1 AND (e.first_name LIKE ? OR e.last_name LIKE ? OR e.emp_id LIKE ? OR p.emp_company_id LIKE ?)
      ORDER BY e.first_name
      LIMIT 20`,
-    [like, like, like]
+    [like, like, like, like]
   );
   return NextResponse.json(rows);
 }

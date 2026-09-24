@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useSetupRows } from '@/lib/setupOptions';
-import { Plus, Trash2, ArrowRightCircle, Search, Download, UploadCloud, Users, UserCheck, UserPlus, FileSpreadsheet, X, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { Plus, Trash2, ArrowRightCircle, Search, Download, UploadCloud, Users, UserCheck, UserPlus, UserX, FileSpreadsheet, X, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { cn, formatDate } from '@/lib/utils';
 import { DataTable } from '@/components/data-table/DataTable';
 import { Avatar } from '@/components/ui/Avatar';
@@ -13,7 +13,9 @@ import { FloatingActionPanel, type FloatingAction } from '@/components/ui/Floati
 import { JoinDetail } from '@/components/employees/JoinDetail';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
-import { STATUS_FILTERS } from '@/lib/statusFilters';
+import { EmployeeFilterMenu, FILTER_OPTIONS } from '@/components/employees/EmployeeFilterMenu';
+import { downloadEmployeeListPdf } from '@/lib/employeeResumePdf';
+import type { EmployeeListFilter } from '@/lib/employeeList';
 import type { ColumnDef } from '@tanstack/react-table';
 import EmployeesPage from '../page';
 
@@ -48,14 +50,20 @@ export default function EmployeeJoinPage() {
   const [pageSize, setPageSize] = useState(7);
   const [selectedJoinId, setSelectedJoinId] = useState<number | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
-  const [allStatus, setAllStatus] = useState('1');
+  const [allFilter, setAllFilter] = useState<EmployeeListFilter>('active');
   const [allBranch, setAllBranch] = useState('');
+  const [allTotal, setAllTotal] = useState<number | null>(null);
+  const [cardDownload, setCardDownload] = useState<string | null>(null);
   const [bulkUploadOpen, setBulkUploadOpen] = useState(false);
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const [joinInitialStep, setJoinInitialStep] = useState<number | undefined>(undefined);
   const [joinEditDirty, setJoinEditDirty] = useState(false);
+  // Fixed at the moment the modal opens (New Join vs Continue Onboarding) — must NOT be derived
+  // from selectedJoinId, since handleJoinCreated adopts the new draft's id into selectedJoinId
+  // partway through a New Join, which would otherwise flip the Onboarding tab back on mid-flow.
+  const [joinIncludeOnboarding, setJoinIncludeOnboarding] = useState(true);
 
   function closeJoinEditModal() {
     if (joinEditDirty && !window.confirm('You have unsaved changes. Discard them and close?')) return;
@@ -80,20 +88,32 @@ export default function EmployeeJoinPage() {
     queryFn: () => fetch('/api/employees/join?status=1&page=1&pageSize=1').then((r) => r.json()),
   });
 
-  const { data: statusCounts } = useQuery({
-    queryKey: ['employees/status-counts'],
-    queryFn: async () => {
-      const [active, inactive, resigned] = await Promise.all([
-        fetch('/api/employees?pageSize=1&status=1').then((r) => r.json()),
-        fetch('/api/employees?pageSize=1&status=0').then((r) => r.json()),
-        fetch('/api/employees?pageSize=1&status=2').then((r) => r.json()),
-      ]);
-      return {
-        active: active.total ?? 0,
-        total: (active.total ?? 0) + (inactive.total ?? 0) + (resigned.total ?? 0),
-      };
-    },
+  // Legacy EmployeeJoinController::index() summary cards.
+  const { data: summary } = useQuery<{ total: number; active: number; noSalaryStructure: number; joinedThisMonth: number }>({
+    queryKey: ['employees/summary'],
+    queryFn: () => fetch('/api/employees/summary').then((r) => r.json()),
   });
+
+  // "No Salary Structure" / "Joined This Month" cards download a PDF list, like legacy.
+  async function downloadCardList(list: 'no_salary_structure' | 'joined_this_month') {
+    setCardDownload(list);
+    try {
+      const res = await fetch(`/api/employees/summary?list=${list}`);
+      const { data: rows = [] } = await res.json();
+      type R = { emp_code: string; name: string; joining_date: string; branch_name: string | null; desig_name: string | null };
+      if (list === 'no_salary_structure') {
+        downloadEmployeeListPdf('Employees with No Salary Structure', ['Employee ID', 'Name', 'Branch', 'Designation'],
+          (rows as R[]).map((r) => [r.emp_code ?? '', r.name ?? '', r.branch_name ?? '', r.desig_name ?? '']),
+          'NoSalaryStructureEmployees.pdf');
+      } else {
+        downloadEmployeeListPdf('Employees Joined This Month', ['Joining Date', 'Name', 'Branch', 'Designation'],
+          (rows as R[]).map((r) => [r.joining_date ?? '', r.name ?? '', r.branch_name ?? '', r.desig_name ?? '']),
+          'JoinedThisMonth.pdf');
+      }
+    } finally {
+      setCardDownload(null);
+    }
+  }
 
   const discard = useMutation({
     mutationFn: (empJoinPkey: number) => fetch(`/api/employees/join/${empJoinPkey}`, { method: 'DELETE' }),
@@ -113,7 +133,7 @@ export default function EmployeeJoinPage() {
     queryClient.invalidateQueries({ queryKey: ['employees/join'] });
     queryClient.invalidateQueries({ queryKey: ['employees/join/count'] });
     queryClient.invalidateQueries({ queryKey: ['employees'] });
-    queryClient.invalidateQueries({ queryKey: ['employees/status-counts'] });
+    queryClient.invalidateQueries({ queryKey: ['employees/summary'] });
     setSelectedJoinId(null);
     setTab('all');
   }
@@ -122,11 +142,17 @@ export default function EmployeeJoinPage() {
     mutationFn: (file: File) => {
       const formData = new FormData();
       formData.append('file', file);
-      return fetch('/api/employees/join/upload', { method: 'POST', body: formData }).then((r) => r.json());
+      return fetch('/api/employees/join/upload', { method: 'POST', body: formData }).then(async (r) => {
+        const body = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(body.error || 'Upload failed — please try again');
+        return body;
+      });
     },
+    onError: (err: Error) => setFileError(err.message),
     onSuccess: (result) => {
       setUploadResult(result);
       queryClient.invalidateQueries({ queryKey: ['employees/join'] });
+      queryClient.invalidateQueries({ queryKey: ['employees/join/count'] });
     },
   });
 
@@ -234,6 +260,7 @@ export default function EmployeeJoinPage() {
               setSelectedJoinId(row.original.emp_join_pkey);
               setJoinEditDirty(false);
               setJoinInitialStep(2);
+              setJoinIncludeOnboarding(true);
               setModalOpen(true);
             }}
             className="flex items-center gap-1.5 text-xs font-medium text-[color:var(--color-success)] hover:bg-[color:var(--color-success)]/10 px-2.5 py-1.5 rounded-lg transition-colors duration-[180ms]"
@@ -264,15 +291,40 @@ export default function EmployeeJoinPage() {
       ]
     : [];
 
-  const kpis = [
-    { label: 'Total Employees', value: statusCounts?.total, icon: Users, color: 'primary' as const },
-    { label: 'Active', value: statusCounts?.active, icon: UserCheck, color: 'success' as const },
-    { label: 'Joining', value: joiningCount?.total, icon: UserPlus, color: 'accent' as const },
-  ];
-  const kpiColorClass: Record<'primary' | 'success' | 'accent', string> = {
+  type KpiColor = 'primary' | 'success' | 'accent' | 'warning' | 'danger';
+  type Kpi = { label: string; value: number | undefined | null; icon: typeof Users; color: KpiColor; onClick?: () => void; hint?: string; busy?: boolean };
+  // All Employees shows legacy's four cards; the second one follows the Filter menu (legacy swaps
+  // its heading and count to the filtered list, e.g. "Notice Period · 3").
+  const filterHeading = FILTER_OPTIONS.find((o) => o.value === allFilter)?.heading ?? 'Active Employees';
+  const kpis: Kpi[] = tab === 'all'
+    ? [
+        { label: 'Total Count', value: summary?.total, icon: Users, color: 'primary' },
+        {
+          label: allBranch ? `${filterHeading} (branch)` : filterHeading,
+          value: allFilter === 'active' && !allBranch ? summary?.active : allTotal,
+          icon: UserCheck,
+          color: 'success',
+        },
+        {
+          label: 'No Salary Structure', value: summary?.noSalaryStructure, icon: UserX, color: 'warning',
+          onClick: () => downloadCardList('no_salary_structure'), hint: 'Click to download', busy: cardDownload === 'no_salary_structure',
+        },
+        {
+          label: 'Joined This Month', value: summary?.joinedThisMonth, icon: UserPlus, color: 'danger',
+          onClick: () => downloadCardList('joined_this_month'), hint: 'Click to download', busy: cardDownload === 'joined_this_month',
+        },
+      ]
+    : [
+        { label: 'Total Employees', value: summary?.total, icon: Users, color: 'primary' },
+        { label: 'Active', value: summary?.active, icon: UserCheck, color: 'success' },
+        { label: 'Joining', value: joiningCount?.total, icon: UserPlus, color: 'accent' },
+      ];
+  const kpiColorClass: Record<KpiColor, string> = {
     primary: 'bg-[color:var(--color-primary-light)] text-[color:var(--color-primary)]',
     success: 'bg-[color:var(--color-success-light)] text-[color:var(--color-success)]',
     accent: 'bg-[color:var(--color-accent-light)] text-[color:var(--color-accent)]',
+    warning: 'bg-[color:var(--color-highlight-light)] text-[color:var(--color-highlight-dark)]',
+    danger: 'bg-[color:var(--color-danger-light)] text-[color:var(--color-danger)]',
   };
 
   return (
@@ -309,24 +361,35 @@ export default function EmployeeJoinPage() {
       <input ref={fileInputRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleFileSelected} />
       <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
         <div className="flex items-center gap-2">
-          {kpis.map((k) => (
-            <div key={k.label} className="glass-card lift-on-hover rounded-xl px-3 py-2 flex items-center gap-2 min-w-[104px]">
-              <span className={cn('w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0', kpiColorClass[k.color])}>
-                <k.icon className="w-3.5 h-3.5" strokeWidth={1.75} />
-              </span>
-              <div>
-                <p className="text-base font-bold text-[#0F172A] leading-none">{k.value ?? '—'}</p>
-                <p className="text-[10.5px] text-[#64748B] mt-1">{k.label}</p>
-              </div>
-            </div>
-          ))}
+          {kpis.map((k) => {
+            const body = (
+              <>
+                <span className={cn('w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0', kpiColorClass[k.color])}>
+                  {k.busy ? <Download className="w-3.5 h-3.5 animate-pulse" /> : <k.icon className="w-3.5 h-3.5" strokeWidth={1.75} />}
+                </span>
+                <div className="text-left">
+                  <p className="text-base font-bold text-[#0F172A] leading-none">{k.value ?? '—'}</p>
+                  <p className="text-[10.5px] text-[#64748B] mt-1 whitespace-nowrap">{k.label}</p>
+                </div>
+              </>
+            );
+            const cls = 'glass-card lift-on-hover rounded-xl px-3 py-2 flex items-center gap-2 min-w-[104px]';
+            return k.onClick ? (
+              <button key={k.label} type="button" onClick={k.onClick} disabled={k.busy} title={k.hint}
+                className={cn(cls, 'cursor-pointer hover:ring-2 hover:ring-[color:var(--color-primary)]/20 disabled:opacity-70')}>
+                {body}
+              </button>
+            ) : (
+              <div key={k.label} className={cls}>{body}</div>
+            );
+          })}
         </div>
 
         {tab === 'joining' && (
           <div className="flex items-center gap-2">
             <button
               key={`new-join-${tab}`}
-              onClick={() => { setSelectedJoinId(null); setJoinEditDirty(false); setJoinInitialStep(undefined); setModalOpen(true); }}
+              onClick={() => { setSelectedJoinId(null); setJoinEditDirty(false); setJoinInitialStep(undefined); setJoinIncludeOnboarding(false); setModalOpen(true); }}
               className="cta-pulse flex items-center gap-1.5 bg-[color:var(--color-primary)] hover:bg-[#1E88E5] active:bg-[#1976D2] hover:scale-[1.03] active:scale-100 text-white px-3 py-1.5 rounded-[9px] text-[12.5px] font-semibold shadow-sm transition-all duration-[180ms]"
             >
               <Plus className="w-3.5 h-3.5" />
@@ -385,35 +448,13 @@ export default function EmployeeJoinPage() {
         </div>
 
         {tab === 'all' && (
-          <div className="flex items-center gap-2.5 flex-wrap">
-            <div className="flex items-center gap-1 text-[12.5px]">
-              {STATUS_FILTERS.map((opt) => (
-                <button
-                  key={opt.value}
-                  onClick={() => setAllStatus(opt.value)}
-                  className={cn(
-                    'px-3 py-1.5 rounded-lg transition-all duration-[180ms] font-medium',
-                    allStatus === opt.value
-                      ? opt.selectedClass
-                      : 'bg-white/80 text-slate-500 hover:bg-white border border-slate-200'
-                  )}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-
-            <select
-              value={allBranch}
-              onChange={(e) => setAllBranch(e.target.value)}
-              className="px-2.5 py-1.5 bg-white/80 border border-slate-200 rounded-lg text-[12.5px] text-slate-600 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/40"
-            >
-              <option value="">All Branches</option>
-              {branches.map((b) => (
-                <option key={b.branch_code} value={b.branch_code}>{b.branch_name}</option>
-              ))}
-            </select>
-          </div>
+          <EmployeeFilterMenu
+            filter={allFilter}
+            onFilterChange={setAllFilter}
+            branch={allBranch}
+            onBranchChange={setAllBranch}
+            branches={branches}
+          />
         )}
       </div>
 
@@ -422,10 +463,9 @@ export default function EmployeeJoinPage() {
           embedded
           search={search}
           pageSize={pageSize}
-          status={allStatus}
-          onStatusChange={setAllStatus}
+          filter={allFilter}
           branch={allBranch}
-          onBranchChange={setAllBranch}
+          onTotalChange={setAllTotal}
         />
       ) : (
         <DataTable
@@ -455,6 +495,9 @@ export default function EmployeeJoinPage() {
                 onDirtyChange={setJoinEditDirty}
                 onCreated={handleJoinCreated}
                 onOnboarded={handleOnboarded}
+                // A brand-new "New Join" stops at Other Details; onboarding is only ever reached
+                // later, deliberately, via "Continue Onboarding" on an existing row.
+                includeOnboarding={joinIncludeOnboarding}
               />
             )}
           </Modal>

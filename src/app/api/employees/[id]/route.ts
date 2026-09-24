@@ -1,6 +1,7 @@
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
+import { selfEditLockedResponse } from '@/lib/employeeEditLock';
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket } from 'mysql2';
 import { dobError, ageAtDateError, statutoryFieldErrors, mobileError } from '@/lib/validation';
@@ -129,6 +130,8 @@ export async function PUT(
 
   const body = await request.json();
   const pool = await getCompanyPool(session.user.companyCode);
+  const locked = await selfEditLockedResponse(pool, session, empPkey);
+  if (locked) return locked;
 
   // Aadhaar is mandatory on every save, even one that doesn't touch id_card — a row with no
   // Aadhaar can't be saved until one is entered (decision 2026-09-07).

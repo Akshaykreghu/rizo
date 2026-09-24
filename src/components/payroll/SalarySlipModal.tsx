@@ -85,7 +85,7 @@ export function SalarySlipModal({ payrollMasterPkey, onClose }: { payrollMasterP
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 backdrop-blur-[4px] p-4"
       onClick={onClose}
     >
       <div

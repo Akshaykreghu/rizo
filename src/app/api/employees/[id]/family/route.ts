@@ -1,8 +1,10 @@
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
+import { selfEditLockedResponse } from '@/lib/employeeEditLock';
 import { NextRequest, NextResponse } from 'next/server';
-import type { RowDataPacket, ResultSetHeader } from 'mysql2';
+import type { RowDataPacket, ResultSetHeader } from 'mysql2';
+import { childRowError } from '@/lib/childRowValidation';
 
 export async function GET(
   _request: NextRequest,
@@ -43,7 +45,11 @@ export async function POST(
   }
 
   const body = await request.json();
+  const rowError = childRowError('family', body);
+  if (rowError) return NextResponse.json({ error: rowError }, { status: 400 });
   const pool = await getCompanyPool(session.user.companyCode);
+  const locked = await selfEditLockedResponse(pool, session, parseInt(id));
+  if (locked) return locked;
 
   const [result] = await pool.execute<ResultSetHeader>(
     `INSERT INTO emp_family

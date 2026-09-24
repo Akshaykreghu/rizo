@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { signOut, useSession } from 'next-auth/react';
 import { TAB_MENU_GATES } from '@/lib/essMenuLinks';
+import { photoUrl } from '@/lib/utils';
 
 // Ported 1:1 from New Rizo's components/ESSLayout.jsx (website-style navbar: logo, primary tabs,
 // "More" overflow dropdown, theme toggle + avatar pill). react-router-dom → next/navigation,
@@ -111,16 +112,20 @@ export function EssLegacyShell({ children }: { children: React.ReactNode }) {
 
   const [moreOpen, setMoreOpen] = useState(false);
   const [avatarOpen, setAvatarOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [companyName, setCompanyName] = useState<string | null>(null);
   const [grantedUrls, setGrantedUrls] = useState<Set<string> | null>(null);
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
 
   const moreRef = useRef<HTMLDivElement>(null);
   const avatarRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     function handle(e: MouseEvent) {
       if (moreRef.current && !moreRef.current.contains(e.target as Node)) setMoreOpen(false);
       if (avatarRef.current && !avatarRef.current.contains(e.target as Node)) setAvatarOpen(false);
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
     }
     document.addEventListener('mousedown', handle);
     return () => document.removeEventListener('mousedown', handle);
@@ -147,9 +152,20 @@ export function EssLegacyShell({ children }: { children: React.ReactNode }) {
       .catch(() => setGrantedUrls(new Set()));
   }, []);
 
+  // The employee's own profile photo for the avatar pill (initials remain the fallback).
+  const empFkey = session?.user.empFkey;
+  useEffect(() => {
+    if (!empFkey) return;
+    fetch(`/api/employees/${empFkey}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setAvatarUrl(photoUrl(d?.employee?.profile_pic)))
+      .catch(() => {});
+  }, [empFkey]);
+
   useEffect(() => {
     setMoreOpen(false);
     setAvatarOpen(false);
+    setMenuOpen(false);
   }, [pathname]);
 
   const visibleTabs = ALL_TABS.filter((t) => {
@@ -175,9 +191,24 @@ export function EssLegacyShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="ess-legacy" data-theme={isDark ? 'dark' : 'light'}>
+      {/* Narrow screens: the tab row collapses into a menu button (the tabs no longer fit). */}
+      <style>{`
+        .ess-burger { display: none !important; }
+        @media (max-width: 1180px) {
+          .ess-nav { display: none !important; }
+          .ess-burger { display: flex !important; }
+        }
+        @media (max-width: 640px) {
+          .ess-header { padding: 0 14px !important; }
+          .ess-company { display: none !important; }
+          .ess-logo { margin-right: 8px !important; }
+          .ess-logo img { height: 30px !important; }
+        }
+      `}</style>
       <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', background: 'var(--bg-page)' }}>
         {/* WEBSITE-STYLE NAVBAR */}
         <header
+          className="ess-header"
           style={{
             height: 62,
             flexShrink: 0,
@@ -194,13 +225,13 @@ export function EssLegacyShell({ children }: { children: React.ReactNode }) {
           }}
         >
           {/* Logo */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginRight: 32, flexShrink: 0 }}>
+          <div className="ess-logo" style={{ display: 'flex', alignItems: 'center', gap: 12, marginRight: 32, flexShrink: 0, minWidth: 0 }}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src="/branding/rizo-logo-full.png" alt="Rizo" style={{ height: 36, width: 'auto', flexShrink: 0 }} />
             {(companyName || session?.user.companyCode) && (
               <>
-                <div style={{ width: 1, height: 28, background: 'var(--border)', flexShrink: 0 }} />
-                <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>
+                <div className="ess-company" style={{ width: 1, height: 28, background: 'var(--border)', flexShrink: 0 }} />
+                <span className="ess-company" style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                   {companyName || session?.user.companyCode}
                 </span>
               </>
@@ -210,7 +241,7 @@ export function EssLegacyShell({ children }: { children: React.ReactNode }) {
           <div style={{ flex: 1 }} />
 
           {/* Primary nav links */}
-          <nav style={{ display: 'flex', alignItems: 'stretch', gap: 4 }}>
+          <nav className="ess-nav" style={{ display: 'flex', alignItems: 'stretch', gap: 4 }}>
             {primaryTabs.map((tab) => {
               const active = isTabActive(tab.to);
               return (
@@ -328,8 +359,49 @@ export function EssLegacyShell({ children }: { children: React.ReactNode }) {
             )}
           </nav>
 
+          {/* Menu button + panel listing every tab (shown instead of the tab row on narrow screens) */}
+          <div ref={menuRef} className="ess-burger" style={{ position: 'relative', alignItems: 'center' }}>
+            <button
+              onClick={() => setMenuOpen((o) => !o)}
+              aria-label="Menu"
+              aria-expanded={menuOpen}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 8, height: 40, padding: '0 14px', borderRadius: 30,
+                border: `1.5px solid ${menuOpen ? '#1E516E' : 'var(--border)'}`, background: 'var(--bg-page)', cursor: 'pointer',
+                fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', whiteSpace: 'nowrap',
+              }}
+            >
+              <span style={{ fontSize: 16, lineHeight: 1 }}>☰</span>
+              {[...primaryTabs, ...overflowTabs].find((t) => isTabActive(t.to))?.label ?? 'Menu'}
+            </button>
+            {menuOpen && (
+              <div
+                style={{
+                  // Pinned to the viewport's right edge (the button itself isn't at the edge).
+                  position: 'fixed', top: 70, right: 14, width: 'min(300px, calc(100vw - 28px))',
+                  maxHeight: 'calc(100vh - 90px)', overflowY: 'auto', background: 'var(--bg-card)', border: '1px solid var(--border)',
+                  borderRadius: 16, boxShadow: '0 16px 48px rgba(0,0,0,0.14), 0 4px 16px rgba(0,0,0,0.06)', zIndex: 500, padding: '6px 0',
+                }}
+              >
+                {visibleTabs.map((tab) => {
+                  const active = isTabActive(tab.to);
+                  return (
+                    <Link key={tab.to} href={tab.to} onClick={() => setMenuOpen(false)}
+                      style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 18px', textDecoration: 'none', background: active ? 'rgba(30,81,110,0.07)' : 'transparent' }}>
+                      <span style={{ width: 34, height: 34, borderRadius: 10, flexShrink: 0, background: active ? 'rgba(30,81,110,0.12)' : 'var(--bg-page)', border: `1.5px solid ${active ? 'rgba(30,81,110,0.2)' : 'var(--border)'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16 }}>
+                        {tab.emoji}
+                      </span>
+                      <span style={{ fontSize: 13.5, fontWeight: active ? 700 : 600, color: active ? '#1E516E' : 'var(--text-primary)' }}>{tab.label}</span>
+                      {active && <span style={{ marginLeft: 'auto', width: 6, height: 6, borderRadius: '50%', background: '#1E516E' }} />}
+                    </Link>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
           {/* Right controls */}
-          <div style={{ display: 'flex', alignItems: 'center', marginLeft: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', marginLeft: 10, flexShrink: 0 }}>
             <div ref={avatarRef} style={{ position: 'relative' }}>
               <div
                 style={{
@@ -389,7 +461,8 @@ export function EssLegacyShell({ children }: { children: React.ReactNode }) {
                       flexShrink: 0,
                     }}
                   >
-                    {initials}
+                    {/* eslint-disable-next-line @next/next/no-img-element -- user-uploaded photo URL */}
+                    {avatarUrl ? <img src={avatarUrl} alt="" style={{ width: '100%', height: '100%', borderRadius: 'inherit', objectFit: 'cover' }} /> : initials}
                   </div>
                   <ChevronDown open={avatarOpen} />
                 </button>
@@ -426,7 +499,8 @@ export function EssLegacyShell({ children }: { children: React.ReactNode }) {
                         flexShrink: 0,
                       }}
                     >
-                      {initials}
+                      {/* eslint-disable-next-line @next/next/no-img-element -- user-uploaded photo URL */}
+                      {avatarUrl ? <img src={avatarUrl} alt="" style={{ width: '100%', height: '100%', borderRadius: 'inherit', objectFit: 'cover' }} /> : initials}
                     </div>
                     <div>
                       <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1.3 }}>{displayName}</div>

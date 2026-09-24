@@ -24,7 +24,8 @@ export function dobError(value: string): string | null {
 
 export function mobileError(value: string): string | null {
   if (!value) return null;
-  return /^\d{10}$/.test(value) ? null : 'Mobile number must be exactly 10 digits';
+  // 10 digits minimum (a local number); up to 15 for international (E.164) numbers.
+  return /^\d{10,15}$/.test(value) ? null : 'Mobile number must be at least 10 digits';
 }
 
 export function aadhaarError(value: string): string | null {

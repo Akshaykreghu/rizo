@@ -2,8 +2,10 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useSession } from 'next-auth/react';
+import { EssDropdown } from '@/components/ess/EssDropdown';
 import AppTabs from '@/components/ess/AppTabs';
 import { SalarySlipModal } from '@/components/payroll/SalarySlipModal';
+import { essPortal } from '@/components/ess/essPortal';
 
 // Port of New Rizo's pages/ESS/ESSSalary.jsx (Salary & Benefits + Tax Declarations tabs), backed
 // by the new /api/employees/[id]/pay-summary endpoint and the existing tax-* routes (now with
@@ -240,9 +242,14 @@ export default function EssSalaryPage() {
             {allFinYears.length > 0 && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(255,255,255,0.12)', borderRadius: 10, padding: '6px 14px', border: '1px solid rgba(255,255,255,0.2)' }}>
                 <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.7)', fontWeight: 600 }}>FY</span>
-                <select value={selFYId || ''} onChange={(e) => { const id = Number(e.target.value); setSelFYId(id); loadSalary(id); }} style={{ background: 'transparent', border: 'none', color: '#fff', fontSize: 13, fontWeight: 800, cursor: 'pointer', outline: 'none' }}>
-                  {allFinYears.map((fy) => <option key={fy.id} value={fy.id} style={{ background: '#0c1f2c' }}>{fy.fin_year}</option>)}
-                </select>
+                <EssDropdown
+                  value={selFYId ? String(selFYId) : ''}
+                  onChange={(v) => { const id = Number(v); setSelFYId(id); loadSalary(id); }}
+                  clearable={false}
+                  options={allFinYears.map((fy) => ({ value: String(fy.id), label: fy.fin_year }))}
+                  style={{ minWidth: 120 }}
+                  buttonStyle={{ background: 'transparent', border: 'none', color: '#fff', fontSize: 13, fontWeight: 800, padding: '0 2px' }}
+                />
               </div>
             )}
           </div>
@@ -396,7 +403,7 @@ export default function EssSalaryPage() {
         )}
       </div>
 
-      {slipId != null && <SalarySlipModal payrollMasterPkey={slipId} onClose={() => setSlipId(null)} />}
+      {slipId != null && essPortal(<SalarySlipModal payrollMasterPkey={slipId} onClose={() => setSlipId(null)} />)}
     </div>
   );
 }

@@ -1,8 +1,10 @@
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
+import { selfEditLockedResponse } from '@/lib/employeeEditLock';
 import { NextRequest, NextResponse } from 'next/server';
-import type { RowDataPacket, ResultSetHeader } from 'mysql2';
+import type { RowDataPacket, ResultSetHeader } from 'mysql2';
+import { childRowError } from '@/lib/childRowValidation';
 
 // Ports legacy EmployeeController::getEducation($emp_pkey) — reads `qualifcations` directly by
 // emp_fkey, NOT the pre-onboarding `Education` table (that one's keyed to emp_join and only ever
@@ -51,7 +53,11 @@ export async function POST(
   // columns (course/mark) — RepeatableRows uses one fields[] key list for both display and the
   // add-form draft, so the two directions have to speak the same names.
   const body = await request.json();
+  const rowError = childRowError('education', body);
+  if (rowError) return NextResponse.json({ error: rowError }, { status: 400 });
   const pool = await getCompanyPool(session.user.companyCode);
+  const locked = await selfEditLockedResponse(pool, session, parseInt(id));
+  if (locked) return locked;
 
   const [result] = await pool.execute<ResultSetHeader>(
     `INSERT INTO qualifcations (emp_fkey, course, university, duration, mark, status)
