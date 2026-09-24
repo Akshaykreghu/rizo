@@ -89,6 +89,8 @@ function badge(status: string) {
     Approved: { bg: '#f0fdf4', c: '#16a34a' },
     Rejected: { bg: '#fef2f2', c: '#dc2626' },
     Removed: { bg: '#f9fafb', c: '#6b7280' },
+    Pending: { bg: '#fefce8', c: '#d97706' },
+    Cancelled: { bg: '#f9fafb', c: '#6b7280' },
     P: { bg: '#fefce8', c: '#d97706' },
     A: { bg: '#f0fdf4', c: '#16a34a' },
     R: { bg: '#fef2f2', c: '#dc2626' },
@@ -308,6 +310,175 @@ function ExpensesTab() {
           ))}
           {viewRow.remarks_auth && <div style={{ marginTop: 12, fontSize: 12, color: 'var(--text-muted)' }}><strong>Authorizer remark:</strong> {viewRow.remarks_auth}</div>}
           {viewRow.remarks_approved && <div style={{ marginTop: 6, fontSize: 12, color: 'var(--text-muted)' }}><strong>Approver remark:</strong> {viewRow.remarks_approved}</div>}
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+// ── ASSETS ────────────────────────────────────────────────────────────────────
+interface AssetTypeOption { asset_type_pkey: number; asset_type_name: string }
+// Same shape /api/assets returns for the admin Allocate Asset form's "Asset" dropdown — reused
+// here so employees pick from the real catalog instead of free-typing a name.
+interface AssetCatalogRow { asset_pkey: number; name: string; status: string; TypeName: string | null; not_working?: number | boolean }
+interface AssetRequestRow {
+  request_pkey: number; asset_type_fkey: number | null; asset_type_name: string | null;
+  asset_name: string; reason: string | null; status: string; remarks: string | null; created_date: string;
+}
+
+function AssetsTab() {
+  const [rows, setRows] = useState<AssetRequestRow[]>([]);
+  const [types, setTypes] = useState<AssetTypeOption[]>([]);
+  const [assets, setAssets] = useState<AssetCatalogRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showAdd, setShowAdd] = useState(false);
+  const [viewRow, setViewRow] = useState<AssetRequestRow | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [form, setForm] = useState({ asset_type: '', asset_pkey: '', reason: '' });
+  const [page, setPage] = useState(1);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const load = useCallback(() => {
+    setRefreshing(true);
+    fetch('/api/employees/asset-requests').then((r) => (r.ok ? r.json() : { data: [] })).then((d) => { setRows(d.data || []); setPage(1); }).finally(() => { setLoading(false); setRefreshing(false); });
+  }, []);
+
+  useEffect(() => {
+    load();
+    fetch('/api/setup/asset-types').then((r) => (r.ok ? r.json() : [])).then(setTypes).catch(() => {});
+    fetch('/api/assets').then((r) => (r.ok ? r.json() : [])).then(setAssets).catch(() => {});
+  }, [load]);
+
+  // Same "available to hand out" filter the admin Allocate Asset form applies (status not already
+  // Allocated, not marked Not Working) — but unlike that form, Asset Needed stays empty until an
+  // Asset Type is picked, rather than falling back to the full catalog.
+  const availableAssets = form.asset_type
+    ? assets.filter((a) => a.status !== 'Allocated' && !a.not_working && a.TypeName === form.asset_type)
+    : [];
+
+  async function handleSave(e: React.FormEvent) {
+    e.preventDefault();
+    const selectedAsset = availableAssets.find((a) => String(a.asset_pkey) === form.asset_pkey);
+    if (!selectedAsset) { setError('Please select an asset.'); return; }
+    setSaving(true);
+    setError(null);
+    try {
+      const selectedType = types.find((t) => t.asset_type_name === form.asset_type);
+      const res = await fetch('/api/employees/asset-requests', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          assetTypeFkey: selectedType?.asset_type_pkey ?? null,
+          assetPkey: selectedAsset.asset_pkey,
+          assetName: selectedAsset.name,
+          reason: form.reason || undefined,
+        }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || 'Failed to save request');
+      setShowAdd(false);
+      setForm({ asset_type: '', asset_pkey: '', reason: '' });
+      load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save request');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function cancelRequest(row: AssetRequestRow) {
+    if (!confirm('Cancel this asset request?')) return;
+    const res = await fetch(`/api/employees/asset-requests/${row.request_pkey}`, { method: 'DELETE' });
+    if (res.ok) load(); else setError((await res.json()).error || 'Failed to cancel');
+  }
+
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 10 }}>
+        <div style={tabHeaderText}>Request an asset from your administrator and track its status.</div>
+        <div style={{ display: 'flex', gap: 10 }}>
+          <button style={btnO} onClick={load} disabled={refreshing}>{refreshing ? 'Reloading…' : '⟳ Reload'}</button>
+          <button style={btnP} onClick={() => setShowAdd(true)}>+ Request Asset</button>
+        </div>
+      </div>
+      {!showAdd && error && <div style={{ marginBottom: 12, fontSize: 12, color: '#dc2626' }}>{error}</div>}
+
+      <div style={{ ...card, overflow: 'hidden' }}>
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead><tr>{['Sl.No', 'Asset Type', 'Description', 'Requested On', 'Status', ''].map((h) => <th key={h} style={thS}>{h}</th>)}</tr></thead>
+            <tbody>
+              {loading ? (
+                <tr><td colSpan={6} style={{ ...tdS, textAlign: 'center', color: 'var(--text-muted)' }}>Loading…</td></tr>
+              ) : rows.length === 0 ? (
+                <tr><td colSpan={6} style={{ ...tdS, textAlign: 'center', color: 'var(--text-muted)' }}>No asset requests found</td></tr>
+              ) : rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map((r, i) => (
+                <tr key={r.request_pkey}>
+                  <td style={tdS}>{(page - 1) * PAGE_SIZE + i + 1}</td>
+                  <td style={tdS}>{r.asset_type_name || '—'}</td>
+                  <td style={{ ...tdS, fontWeight: 700 }}>{r.asset_name}</td>
+                  <td style={tdS}>{fmt(r.created_date)}</td>
+                  <td style={tdS}><span style={badge(r.status)}>{r.status}</span></td>
+                  <td style={tdS}>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <button onClick={() => setViewRow(r)} style={{ ...btnO, padding: '4px 12px', fontSize: 11 }}>View</button>
+                      {r.status === 'Pending' && <button onClick={() => cancelRequest(r)} style={{ ...btnD, padding: '4px 12px', fontSize: 11 }}>Cancel</button>}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <EssPagination page={page} pageSize={PAGE_SIZE} totalItems={rows.length} onChange={setPage} />
+      </div>
+
+      {showAdd && (
+        <Modal title="Request Asset" onClose={() => setShowAdd(false)}>
+          <form onSubmit={handleSave}>
+            <div style={{ marginBottom: 14 }}>
+              <label style={lbl}>Asset Type</label>
+              <EssDropdown
+                value={form.asset_type}
+                onChange={(v) => setForm((f) => ({ ...f, asset_type: v, asset_pkey: '' }))}
+                placeholder="-- Select (optional) --"
+                options={types.map((t) => ({ value: t.asset_type_name, label: t.asset_type_name }))}
+              />
+            </div>
+            <div style={{ marginBottom: 14 }}>
+              <label style={lbl}>Asset Needed *</label>
+              <EssDropdown
+                value={form.asset_pkey}
+                onChange={(v) => setForm((f) => ({ ...f, asset_pkey: v }))}
+                placeholder="-- Select asset --"
+                options={availableAssets.map((a) => ({ value: String(a.asset_pkey), label: a.name }))}
+              />
+            </div>
+            <div style={{ marginBottom: 14 }}>
+              <label style={lbl}>Reason</label>
+              <input value={form.reason} onChange={(e) => setForm((f) => ({ ...f, reason: e.target.value }))} style={inp} />
+            </div>
+            {error && <div style={{ marginBottom: 12, fontSize: 12, color: '#dc2626' }}>{error}</div>}
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button type="button" style={btnO} onClick={() => setShowAdd(false)}>Cancel</button>
+              <button type="submit" style={btnP} disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {viewRow && (
+        <Modal title="Asset Request Details" onClose={() => setViewRow(null)}>
+          {[
+            ['Asset Type', viewRow.asset_type_name || '—'], ['Asset Needed', viewRow.asset_name],
+            ['Reason', viewRow.reason || '—'], ['Requested On', fmt(viewRow.created_date)],
+            ['Status', viewRow.status], ['Admin Remarks', viewRow.remarks || '—'],
+          ].map(([k, v]) => (
+            <div key={k} style={{ display: 'flex', gap: 12, padding: '9px 0', borderBottom: '1px solid var(--border)' }}>
+              <div style={{ width: 120, fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', flexShrink: 0 }}>{k}</div>
+              <div style={{ fontSize: 13, color: 'var(--text-primary)' }}>{v}</div>
+            </div>
+          ))}
         </Modal>
       )}
     </div>
@@ -1257,6 +1428,7 @@ function LeaveTab({ empId }: { empId: number }) {
 const TABS = [
   { key: 'leave', label: 'Leave', icon: '🌴' },
   { key: 'expenses', label: 'Expense Claims', icon: '🧾' },
+  { key: 'assets', label: 'Assets', icon: '📦' },
   { key: 'regularization', label: 'Regularization', icon: '✏️' },
   { key: 'advance', label: 'Salary Advance', icon: '💸' },
   { key: 'loan', label: 'Loan Application', icon: '🏦' },
@@ -1290,6 +1462,7 @@ function EssRequestsContent() {
 
       {tab === 'leave' && <LeaveTab empId={empId} />}
       {tab === 'expenses' && <ExpensesTab />}
+      {tab === 'assets' && <AssetsTab />}
       {tab === 'regularization' && <RegularizationTab />}
       {tab === 'advance' && <AdvanceTab />}
       {tab === 'loan' && <LoanTab />}
