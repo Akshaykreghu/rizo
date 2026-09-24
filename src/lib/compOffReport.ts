@@ -27,6 +27,7 @@ export interface CompOffReportRow extends RowDataPacket {
   department: string;
   designation: string;
   status: number;
+  leave_policy_type: string | null;
   transaction_type: 'Accrued' | 'Utilized';
   transaction_date: string;
   day: string | null;
@@ -55,11 +56,15 @@ export async function generateCompOffReport(pool: Pool, params: CompOffReportPar
 
   const [empRows] = await pool.execute<RowDataPacket[]>(
     `SELECT ed.emp_pkey, CONCAT(ed.first_name, ' ', ed.last_name) AS emp_name, ed.status,
-            i.employee_id, i.joining_date, i.branch, i.department, i.designation
+            i.employee_id, i.joining_date, i.branch, i.department, i.designation,
+            (SELECT lp.leave_policy_type FROM leavepolicy lp
+             JOIN emp_proff ep2 ON ep2.LEAVEPOLICY_GROUP_ID = lp.LEAVEPOLICY_GROUP_ID
+             WHERE ep2.emp_fkey = ed.emp_pkey AND lp.salary_head_item_fkey = ? AND lp.status = 1
+             LIMIT 1) AS leave_policy_type
      FROM emp_details ed
      JOIN employee_info i ON i.emp_pkey = ed.emp_pkey
      WHERE ${conditions.join(' AND ')}`,
-    args
+    [compOffHeadId, ...args]
   );
   if (!empRows.length) return [];
 

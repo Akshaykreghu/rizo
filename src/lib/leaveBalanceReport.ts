@@ -123,6 +123,7 @@ export interface LeaveBalanceReportRow extends RowDataPacket {
   leavebalance: number;
   leavetaken: number;
   yearlybalance: number;
+  encashed_leave: number;
 }
 
 // Mirrors both the EmployeeDetails branch (single employee, all their active leave policies) and
@@ -175,7 +176,11 @@ export async function generateLeaveBalanceReport(pool: Pool, params: LeaveBalanc
                 LeaveType.item AS leave_type,
                 IFNULL(ecf.carry_forwarded, 0) AS carryforwarded,
                 leave_balance_inthe_year_fn(ed.emp_pkey, lp.salary_head_item_fkey, ?) AS leavebalance,
-                leave_taken_fn(ed.emp_pkey, lp.salary_head_item_fkey, ?) AS leavetaken
+                leave_taken_fn(ed.emp_pkey, lp.salary_head_item_fkey, ?) AS leavetaken,
+                (SELECT SUM(encash.approved_days) FROM leave_encashment_master encash
+                 WHERE encash.salary_head_item_fkey = lp.salary_head_item_fkey AND encash.is_approved = 'Y'
+                   AND encash.status = 1 AND encash.emp_fkey = ed.emp_pkey
+                   AND encash.approved_date BETWEEN ? AND ?) AS encashed_leave
          FROM emp_details ed
          JOIN emp_proff ep ON ed.emp_pkey = ep.emp_fkey
          JOIN leavepolicy lp ON lp.LEAVEPOLICY_GROUP_ID = ep.LEAVEPOLICY_GROUP_ID AND lp.status = 1
@@ -185,8 +190,8 @@ export async function generateLeaveBalanceReport(pool: Pool, params: LeaveBalanc
          JOIN salary_head_items LeaveType ON LeaveType.salary_head_item_pkey = lp.salary_head_item_fkey
          JOIN employee_info i ON i.emp_pkey = ed.emp_pkey
          WHERE ed.emp_pkey = ? AND lp.salary_head_item_fkey = ? AND ed.status = 1
-         GROUP BY ed.emp_pkey, LeaveType.item`,
-        [params.asOfDate, params.asOfDate, cycle.start, cycle.end, emp.emp_pkey, policy.salary_head_item_fkey]
+         LIMIT 1`,
+        [params.asOfDate, params.asOfDate, cycle.start, cycle.end, cycle.start, cycle.end, emp.emp_pkey, policy.salary_head_item_fkey]
       );
       if (!detail) continue;
 
@@ -209,6 +214,7 @@ export async function generateLeaveBalanceReport(pool: Pool, params: LeaveBalanc
         leavebalance: Math.round(leavebalance * 10) / 10,
         leavetaken: Number(detail.leavetaken ?? 0),
         yearlybalance: Math.round(yearlybalance * 10) / 10,
+        encashed_leave: Number(detail.encashed_leave ?? 0),
       } as LeaveBalanceReportRow);
     }
   }

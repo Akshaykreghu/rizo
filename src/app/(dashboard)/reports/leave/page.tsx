@@ -80,12 +80,27 @@ function deriveMonthlyLeave(rows: Record<string, unknown>[]): Record<string, unk
   }));
 }
 
+// Mirrors compoff_new.ctp's per-employee header ("Employee Name : X   Leave Policy Type : Y") and
+// per-row column set — every Accrued/Utilized row repeats the employee's own detail columns rather
+// than only showing them once in the group header.
+function toDMY(value: unknown): string {
+  if (!value) return '';
+  const d = new Date(String(value));
+  if (Number.isNaN(d.getTime())) return String(value);
+  return `${String(d.getDate()).padStart(2, '0')}-${String(d.getMonth() + 1).padStart(2, '0')}-${d.getFullYear()}`;
+}
+
 function deriveCompOff(rows: Record<string, unknown>[]): Record<string, unknown>[] {
-  return rows.map((r) => ({
-    ...r,
-    transaction_date_display: r.transaction_date ?? '',
-    emp_group_label: `${r.emp_name ?? ''}${r.status === 2 ? ' (Resigned)' : ''} — ${r.employee_id ?? ''}`,
-  }));
+  return rows.map((r) => {
+    const policyLabel = POLICY_TYPE_LABEL[String(r.leave_policy_type)] ?? '';
+    const empDisplay = `${r.emp_name ?? ''}${r.status === 2 ? ' (Resigned)' : ''}`;
+    return {
+      ...r,
+      transaction_date_display: toDMY(r.transaction_date),
+      joining_date_display: toDMY(r.joining_date),
+      emp_group_label: `Employee Name : ${empDisplay}   Leave Policy Type : ${policyLabel}`,
+    };
+  });
 }
 
 const SUBTYPE_META: Record<Subtype, SubtypeMeta> = {
@@ -118,14 +133,15 @@ const SUBTYPE_META: Record<Subtype, SubtypeMeta> = {
     groupBy: unitsGroupBy,
     deriveRows: deriveLeaveBalance,
     slNo: true,
-    currencyKeys: new Set(['alloted_leave_forthe_year', 'carryforwarded', 'leavetaken', 'leavebalance', 'yearlybalance']),
+    currencyKeys: new Set(['alloted_leave_forthe_year', 'carryforwarded', 'leavetaken', 'encashed_leave', 'leavebalance', 'yearlybalance']),
     columns: [
       { key: 'emp_name', label: 'Employee Name' }, { key: 'employee_id', label: 'Employee ID' },
       { key: 'joining_date', label: 'Date Of Joining' }, { key: 'branch', label: 'Branch' },
       { key: 'designation', label: 'Designation' }, { key: 'department', label: 'Department' },
       { key: 'leave_type', label: 'Leave Type' }, { key: 'leave_policy_label', label: 'Leave Policy' },
       { key: 'alloted_leave_forthe_year', label: 'Allotted Leave For The Year' }, { key: 'carryforwarded', label: 'Carry Forwarded' },
-      { key: 'leavetaken', label: 'Leave Taken' }, { key: 'leavebalance', label: 'Leave Balance (End Of Period)' },
+      { key: 'leavetaken', label: 'Leave Taken' }, { key: 'encashed_leave', label: 'Encashed Leaves' },
+      { key: 'leavebalance', label: 'Leave Balance (End Of Period)' },
       { key: 'yearlybalance', label: 'Yearly Balance' },
     ],
   },
@@ -148,7 +164,7 @@ const SUBTYPE_META: Record<Subtype, SubtypeMeta> = {
     ],
   },
   Compoff: {
-    label: 'Comp Off Details Report',
+    label: 'Compensatory Off Details Report',
     endpoint: '/api/reports/comp-off',
     dateMode: 'range',
     maxRangeDays: 60,
@@ -157,6 +173,9 @@ const SUBTYPE_META: Record<Subtype, SubtypeMeta> = {
     deriveRows: deriveCompOff,
     groupTotals: false,
     columns: [
+      { key: 'emp_name', label: 'Employee Name' }, { key: 'employee_id', label: 'Employee ID' },
+      { key: 'joining_date_display', label: 'Date Of Join' }, { key: 'branch', label: 'Branch' },
+      { key: 'department', label: 'Department' }, { key: 'designation', label: 'Designation' },
       { key: 'transaction_type', label: 'Transaction Type' }, { key: 'transaction_date_display', label: 'Accrued / Utilized Date' },
       { key: 'day', label: 'Day' }, { key: 'duration', label: 'Duration' }, { key: 'day_type', label: 'Day Type' }, { key: 'txn_status', label: 'Status' },
     ],
