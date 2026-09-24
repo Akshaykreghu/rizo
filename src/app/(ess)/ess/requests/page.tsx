@@ -836,7 +836,7 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<LeaveBalancePreview | null>(null);
-  const [form, setForm] = useState({ leave_type_id: defaultTypeId ? String(defaultTypeId) : '', from_date: today(), from_half: '1', to_date: today(), to_half: '2', reason: '', contact_person: '', contact_no: '' });
+  const [form, setForm] = useState({ leave_type_id: defaultTypeId ? String(defaultTypeId) : '', from_date: today(), from_half: '1', to_date: '', to_half: '2', reason: '', contact_person: '', contact_no: '' });
 
   useEffect(() => {
     fetch(`/api/leave/types?employee=${empId}`).then((r) => (r.ok ? r.json() : { data: [] })).then((d) => setTypes(d.data || []));
@@ -921,6 +921,12 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
     // required field missing now says exactly what's missing via the same alert modal.
     if (!form.leave_type_id) { setError('Please select a leave type.'); return; }
     if (!form.from_date || !form.to_date) { setError('Please choose a From and To date.'); return; }
+    // Matches validateLeave()'s `edt < sdt` hard block in addeditleave_new.ctp — legacy alerts
+    // "To date should be greater than or equal to From date" and clears TODATE.
+    if (new Date(form.to_date) < new Date(form.from_date)) {
+      setError('To date should be greater than or equal to From date.');
+      return;
+    }
     if (!form.reason.trim()) { setError('Please enter a reason for your leave.'); return; }
     if (!authorizerFkey) { setError('Please select who should Authorize this leave.'); return; }
     if (!approverFkey) { setError('Please select who should Approve this leave.'); return; }
@@ -974,8 +980,13 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
             />
             {preview && (
               <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginTop: 6 }}>
-                Balance: <strong style={{ color: preview.balance >= 0 ? BRAND : '#dc2626' }}>{preview.balance}</strong> day(s)
+                Balance: <strong style={{ color: preview.balance > 0 ? BRAND : '#dc2626' }}>{preview.balance}</strong> day(s)
                 {preview.maxLeaveLimit > 0 && <span style={{ fontWeight: 500, color: 'var(--text-muted)' }}> · Max {preview.maxLeaveLimit}/request</span>}
+              </div>
+            )}
+            {preview && preview.balance <= 0 && (
+              <div style={{ fontSize: 12, fontWeight: 700, color: '#dc2626', marginTop: 4 }}>
+                ⚠ You have no leave balance for this leave type.
               </div>
             )}
           </div>
