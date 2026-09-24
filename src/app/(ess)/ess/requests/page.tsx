@@ -15,10 +15,12 @@ import { FilePreviewModal } from '@/components/ui/FilePreviewModal';
 // actually supports:
 // - Expense Claims follows legacy EmployeeExpenses exactly (see the EXPENSES section): required
 //   Authorized By / Approved By pickers, optional receipt image, and the salarycheck date guard.
-//   The Apply Leave form below likewise has real Authorize By / Approve By pickers, as legacy's does.
-// - Salary Advance shows the CURRENT MONTH's pending advance only, because GET /api/advances
-//   (lib/advances.ts listAdvances) hardcodes is_credited='N' + defaults to the current month —
-//   that's a real constraint of the existing admin feature, not something added for ESS.
+//   The Apply Leave form below likewise has real Authorize By / Approve By pickers, as legacy's does
+//   (POST /api/leave/requests does NOT auto-resolve them).
+// - Salary Advance submits to /api/advances/requests (emp_advance_request), not directly to
+//   /api/advances (emp_advance) — it's a real Pending/Approved/Rejected request that an admin must
+//   approve (new "Requests" tab on /advances) before it becomes a live emp_advance row. This tab
+//   shows the employee's full request history, not just current-month pending.
 // - Loan Application status is Active/Completed (is_completed), not an approval-workflow badge —
 //   lib/loans.ts's own comment confirms loans have no approval workflow ("creation == approval").
 
@@ -88,8 +90,6 @@ function badge(status: string) {
     Approved: { bg: '#f0fdf4', c: '#16a34a' },
     Rejected: { bg: '#fef2f2', c: '#dc2626' },
     Removed: { bg: '#f9fafb', c: '#6b7280' },
-    Pending: { bg: '#fefce8', c: '#d97706' },
-    Cancelled: { bg: '#f9fafb', c: '#6b7280' },
     P: { bg: '#fefce8', c: '#d97706' },
     A: { bg: '#f0fdf4', c: '#16a34a' },
     R: { bg: '#fef2f2', c: '#dc2626' },
@@ -395,175 +395,6 @@ function ExpensesTab() {
   );
 }
 
-// ── ASSETS ────────────────────────────────────────────────────────────────────
-interface AssetTypeOption { asset_type_pkey: number; asset_type_name: string }
-// Same shape /api/assets returns for the admin Allocate Asset form's "Asset" dropdown — reused
-// here so employees pick from the real catalog instead of free-typing a name.
-interface AssetCatalogRow { asset_pkey: number; name: string; status: string; TypeName: string | null; not_working?: number | boolean }
-interface AssetRequestRow {
-  request_pkey: number; asset_type_fkey: number | null; asset_type_name: string | null;
-  asset_name: string; reason: string | null; status: string; remarks: string | null; created_date: string;
-}
-
-function AssetsTab() {
-  const [rows, setRows] = useState<AssetRequestRow[]>([]);
-  const [types, setTypes] = useState<AssetTypeOption[]>([]);
-  const [assets, setAssets] = useState<AssetCatalogRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [showAdd, setShowAdd] = useState(false);
-  const [viewRow, setViewRow] = useState<AssetRequestRow | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [form, setForm] = useState({ asset_type: '', asset_pkey: '', reason: '' });
-  const [page, setPage] = useState(1);
-  const [refreshing, setRefreshing] = useState(false);
-
-  const load = useCallback(() => {
-    setRefreshing(true);
-    fetch('/api/employees/asset-requests').then((r) => (r.ok ? r.json() : { data: [] })).then((d) => { setRows(d.data || []); setPage(1); }).finally(() => { setLoading(false); setRefreshing(false); });
-  }, []);
-
-  useEffect(() => {
-    load();
-    fetch('/api/setup/asset-types').then((r) => (r.ok ? r.json() : [])).then(setTypes).catch(() => {});
-    fetch('/api/assets').then((r) => (r.ok ? r.json() : [])).then(setAssets).catch(() => {});
-  }, [load]);
-
-  // Same "available to hand out" filter the admin Allocate Asset form applies (status not already
-  // Allocated, not marked Not Working) — but unlike that form, Asset Needed stays empty until an
-  // Asset Type is picked, rather than falling back to the full catalog.
-  const availableAssets = form.asset_type
-    ? assets.filter((a) => a.status !== 'Allocated' && !a.not_working && a.TypeName === form.asset_type)
-    : [];
-
-  async function handleSave(e: React.FormEvent) {
-    e.preventDefault();
-    const selectedAsset = availableAssets.find((a) => String(a.asset_pkey) === form.asset_pkey);
-    if (!selectedAsset) { setError('Please select an asset.'); return; }
-    setSaving(true);
-    setError(null);
-    try {
-      const selectedType = types.find((t) => t.asset_type_name === form.asset_type);
-      const res = await fetch('/api/employees/asset-requests', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          assetTypeFkey: selectedType?.asset_type_pkey ?? null,
-          assetPkey: selectedAsset.asset_pkey,
-          assetName: selectedAsset.name,
-          reason: form.reason || undefined,
-        }),
-      });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error || 'Failed to save request');
-      setShowAdd(false);
-      setForm({ asset_type: '', asset_pkey: '', reason: '' });
-      load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save request');
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function cancelRequest(row: AssetRequestRow) {
-    if (!confirm('Cancel this asset request?')) return;
-    const res = await fetch(`/api/employees/asset-requests/${row.request_pkey}`, { method: 'DELETE' });
-    if (res.ok) load(); else setError((await res.json()).error || 'Failed to cancel');
-  }
-
-  return (
-    <div>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 10 }}>
-        <div style={tabHeaderText}>Request an asset from your administrator and track its status.</div>
-        <div style={{ display: 'flex', gap: 10 }}>
-          <button style={btnO} onClick={load} disabled={refreshing}>{refreshing ? 'Reloading…' : '⟳ Reload'}</button>
-          <button style={btnP} onClick={() => setShowAdd(true)}>+ Request Asset</button>
-        </div>
-      </div>
-      {!showAdd && error && <div style={{ marginBottom: 12, fontSize: 12, color: '#dc2626' }}>{error}</div>}
-
-      <div style={{ ...card, overflow: 'hidden' }}>
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr>{['Sl.No', 'Asset Type', 'Description', 'Requested On', 'Status', ''].map((h) => <th key={h} style={thS}>{h}</th>)}</tr></thead>
-            <tbody>
-              {loading ? (
-                <tr><td colSpan={6} style={{ ...tdS, textAlign: 'center', color: 'var(--text-muted)' }}>Loading…</td></tr>
-              ) : rows.length === 0 ? (
-                <tr><td colSpan={6} style={{ ...tdS, textAlign: 'center', color: 'var(--text-muted)' }}>No asset requests found</td></tr>
-              ) : rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map((r, i) => (
-                <tr key={r.request_pkey}>
-                  <td style={tdS}>{(page - 1) * PAGE_SIZE + i + 1}</td>
-                  <td style={tdS}>{r.asset_type_name || '—'}</td>
-                  <td style={{ ...tdS, fontWeight: 700 }}>{r.asset_name}</td>
-                  <td style={tdS}>{fmt(r.created_date)}</td>
-                  <td style={tdS}><span style={badge(r.status)}>{r.status}</span></td>
-                  <td style={tdS}>
-                    <div style={{ display: 'flex', gap: 6 }}>
-                      <button onClick={() => setViewRow(r)} style={{ ...btnO, padding: '4px 12px', fontSize: 11 }}>View</button>
-                      {r.status === 'Pending' && <button onClick={() => cancelRequest(r)} style={{ ...btnD, padding: '4px 12px', fontSize: 11 }}>Cancel</button>}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <EssPagination page={page} pageSize={PAGE_SIZE} totalItems={rows.length} onChange={setPage} />
-      </div>
-
-      {showAdd && (
-        <Modal title="Request Asset" onClose={() => setShowAdd(false)}>
-          <form onSubmit={handleSave}>
-            <div style={{ marginBottom: 14 }}>
-              <label style={lbl}>Asset Type</label>
-              <EssDropdown
-                value={form.asset_type}
-                onChange={(v) => setForm((f) => ({ ...f, asset_type: v, asset_pkey: '' }))}
-                placeholder="-- Select (optional) --"
-                options={types.map((t) => ({ value: t.asset_type_name, label: t.asset_type_name }))}
-              />
-            </div>
-            <div style={{ marginBottom: 14 }}>
-              <label style={lbl}>Asset Needed *</label>
-              <EssDropdown
-                value={form.asset_pkey}
-                onChange={(v) => setForm((f) => ({ ...f, asset_pkey: v }))}
-                placeholder="-- Select asset --"
-                options={availableAssets.map((a) => ({ value: String(a.asset_pkey), label: a.name }))}
-              />
-            </div>
-            <div style={{ marginBottom: 14 }}>
-              <label style={lbl}>Reason</label>
-              <input value={form.reason} onChange={(e) => setForm((f) => ({ ...f, reason: e.target.value }))} style={inp} />
-            </div>
-            {error && <div style={{ marginBottom: 12, fontSize: 12, color: '#dc2626' }}>{error}</div>}
-            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-              <button type="button" style={btnO} onClick={() => setShowAdd(false)}>Cancel</button>
-              <button type="submit" style={btnP} disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
-            </div>
-          </form>
-        </Modal>
-      )}
-
-      {viewRow && (
-        <Modal title="Asset Request Details" onClose={() => setViewRow(null)}>
-          {[
-            ['Asset Type', viewRow.asset_type_name || '—'], ['Asset Needed', viewRow.asset_name],
-            ['Reason', viewRow.reason || '—'], ['Requested On', fmt(viewRow.created_date)],
-            ['Status', viewRow.status], ['Admin Remarks', viewRow.remarks || '—'],
-          ].map(([k, v]) => (
-            <div key={k} style={{ display: 'flex', gap: 12, padding: '9px 0', borderBottom: '1px solid var(--border)' }}>
-              <div style={{ width: 120, fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', flexShrink: 0 }}>{k}</div>
-              <div style={{ fontSize: 13, color: 'var(--text-primary)' }}>{v}</div>
-            </div>
-          ))}
-        </Modal>
-      )}
-    </div>
-  );
-}
-
 // ── REGULARIZATION ────────────────────────────────────────────────────────────
 interface RegRow { id: number; att_date: string; direction: 'in' | 'out'; remarks: string | null; LOGTIME: string; approved: 'P' | 'A' | 'R' }
 
@@ -677,7 +508,10 @@ function RegularizationTab({ initialDate }: { initialDate?: string }) {
 }
 
 // ── SALARY ADVANCE ────────────────────────────────────────────────────────────
-interface AdvanceRow { emp_advance_pkey: number; advance_amount: number; affected_month: string; remarks: string | null; payment_date: string | null; is_credited: 'Y' | 'N' }
+interface AdvanceRow {
+  emp_advance_request_pkey: number; advance_amount: number; affected_month: string; remarks: string | null;
+  request_status: 'Pending' | 'Approved' | 'Rejected'; admin_remarks: string | null; created_date: string;
+}
 
 function AdvanceTab() {
   const { data: session } = useSession();
@@ -687,7 +521,7 @@ function AdvanceTab() {
   const [showForm, setShowForm] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [form, setForm] = useState({ advance_amount: '', remarks: '' });
+  const [form, setForm] = useState({ advance_amount: '', affected_month: currentMonth(), remarks: '' });
   const [page, setPage] = useState(1);
   // Real, legacy-derived advisory limit (80% of one month's gross CTC) — GET /api/advances/limit
   // already existed for this; the backend itself never hard-blocks a save that exceeds it, so this
@@ -696,7 +530,7 @@ function AdvanceTab() {
   const [limitWarning, setLimitWarning] = useState(false);
 
   const load = useCallback(() => {
-    fetch('/api/advances').then((r) => (r.ok ? r.json() : { rows: [] })).then((a) => { setRows(a.rows || []); setPage(1); }).finally(() => setLoading(false));
+    fetch('/api/advances/requests').then((r) => (r.ok ? r.json() : { rows: [] })).then((a) => { setRows(a.rows || []); setPage(1); }).finally(() => setLoading(false));
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -709,14 +543,14 @@ function AdvanceTab() {
     setSaving(true);
     setError(null);
     try {
-      const res = await fetch('/api/advances', {
+      const res = await fetch('/api/advances/requests', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ advanceAmount: Number(form.advance_amount), affectedMonth: currentMonth(), remarks: form.remarks || undefined }),
+        body: JSON.stringify({ advanceAmount: Number(form.advance_amount), affectedMonth: form.affected_month, remarks: form.remarks || undefined }),
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error || 'Failed to submit advance request');
       setShowForm(false);
-      setForm({ advance_amount: '', remarks: '' });
+      setForm({ advance_amount: '', affected_month: currentMonth(), remarks: '' });
       load();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to submit');
@@ -733,7 +567,7 @@ function AdvanceTab() {
 
   async function withdraw(row: AdvanceRow) {
     if (!confirm('Withdraw this advance request?')) return;
-    const res = await fetch(`/api/advances/${row.emp_advance_pkey}`, { method: 'DELETE' });
+    const res = await fetch(`/api/advances/requests/${row.emp_advance_request_pkey}`, { method: 'DELETE' });
     if (res.ok) load(); else setError((await res.json()).error || 'Failed to withdraw');
   }
 
@@ -763,6 +597,10 @@ function AdvanceTab() {
               <input type="number" required min="1" step="0.01" value={form.advance_amount} onChange={(e) => setForm((f) => ({ ...f, advance_amount: e.target.value }))} style={inp} />
               {limit != null && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>Advisory limit: ₹{fmtAmt(limit)} (80% of one month&apos;s gross)</div>}
             </div>
+            <div style={{ marginBottom: 14 }}>
+              <label style={lbl}>Affected Month *</label>
+              <input type="month" required value={form.affected_month} onChange={(e) => setForm((f) => ({ ...f, affected_month: e.target.value }))} style={inp} />
+            </div>
             <div style={{ marginBottom: 16 }}>
               <label style={lbl}>Remarks</label>
               <textarea rows={3} value={form.remarks} onChange={(e) => setForm((f) => ({ ...f, remarks: e.target.value }))} style={{ ...inp, resize: 'vertical' }} />
@@ -778,21 +616,21 @@ function AdvanceTab() {
 
       <div style={{ ...card, overflow: 'hidden' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead><tr>{['Sl.No', 'Affected Month', 'Amount', 'Remarks', 'Payment Date', ''].map((h) => <th key={h} style={thS}>{h}</th>)}</tr></thead>
+          <thead><tr>{['Sl.No', 'Affected Month', 'Amount', 'Remarks', 'Status', ''].map((h) => <th key={h} style={thS}>{h}</th>)}</tr></thead>
           <tbody>
             {loading ? (
               <tr><td colSpan={6} style={{ ...tdS, textAlign: 'center', color: 'var(--text-muted)' }}>Loading…</td></tr>
             ) : rows.length === 0 ? (
-              <tr><td colSpan={6} style={{ ...tdS, textAlign: 'center', color: 'var(--text-muted)' }}>No pending advance this month</td></tr>
+              <tr><td colSpan={6} style={{ ...tdS, textAlign: 'center', color: 'var(--text-muted)' }}>No advance requests yet</td></tr>
             ) : rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map((r, i) => (
-              <tr key={r.emp_advance_pkey}>
+              <tr key={r.emp_advance_request_pkey}>
                 <td style={tdS}>{(page - 1) * PAGE_SIZE + i + 1}</td>
                 <td style={tdS}>{r.affected_month}</td>
                 <td style={{ ...tdS, fontWeight: 700 }}>{fmtAmt(r.advance_amount)}</td>
                 <td style={{ ...tdS, color: 'var(--text-muted)' }}>{r.remarks || '—'}</td>
-                <td style={tdS}>{fmt(r.payment_date)}</td>
+                <td style={tdS}><span style={badge(r.request_status)}>{r.request_status}</span></td>
                 <td style={tdS}>
-                  {r.is_credited === 'N' && <button onClick={() => withdraw(r)} style={{ ...btnD, padding: '4px 12px', fontSize: 11 }}>Withdraw</button>}
+                  {r.request_status === 'Pending' && <button onClick={() => withdraw(r)} style={{ ...btnD, padding: '4px 12px', fontSize: 11 }}>Withdraw</button>}
                 </td>
               </tr>
             ))}
@@ -1078,7 +916,7 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<LeaveBalancePreview | null>(null);
-  const [form, setForm] = useState({ leave_type_id: defaultTypeId ? String(defaultTypeId) : '', from_date: today(), from_half: '1', to_date: today(), to_half: '2', reason: '', contact_person: '', contact_no: '' });
+  const [form, setForm] = useState({ leave_type_id: defaultTypeId ? String(defaultTypeId) : '', from_date: today(), from_half: '1', to_date: '', to_half: '2', reason: '', contact_person: '', contact_no: '' });
 
   useEffect(() => {
     fetch(`/api/leave/types?employee=${empId}`).then((r) => (r.ok ? r.json() : { data: [] })).then((d) => setTypes(d.data || []));
@@ -1163,6 +1001,12 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
     // required field missing now says exactly what's missing via the same alert modal.
     if (!form.leave_type_id) { setError('Please select a leave type.'); return; }
     if (!form.from_date || !form.to_date) { setError('Please choose a From and To date.'); return; }
+    // Matches validateLeave()'s `edt < sdt` hard block in addeditleave_new.ctp — legacy alerts
+    // "To date should be greater than or equal to From date" and clears TODATE.
+    if (new Date(form.to_date) < new Date(form.from_date)) {
+      setError('To date should be greater than or equal to From date.');
+      return;
+    }
     if (!form.reason.trim()) { setError('Please enter a reason for your leave.'); return; }
     if (!authorizerFkey) { setError('Please select who should Authorize this leave.'); return; }
     if (!approverFkey) { setError('Please select who should Approve this leave.'); return; }
@@ -1216,8 +1060,13 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
             />
             {preview && (
               <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginTop: 6 }}>
-                Balance: <strong style={{ color: preview.balance >= 0 ? BRAND : '#dc2626' }}>{preview.balance}</strong> day(s)
+                Balance: <strong style={{ color: preview.balance > 0 ? BRAND : '#dc2626' }}>{preview.balance}</strong> day(s)
                 {preview.maxLeaveLimit > 0 && <span style={{ fontWeight: 500, color: 'var(--text-muted)' }}> · Max {preview.maxLeaveLimit}/request</span>}
+              </div>
+            )}
+            {preview && preview.balance <= 0 && (
+              <div style={{ fontSize: 12, fontWeight: 700, color: '#dc2626', marginTop: 4 }}>
+                ⚠ You have no leave balance for this leave type.
               </div>
             )}
           </div>
@@ -1505,7 +1354,6 @@ function LeaveTab({ empId }: { empId: number }) {
 const TABS = [
   { key: 'leave', label: 'Leave', icon: '🌴' },
   { key: 'expenses', label: 'Expense Claims', icon: '🧾' },
-  { key: 'assets', label: 'Assets', icon: '📦' },
   { key: 'regularization', label: 'Regularization', icon: '✏️' },
   { key: 'advance', label: 'Salary Advance', icon: '💸' },
   { key: 'loan', label: 'Loan Application', icon: '🏦' },
@@ -1539,7 +1387,6 @@ function EssRequestsContent() {
 
       {tab === 'leave' && <LeaveTab empId={empId} />}
       {tab === 'expenses' && <ExpensesTab />}
-      {tab === 'assets' && <AssetsTab />}
       {tab === 'regularization' && <RegularizationTab initialDate={/^\d{4}-\d{2}-\d{2}$/.test(searchParams.get('date') ?? '') ? searchParams.get('date')! : undefined} />}
       {tab === 'advance' && <AdvanceTab />}
       {tab === 'loan' && <LoanTab />}

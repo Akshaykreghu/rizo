@@ -21,6 +21,7 @@ interface Option {
 // yet, matching the project's "ignore what's not wired" pattern rather than rendering broken UI.
 const OPTION_LIST_CRITERIA = new Set([
   'Units', 'Departments', 'SalaryStructures', 'Designation', 'DayTimeProcedures', 'LeavePolicyGroup', 'HolidayGroup', 'Gender', 'Banks',
+  'LeaveType', 'Leavestatus',
 ]);
 
 // Criteria selection is exclusive: the user picks exactly ONE criteria type (e.g. "belonging to a
@@ -36,6 +37,7 @@ export function CriteriaFilterPanel({
   onIncludeResignedChange,
   includeNegative,
   onIncludeNegativeChange,
+  allowedCriteria,
 }: {
   reportType: string;
   values: Record<string, string[]>;
@@ -48,14 +50,19 @@ export function CriteriaFilterPanel({
   onIncludeResignedChange?: (value: boolean) => void;
   includeNegative?: boolean;
   onIncludeNegativeChange?: (value: boolean) => void;
+  // Restricts the picker to a subset of the criteria rows the DB actually returns for this report
+  // type — e.g. a report whose query only implements Units/EmployeeDetails filtering shouldn't
+  // offer a LeaveType/Departments option that would silently no-op. Omitted = show everything
+  // resolvable (existing behavior, unchanged for every other report screen).
+  allowedCriteria?: string[];
 }) {
   const { data } = useQuery<{ rows: CriteriaRow[] }>({
     queryKey: ['reports/criteria', reportType],
     queryFn: () => fetch(`/api/reports/criteria?type=${reportType}`).then((r) => r.json()),
   });
-  const available = (data?.rows ?? []).filter(
-    (c) => c.reportcriteria === 'EmployeeDetails' || OPTION_LIST_CRITERIA.has(c.reportcriteria)
-  );
+  const available = (data?.rows ?? [])
+    .filter((c) => c.reportcriteria === 'EmployeeDetails' || OPTION_LIST_CRITERIA.has(c.reportcriteria))
+    .filter((c) => !allowedCriteria || allowedCriteria.includes(c.reportcriteria));
 
   // Which single criteria row is currently active. Reset whenever the report type changes (its
   // available criteria set is different) — otherwise a stale selection from a previous report type

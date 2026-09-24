@@ -112,6 +112,7 @@ export const navItems: NavItem[] = [
       { label: 'Employee Report', href: '/reports/employee', description: 'Generate reports on employee master data.' },
       { label: 'Payroll Report', href: '/reports/payroll', description: 'Generate reports on processed payroll runs.' },
       { label: 'Attendance', href: '/reports/attendance', description: 'Generate attendance summary reports.' },
+      { label: 'Leave Report', href: '/reports/leave', description: 'Leave detailed, leave balance, monthly leave taken, and comp off reports.' },
       { label: 'Statutory Report', href: '/reports/statutory', description: 'Generate PF, ESI and other statutory reports.' },
       { label: 'Statutory Upload', href: '/reports/statutory-upload', description: 'Prepare statutory filings ready for portal upload.' },
       { label: 'LOP Report', href: '/reports/lop', description: 'View loss-of-pay days across employees.' },

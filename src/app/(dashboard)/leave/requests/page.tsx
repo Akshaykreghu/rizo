@@ -493,6 +493,12 @@ function LeaveRequestsContent() {
                   )}
                 </div>
               )}
+              {/* Matches validateLeave()'s `edt < sdt` hard block in addeditleave_new.ctp. */}
+              {form.fromDate && form.toDate && new Date(form.toDate) < new Date(form.fromDate) && (
+                <div className="rounded-[9px] bg-[color:var(--color-danger-soft)] border border-[color:var(--color-danger-dark)]/20 px-3 py-2 text-[12.5px] text-[color:var(--color-danger-dark)]">
+                  To date should be greater than or equal to From date.
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-[12px] font-medium text-slate-600 mb-1.5">From Date</label>
@@ -534,7 +540,14 @@ function LeaveRequestsContent() {
             </div>
             <button
               onClick={() => apply.mutate()}
-              disabled={!form.empFkey || !form.salaryHeadItemFkey || !form.fromDate || !form.toDate || apply.isPending}
+              disabled={
+                !form.empFkey ||
+                !form.salaryHeadItemFkey ||
+                !form.fromDate ||
+                !form.toDate ||
+                new Date(form.toDate) < new Date(form.fromDate) ||
+                apply.isPending
+              }
               className={cn(BTN_BASE, 'w-full justify-center mt-4 bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)] text-white')}
             >
               {apply.isPending ? 'Submitting…' : 'Submit'}
