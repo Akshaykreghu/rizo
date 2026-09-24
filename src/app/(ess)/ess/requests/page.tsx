@@ -17,9 +17,10 @@ import { EssPagination } from '@/components/ess/EssPagination';
 //   are different: POST /api/leave/requests does NOT auto-resolve (it only falls back to the
 //   applicant's own empFkey as authorizer, and leaves approver null, when not supplied) — so the
 //   Apply Leave form below has real Authorize By / Approve By pickers, same as legacy's.
-// - Salary Advance shows the CURRENT MONTH's pending advance only, because GET /api/advances
-//   (lib/advances.ts listAdvances) hardcodes is_credited='N' + defaults to the current month —
-//   that's a real constraint of the existing admin feature, not something added for ESS.
+// - Salary Advance submits to /api/advances/requests (emp_advance_request), not directly to
+//   /api/advances (emp_advance) — it's a real Pending/Approved/Rejected request that an admin must
+//   approve (new "Requests" tab on /advances) before it becomes a live emp_advance row. This tab
+//   shows the employee's full request history, not just current-month pending.
 // - Loan Application status is Active/Completed (is_completed), not an approval-workflow badge —
 //   lib/loans.ts's own comment confirms loans have no approval workflow ("creation == approval").
 
@@ -427,7 +428,10 @@ function RegularizationTab() {
 }
 
 // ── SALARY ADVANCE ────────────────────────────────────────────────────────────
-interface AdvanceRow { emp_advance_pkey: number; advance_amount: number; affected_month: string; remarks: string | null; payment_date: string | null; is_credited: 'Y' | 'N' }
+interface AdvanceRow {
+  emp_advance_request_pkey: number; advance_amount: number; affected_month: string; remarks: string | null;
+  request_status: 'Pending' | 'Approved' | 'Rejected'; admin_remarks: string | null; created_date: string;
+}
 
 function AdvanceTab() {
   const { data: session } = useSession();
@@ -437,7 +441,7 @@ function AdvanceTab() {
   const [showForm, setShowForm] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [form, setForm] = useState({ advance_amount: '', remarks: '' });
+  const [form, setForm] = useState({ advance_amount: '', affected_month: currentMonth(), remarks: '' });
   const [page, setPage] = useState(1);
   // Real, legacy-derived advisory limit (80% of one month's gross CTC) — GET /api/advances/limit
   // already existed for this; the backend itself never hard-blocks a save that exceeds it, so this
@@ -446,7 +450,7 @@ function AdvanceTab() {
   const [limitWarning, setLimitWarning] = useState(false);
 
   const load = useCallback(() => {
-    fetch('/api/advances').then((r) => (r.ok ? r.json() : { rows: [] })).then((a) => { setRows(a.rows || []); setPage(1); }).finally(() => setLoading(false));
+    fetch('/api/advances/requests').then((r) => (r.ok ? r.json() : { rows: [] })).then((a) => { setRows(a.rows || []); setPage(1); }).finally(() => setLoading(false));
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -459,14 +463,14 @@ function AdvanceTab() {
     setSaving(true);
     setError(null);
     try {
-      const res = await fetch('/api/advances', {
+      const res = await fetch('/api/advances/requests', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ advanceAmount: Number(form.advance_amount), affectedMonth: currentMonth(), remarks: form.remarks || undefined }),
+        body: JSON.stringify({ advanceAmount: Number(form.advance_amount), affectedMonth: form.affected_month, remarks: form.remarks || undefined }),
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error || 'Failed to submit advance request');
       setShowForm(false);
-      setForm({ advance_amount: '', remarks: '' });
+      setForm({ advance_amount: '', affected_month: currentMonth(), remarks: '' });
       load();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to submit');
@@ -483,7 +487,7 @@ function AdvanceTab() {
 
   async function withdraw(row: AdvanceRow) {
     if (!confirm('Withdraw this advance request?')) return;
-    const res = await fetch(`/api/advances/${row.emp_advance_pkey}`, { method: 'DELETE' });
+    const res = await fetch(`/api/advances/requests/${row.emp_advance_request_pkey}`, { method: 'DELETE' });
     if (res.ok) load(); else setError((await res.json()).error || 'Failed to withdraw');
   }
 
@@ -513,6 +517,10 @@ function AdvanceTab() {
               <input type="number" required min="1" step="0.01" value={form.advance_amount} onChange={(e) => setForm((f) => ({ ...f, advance_amount: e.target.value }))} style={inp} />
               {limit != null && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>Advisory limit: ₹{fmtAmt(limit)} (80% of one month&apos;s gross)</div>}
             </div>
+            <div style={{ marginBottom: 14 }}>
+              <label style={lbl}>Affected Month *</label>
+              <input type="month" required value={form.affected_month} onChange={(e) => setForm((f) => ({ ...f, affected_month: e.target.value }))} style={inp} />
+            </div>
             <div style={{ marginBottom: 16 }}>
               <label style={lbl}>Remarks</label>
               <textarea rows={3} value={form.remarks} onChange={(e) => setForm((f) => ({ ...f, remarks: e.target.value }))} style={{ ...inp, resize: 'vertical' }} />
@@ -528,21 +536,21 @@ function AdvanceTab() {
 
       <div style={{ ...card, overflow: 'hidden' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead><tr>{['Sl.No', 'Affected Month', 'Amount', 'Remarks', 'Payment Date', ''].map((h) => <th key={h} style={thS}>{h}</th>)}</tr></thead>
+          <thead><tr>{['Sl.No', 'Affected Month', 'Amount', 'Remarks', 'Status', ''].map((h) => <th key={h} style={thS}>{h}</th>)}</tr></thead>
           <tbody>
             {loading ? (
               <tr><td colSpan={6} style={{ ...tdS, textAlign: 'center', color: 'var(--text-muted)' }}>Loading…</td></tr>
             ) : rows.length === 0 ? (
-              <tr><td colSpan={6} style={{ ...tdS, textAlign: 'center', color: 'var(--text-muted)' }}>No pending advance this month</td></tr>
+              <tr><td colSpan={6} style={{ ...tdS, textAlign: 'center', color: 'var(--text-muted)' }}>No advance requests yet</td></tr>
             ) : rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map((r, i) => (
-              <tr key={r.emp_advance_pkey}>
+              <tr key={r.emp_advance_request_pkey}>
                 <td style={tdS}>{(page - 1) * PAGE_SIZE + i + 1}</td>
                 <td style={tdS}>{r.affected_month}</td>
                 <td style={{ ...tdS, fontWeight: 700 }}>{fmtAmt(r.advance_amount)}</td>
                 <td style={{ ...tdS, color: 'var(--text-muted)' }}>{r.remarks || '—'}</td>
-                <td style={tdS}>{fmt(r.payment_date)}</td>
+                <td style={tdS}><span style={badge(r.request_status)}>{r.request_status}</span></td>
                 <td style={tdS}>
-                  {r.is_credited === 'N' && <button onClick={() => withdraw(r)} style={{ ...btnD, padding: '4px 12px', fontSize: 11 }}>Withdraw</button>}
+                  {r.request_status === 'Pending' && <button onClick={() => withdraw(r)} style={{ ...btnD, padding: '4px 12px', fontSize: 11 }}>Withdraw</button>}
                 </td>
               </tr>
             ))}
