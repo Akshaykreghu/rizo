@@ -121,6 +121,24 @@ export async function getCriteriaOptions(pool: Pool, reportcriteria: string, rep
     }
     case 'Gender':
       return [{ value: 'male', label: 'Male' }, { value: 'female', label: 'Female' }];
+    case 'LeaveType': {
+      // Every leave type actually referenced by an active leave policy — same "belonging to a Leave
+      // Type" set legacy's own listcriteriaitems() resolves for this criteria (LeaveRequest
+      // criteria block, LEAVEPOLICY join), not every salary_head_items row.
+      const [rows] = await pool.execute<RowDataPacket[]>(
+        `SELECT DISTINCT shi.salary_head_item_pkey AS value, shi.item AS label
+         FROM salary_head_items shi JOIN leavepolicy lp ON lp.salary_head_item_fkey = shi.salary_head_item_pkey
+         WHERE lp.status = 1
+         ORDER BY shi.item`
+      );
+      return rows;
+    }
+    case 'Leavestatus': {
+      const [rows] = await pool.execute<RowDataPacket[]>(
+        `SELECT LEAVESTATUS AS value, LEAVESTATUS AS label FROM leavestatus ORDER BY LEAVESTATUS`
+      );
+      return rows;
+    }
     default:
       // EmployeeDetails is resolved via the dedicated multi-select checklist
       // (GET /api/reports/employee-options), not a plain options list.
