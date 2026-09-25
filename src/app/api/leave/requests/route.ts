@@ -172,16 +172,19 @@ export async function POST(request: NextRequest) {
   // it lands already Approved, same end state the authorize/approve routes reach for a normal
   // employee-initiated request, just without the extra clicks.
   const isAdmin = session.user.userGroup === 1;
-  const initialStatus = isAdmin ? 'Approved' : 'Applied';
 
+  // Row is always first inserted as 'Applied' — matching EmployeeLeaveUploadController::leavesave(),
+  // which writes LEAVESTATUS='Applied' even when APPROVED_date/ApproveRemarks are populated in the
+  // same insert for an auto-approved (admin-applied) leave. The Authorized/Approved-looking columns
+  // land in this same row; only LEAVESTATUS itself stays 'Applied' until the proc is called again.
   const [result] = await pool.execute<ResultSetHeader>(
     `INSERT INTO leaveentries
        (salary_head_item_fkey, applied_date, LEAVESTATUS, EMP_fkey, FROMDATE, FROMHALF, TODATE, TOHALF,
         ISAutherizedby, APPROVEDBY, ISAutherized, Autherized_date, ISAPPROVED, APPROVED_date,
         Reason, contact_No, contact_person, leave_days, file_name, file_type)
-     VALUES (?, CURDATE(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ${isAdmin ? 'CURDATE()' : 'NULL'}, ?, ${isAdmin ? 'CURDATE()' : 'NULL'}, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, CURDATE(), 'Applied', ?, ?, ?, ?, ?, ?, ?, ?, ${isAdmin ? 'CURDATE()' : 'NULL'}, ?, ${isAdmin ? 'CURDATE()' : 'NULL'}, ?, ?, ?, ?, ?, ?)`,
     [
-      salaryHeadItemFkey, initialStatus, empFkey, fromDate, fromHalf, toDate, toHalf,
+      salaryHeadItemFkey, empFkey, fromDate, fromHalf, toDate, toHalf,
       isAutherizedby, approvedBy,
       isAdmin ? 1 : 0, isAdmin ? 1 : 0,
       reason ?? null, contactNo ?? null, contactPerson ?? null, leaveDays,
@@ -190,13 +193,29 @@ export async function POST(request: NextRequest) {
   );
   const leaveEntryId = result.insertId;
 
-  const { finalStatus, errorMessage } = await runLeaveTransaction(pool, {
+  // First proc call: status 'Applied' — this is what actually creates the emp_leave_transactions
+  // row(s) for this leave (confirmed via EmployeeLeaveUploadController::leavesave()'s two-call
+  // sequence). Calling the proc directly with 'Approved' and no prior 'Applied' call was the real
+  // bug — the proc has nothing to transition, so it silently wrote no transaction row at all.
+  let { finalStatus, errorMessage } = await runLeaveTransaction(pool, {
     leaveEntryId, empFkey, fromDate, fromHalf: Number(fromHalf), toDate, toHalf: Number(toHalf),
-    leaveDays, status: initialStatus,
+    leaveDays, status: 'Applied',
   });
 
   if (isLeaveTransactionFailure(finalStatus)) {
     return NextResponse.json({ error: errorMessage || finalStatus, id: leaveEntryId }, { status: 409 });
+  }
+
+  // Second proc call, admin-applied leave only: status 'Approved' — transitions the transaction(s)
+  // just created above from Applied to Approved, matching legacy's re-fetch-then-call-again pattern.
+  if (isAdmin && finalStatus === 'Applied') {
+    ({ finalStatus, errorMessage } = await runLeaveTransaction(pool, {
+      leaveEntryId, empFkey, fromDate, fromHalf: Number(fromHalf), toDate, toHalf: Number(toHalf),
+      leaveDays, status: 'Approved',
+    }));
+    if (isLeaveTransactionFailure(finalStatus)) {
+      return NextResponse.json({ error: errorMessage || finalStatus, id: leaveEntryId }, { status: 409 });
+    }
   }
 
   return NextResponse.json({ success: true, id: leaveEntryId, leaveDays, status: finalStatus, procMessage: errorMessage });
