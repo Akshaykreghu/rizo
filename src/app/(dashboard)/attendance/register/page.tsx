@@ -1,11 +1,13 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useSetupOptions } from '@/lib/setupOptions';
 import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
 import { AttendanceGrid, type AttendanceDay, type AttendanceRow } from '@/components/attendance/AttendanceGrid';
+import { EmployeeSearch } from '@/components/employees/EmployeeSearch';
+import { SearchableSelect } from '@/components/ui/SearchableSelect';
 import { TimePicker, nowAsHHMMSS } from '@/components/ui/TimePicker';
 import { ATTENDANCE_LEGEND, getCellColor, formatStatusDisplay } from '@/lib/attendance';
 import { cn } from '@/lib/utils';
@@ -16,6 +18,20 @@ const useLookup = useSetupOptions;
 function currentMonth() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+// Matches legacy AttendanceRegisterNew's month filter: a dropdown of the last 38 calendar months
+// (not a native calendar month-picker), newest first.
+function recentMonthOptions(count = 38): { value: string; label: string }[] {
+  const list: { value: string; label: string }[] = [];
+  const d = new Date();
+  d.setDate(1);
+  for (let i = 0; i < count; i++) {
+    const value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    list.push({ value, label: d.toLocaleDateString(undefined, { month: 'short', year: 'numeric' }) });
+    d.setMonth(d.getMonth() - 1);
+  }
+  return list;
 }
 
 interface LeaveOption {
@@ -61,6 +77,7 @@ function formatHHMMSS12(hhmmss: string): string {
 export default function AttendanceRegisterPage() {
   const [month, setMonth] = useState(currentMonth());
   const [branch, setBranch] = useState('');
+  const [empFkey, setEmpFkey] = useState('');
   const [tab, setTab] = useState<'unverified' | 'verified'>('unverified');
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [expandedRow, setExpandedRow] = useState<number | null>(null);
@@ -69,8 +86,15 @@ export default function AttendanceRegisterPage() {
   const [showBulkUpdate, setShowBulkUpdate] = useState(false);
   const [showSummaryCols, setShowSummaryCols] = useState(true);
   const { slotEl } = useHeaderSlot();
+  const monthOptions = useMemo(() => recentMonthOptions(), []);
 
   const { data: branches = [] } = useLookup('setup/branches', 'branch_code', (r) => String(r.branch_name));
+
+  // Default to the first branch once the list loads, so the page opens with a populated view
+  // instead of an empty "Select branch" state.
+  useEffect(() => {
+    if (!branch && branches.length > 0) setBranch(branches[0].value);
+  }, [branch, branches]);
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['attendance-register', month, branch, tab],
@@ -79,7 +103,12 @@ export default function AttendanceRegisterPage() {
     enabled: !!branch,
   });
 
-  const rows: AttendanceRow[] = data?.data ?? [];
+  // Employee is optional — legacy's default is "ALL" (id 0), i.e. every employee in the selected
+  // branch/month. When one is picked, scope the already-fetched branch/month rows down to it
+  // client-side rather than adding a server round-trip, since /api/attendance/register already
+  // returns the full branch for that month.
+  const allRows: AttendanceRow[] = data?.data ?? [];
+  const rows: AttendanceRow[] = empFkey ? allRows.filter((r) => String(r.empFkey) === empFkey) : allRows;
   const monthlyOtVerifiedCount = rows.filter((r) => r.monthlyOt?.isVerified).length;
   const monthlyOtPendingCount = rows.length - monthlyOtVerifiedCount;
 
@@ -215,66 +244,45 @@ export default function AttendanceRegisterPage() {
       <div className="surface-card rounded-xl px-4 py-2.5 mb-4 flex flex-wrap items-center gap-3">
         <div className="flex items-center gap-1.5">
           <label className="text-[11.5px] font-medium text-slate-500">Month</label>
-          <input
-            type="month"
+          <SearchableSelect
             value={month}
-            onChange={(e) => setMonth(e.target.value)}
-            className="border border-slate-200 bg-white rounded-[9px] px-2.5 py-1.5 text-[12.5px] text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/25 focus:border-[color:var(--color-primary)] transition-colors"
+            onChange={setMonth}
+            options={monthOptions}
+            placeholder="Select month"
+            className="min-w-[150px]"
+            buttonClassName="!py-1.5 !text-[12.5px] !rounded-[9px]"
           />
         </div>
         <div className="flex items-center gap-1.5">
           <label className="text-[11.5px] font-medium text-slate-500">Branch</label>
-          <select
+          <SearchableSelect
             value={branch}
-            onChange={(e) => setBranch(e.target.value)}
-            className="border border-slate-200 bg-white rounded-[9px] px-2.5 py-1.5 text-[12.5px] text-[#0F172A] min-w-[160px] focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/25 focus:border-[color:var(--color-primary)] transition-colors"
-          >
-            <option value="">Select branch</option>
-            {branches.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
+            onChange={(v) => { setBranch(v); setEmpFkey(''); }}
+            options={branches}
+            placeholder="Select branch"
+            className="min-w-[170px]"
+            buttonClassName="!py-1.5 !text-[12.5px] !rounded-[9px]"
+          />
         </div>
-        <button
-          onClick={() => process.mutate()}
-          disabled={!branch || process.isPending}
-          className="flex items-center bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)] disabled:opacity-50 text-white px-3 py-1.5 rounded-[9px] text-[12.5px] font-semibold shadow-sm transition-colors"
-        >
-          {process.isPending ? 'Processing…' : 'Process'}
-        </button>
-        {tab === 'unverified' ? (
+        <div className="flex items-center gap-1.5">
+          <label className="text-[11.5px] font-medium text-slate-500">Employee</label>
+          <EmployeeSearch
+            value={empFkey}
+            onChange={setEmpFkey}
+            branch={branch}
+            emptyLabel="All employees"
+            className="!h-9 !text-[12.5px] min-w-[200px]"
+          />
+        </div>
+        <div className="flex items-center gap-2 pl-1 border-l border-slate-200">
           <button
-            onClick={() => verify.mutate()}
-            disabled={selected.size === 0 || verify.isPending}
-            className="flex items-center gap-1.5 bg-[color:var(--color-success)] hover:bg-[color:var(--color-success-dark)] disabled:opacity-50 text-white px-3 py-1.5 rounded-[9px] text-[12.5px] font-semibold shadow-sm transition-colors"
+            onClick={() => process.mutate()}
+            disabled={!branch || process.isPending}
+            className="flex items-center bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)] disabled:opacity-50 text-white px-3 py-1.5 rounded-[9px] text-[12.5px] font-semibold shadow-sm transition-colors"
           >
-            <ShieldCheck className="w-3.5 h-3.5" /> {verify.isPending ? 'Verifying…' : 'Verify'}
+            {process.isPending ? 'Processing…' : 'Process'}
           </button>
-        ) : (
-          <button
-            onClick={() => unverify.mutate()}
-            disabled={selected.size === 0 || unverify.isPending}
-            className="flex items-center gap-1.5 bg-white border border-slate-200 hover:bg-[color:var(--color-danger-light)] hover:border-[color:var(--color-danger)]/30 hover:text-[color:var(--color-danger-dark)] disabled:opacity-50 text-slate-600 px-3 py-1.5 rounded-[9px] text-[12.5px] font-semibold transition-colors"
-          >
-            <ShieldOff className="w-3.5 h-3.5" /> {unverify.isPending ? 'Un-verifying…' : 'Un-verify'}
-          </button>
-        )}
-        {tab === 'unverified' && (
-          <button
-            onClick={() => setShowBulkUpdate(true)}
-            disabled={selected.size === 0}
-            className="flex items-center gap-1.5 bg-white border border-slate-200 hover:bg-[color:var(--color-primary-light)] hover:border-[color:var(--color-primary)]/30 hover:text-[color:var(--color-primary)] disabled:opacity-50 text-slate-600 px-3 py-1.5 rounded-[9px] text-[12.5px] font-semibold transition-colors"
-          >
-            <Layers className="w-3.5 h-3.5" /> Bulk Update{selected.size > 0 ? ` (${selected.size})` : ''}
-          </button>
-        )}
-        {tab === 'verified' && (
-          <button
-            onClick={() => verifyMonthlyOt.mutate()}
-            disabled={selected.size === 0 || verifyMonthlyOt.isPending}
-            className="flex items-center gap-1.5 bg-white border border-slate-200 hover:bg-[color:var(--color-accent-light)] hover:border-[color:var(--color-accent)]/30 hover:text-[color:var(--color-accent-dark)] disabled:opacity-50 text-slate-600 px-3 py-1.5 rounded-[9px] text-[12.5px] font-semibold transition-colors"
-          >
-            <BadgeCheck className="w-3.5 h-3.5" /> {verifyMonthlyOt.isPending ? 'Verifying…' : 'Verify Monthly OT'}{selected.size > 0 ? ` (${selected.size})` : ''}
-          </button>
-        )}
+        </div>
 
         {/* Legend */}
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 ml-auto pl-3 border-l border-slate-200 self-center">
@@ -296,11 +304,11 @@ export default function AttendanceRegisterPage() {
 
       {/* Table toolbar: status tabs + column visibility + Monthly OT status, tightly attached to the grid below */}
       <div className="flex flex-wrap items-center gap-2 pb-2 mb-2 border-b border-slate-200">
-        <div className="inline-flex items-center bg-slate-100 rounded-lg p-0.5">
+        <div className="inline-flex items-center bg-slate-100 rounded-[10px] p-1">
           <button
             onClick={() => { setTab('unverified'); setSelected(new Set()); }}
             className={cn(
-              'px-3 py-1 rounded-md text-[12.5px] font-medium transition-colors',
+              'px-4 py-2 rounded-[8px] text-[13.5px] font-semibold transition-colors',
               tab === 'unverified' ? 'bg-white text-[color:var(--color-primary)] shadow-sm' : 'text-slate-500 hover:text-slate-700'
             )}
           >
@@ -309,7 +317,7 @@ export default function AttendanceRegisterPage() {
           <button
             onClick={() => { setTab('verified'); setSelected(new Set()); }}
             className={cn(
-              'px-3 py-1 rounded-md text-[12.5px] font-medium transition-colors',
+              'px-4 py-2 rounded-[8px] text-[13.5px] font-semibold transition-colors',
               tab === 'verified' ? 'bg-white text-[color:var(--color-primary)] shadow-sm' : 'text-slate-500 hover:text-slate-700'
             )}
           >
@@ -318,7 +326,7 @@ export default function AttendanceRegisterPage() {
         </div>
         <button
           onClick={() => setShowSummaryCols((v) => !v)}
-          className="flex items-center gap-1.5 border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 px-3 py-1 rounded-lg text-[12.5px] font-medium transition-colors"
+          className="flex items-center gap-1.5 border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 px-3 py-1.5 rounded-[9px] text-[12.5px] font-medium transition-colors"
         >
           {showSummaryCols ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
           {showSummaryCols ? 'Hide Summary Columns' : 'Show Summary Columns'}
@@ -341,6 +349,47 @@ export default function AttendanceRegisterPage() {
           </div>
         )}
       </div>
+
+      {/* Verify / Bulk Update live only inside the Not Verified tab's own content, not the shared
+          tabs/toolbar row above. */}
+      {tab === 'unverified' && (
+        <div className="flex items-center gap-2 mb-3">
+          <button
+            onClick={() => verify.mutate()}
+            disabled={selected.size === 0 || verify.isPending}
+            className="flex items-center gap-1.5 bg-[color:var(--color-success)] hover:bg-[color:var(--color-success-dark)] disabled:opacity-50 text-white px-3 py-1.5 rounded-[9px] text-[12.5px] font-semibold shadow-sm transition-colors"
+          >
+            <ShieldCheck className="w-3.5 h-3.5" /> {verify.isPending ? 'Verifying…' : 'Verify'}
+          </button>
+          <button
+            onClick={() => setShowBulkUpdate(true)}
+            disabled={selected.size === 0}
+            className="flex items-center gap-1.5 bg-white border border-slate-200 hover:bg-[color:var(--color-primary-light)] hover:border-[color:var(--color-primary)]/30 hover:text-[color:var(--color-primary)] disabled:opacity-50 text-slate-600 px-3 py-1.5 rounded-[9px] text-[12.5px] font-semibold transition-colors"
+          >
+            <Layers className="w-3.5 h-3.5" /> Bulk Update{selected.size > 0 ? ` (${selected.size})` : ''}
+          </button>
+        </div>
+      )}
+
+      {/* Un-verify / Verify Monthly OT live only inside the Verified tab's own content. */}
+      {tab === 'verified' && (
+        <div className="flex items-center gap-2 mb-3">
+          <button
+            onClick={() => unverify.mutate()}
+            disabled={selected.size === 0 || unverify.isPending}
+            className="flex items-center gap-1.5 bg-white border border-slate-200 hover:bg-[color:var(--color-danger-light)] hover:border-[color:var(--color-danger)]/30 hover:text-[color:var(--color-danger-dark)] disabled:opacity-50 text-slate-600 px-3 py-1.5 rounded-[9px] text-[12.5px] font-semibold transition-colors"
+          >
+            <ShieldOff className="w-3.5 h-3.5" /> {unverify.isPending ? 'Un-verifying…' : 'Un-verify'}
+          </button>
+          <button
+            onClick={() => verifyMonthlyOt.mutate()}
+            disabled={selected.size === 0 || verifyMonthlyOt.isPending}
+            className="flex items-center gap-1.5 bg-white border border-slate-200 hover:bg-[color:var(--color-accent-light)] hover:border-[color:var(--color-accent)]/30 hover:text-[color:var(--color-accent-dark)] disabled:opacity-50 text-slate-600 px-3 py-1.5 rounded-[9px] text-[12.5px] font-semibold transition-colors"
+          >
+            <BadgeCheck className="w-3.5 h-3.5" /> {verifyMonthlyOt.isPending ? 'Verifying…' : 'Verify Monthly OT'}{selected.size > 0 ? ` (${selected.size})` : ''}
+          </button>
+        </div>
+      )}
 
       {!branch && <p className="text-sm text-slate-400">Select a branch to view attendance.</p>}
       {branch && isLoading && <p className="text-sm text-slate-400">Loading…</p>}
