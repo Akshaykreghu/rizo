@@ -271,7 +271,7 @@ export default function AttendanceRegisterPage() {
             onChange={setEmpFkey}
             branch={branch}
             emptyLabel="All employees"
-            className="!h-9 !text-[12.5px] min-w-[200px]"
+            className="!h-auto !py-1.5 !rounded-[9px] !border-slate-200 !text-[12.5px] min-w-[200px]"
           />
         </div>
         <div className="flex items-center gap-2 pl-1 border-l border-slate-200">

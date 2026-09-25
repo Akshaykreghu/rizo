@@ -288,16 +288,12 @@ export function AttendanceGrid({ rows, selected, onToggleSelect, onCellClick, ex
                       return (
                         <td
                           key={d.date}
-                          className={cn(GRID_LINE, 'py-0.5 px-1 text-center align-middle', !readOnly && !isNa && 'cursor-pointer', isToday && TODAY_COL_BG)}
+                          className={cn(GRID_LINE, 'p-2 text-center align-middle text-[10.5px] font-semibold leading-none', !readOnly && !isNa && 'cursor-pointer', isToday && !d.value.trim() && TODAY_COL_BG)}
                           onClick={() => !readOnly && !isNa && onCellClick?.(row, i + 1, d)}
                           title={d.value}
+                          style={d.value.trim() ? { backgroundColor: bg, color: fg } : undefined}
                         >
-                          <span
-                            className="inline-flex min-w-[26px] items-center justify-center rounded-md p-2 text-[10.5px] font-semibold leading-none"
-                            style={{ backgroundColor: bg, color: fg }}
-                          >
-                            {formatStatusDisplay(d.value) || '—'}
-                          </span>
+                          {formatStatusDisplay(d.value) || '—'}
                         </td>
                       );
                     })}
@@ -374,12 +370,14 @@ export function AttendanceGrid({ rows, selected, onToggleSelect, onCellClick, ex
 function ExpandRow({ index, label, values, last, showSummaryCols, showMonthlyOt }: { index: number; label: string; values: string[]; last?: boolean; showSummaryCols: boolean; showMonthlyOt: boolean }) {
   // Alternating shade across the IN/OUT/Duration/OT detail rows within one expanded employee —
   // purely a readability aid for scanning across a wide row, independent of (and much lighter than)
-  // any attendance status color.
-  const rowBg = index % 2 === 0 ? 'bg-slate-50/60' : 'bg-white';
+  // any attendance status color. Must be fully opaque (not e.g. bg-slate-50/60): these are sticky
+  // columns, and a translucent background lets the horizontally-scrolled day columns show through
+  // underneath once the user scrolls right.
+  const rowBg = index % 2 === 0 ? 'bg-slate-50' : 'bg-white';
   return (
     <tr className={cn('animate-fade-in text-[10.5px] text-slate-500', rowBg, last && 'border-b border-slate-200')}>
       <td className={cn(CHECKBOX_COL, 'border-r border-slate-200', rowBg)} />
-      <td className={cn(NAME_COL, 'border-r border-slate-200 py-0.5 pl-4 font-medium text-slate-400', rowBg, !showSummaryCols && STICKY_EDGE)}>{label}</td>
+      <td className={cn(NAME_COL, 'border-r border-slate-200 py-2 pl-4 pr-2 font-medium text-slate-400', rowBg, !showSummaryCols && STICKY_EDGE)}>{label}</td>
       {showSummaryCols && SUMMARY_COLUMNS.map((c, i) => (
         <td
           key={c.key}
@@ -399,7 +397,7 @@ function ExpandRow({ index, label, values, last, showSummaryCols, showMonthlyOt 
         />
       )}
       {values.map((v, i) => (
-        <td key={i} className={cn('border-r border-slate-200 py-0.5 text-center tabular-nums', rowBg)}>
+        <td key={i} className={cn('border-r border-slate-200 py-2 px-2 text-center tabular-nums', rowBg)}>
           {v}
         </td>
       ))}
