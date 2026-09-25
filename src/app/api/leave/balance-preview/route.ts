@@ -38,6 +38,17 @@ export async function GET(request: NextRequest) {
   const empFkey = Number(employee);
   const salaryHeadItemFkey = Number(leaveType);
 
+  // Ported from getEmployeeDates() — the Apply Leave form's FROMDATE/TODATE pickers are bounded to
+  // [joining_date, termination_date] (termination_date only set for a resigned employee, status=2).
+  const [[empDates]] = await pool.execute<RowDataPacket[]>(
+    `SELECT ep.joining_date,
+            (SELECT t.last_approved_working_date FROM termination t
+             JOIN emp_details ed ON ed.emp_pkey = t.emp_fkey
+             WHERE t.emp_fkey = ep.emp_fkey AND ed.status = 2 LIMIT 1) AS termination_date
+     FROM emp_proff ep WHERE ep.emp_fkey = ?`,
+    [empFkey]
+  );
+
   const [[policy]] = await pool.execute<RowDataPacket[]>(
     `SELECT lp.ALLOW_NEGETIVE, lp.exceptions, lp.minimum_service, lp.min_day_before_apply,
             lp.minimum_leave, lp.maximum_leave, lp.leave_policy_type, lp.document_mandatory, lp.REMARKS
@@ -111,5 +122,7 @@ export async function GET(request: NextRequest) {
     advanceNoticeMessage,
     documentMandatory: policy.document_mandatory === 'Y',
     remarks: policy.REMARKS || null,
+    joiningDate: empDates?.joining_date ?? null,
+    terminationDate: empDates?.termination_date ?? null,
   });
 }

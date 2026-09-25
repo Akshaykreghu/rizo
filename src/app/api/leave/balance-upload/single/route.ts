@@ -22,6 +22,9 @@ export async function POST(request: NextRequest) {
   if (!empFkey || !salaryHeadItemFkey || Number.isNaN(leaveBalance)) {
     return NextResponse.json({ error: 'empFkey, salaryHeadItemFkey and leaveBalance are required' }, { status: 400 });
   }
+  if (leaveBalance < 0 || Math.round(leaveBalance * 2) !== leaveBalance * 2) {
+    return NextResponse.json({ error: 'Leave balance must be a non-negative multiple of 0.5' }, { status: 400 });
+  }
 
   const pool = await getCompanyPool(session.user.companyCode);
   const companyCode = session.user.companyCode;

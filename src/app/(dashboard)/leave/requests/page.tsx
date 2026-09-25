@@ -17,6 +17,23 @@ interface LeaveType {
   allowNegative: boolean;
 }
 
+// Mirrors legacy's validateLeave() day-count formula (same as the ESS Apply Leave form) — weekends
+// excluded, half-day handling on the first/last day of the range.
+// Ported from GetLeaveBalanceNew() (LeaveRequestController.php:5792-5805) — a plain inclusive
+// calendar-day diff between From and To, adjusted only for half-day sessions. Legacy does NOT
+// exclude weekends or holidays here (a weekoff/holiday check exists elsewhere but is dead/commented
+// out in legacy itself), so this must not filter days out either.
+function calcLeaveDays(from: string, fromHalf: number, to: string, toHalf: number) {
+  if (!from || !to) return 0;
+  const start = new Date(from + 'T00:00:00');
+  const end = new Date(to + 'T00:00:00');
+  let days = Math.round((end.getTime() - start.getTime()) / 86400000) + 1;
+  if (fromHalf === 1 && toHalf === 1) days -= 0.5;
+  else if (fromHalf === 2 && toHalf === 2) days -= 0.5;
+  else if (fromHalf === 2 && toHalf === 1) days -= 1;
+  return days;
+}
+
 interface LeaveRow {
   LEAVEENTRYID: number;
   EMP_fkey: number;
@@ -100,6 +117,8 @@ function LeaveRequestsContent() {
     minServiceMessage: string | null;
     advanceNoticeOk: boolean;
     advanceNoticeMessage: string | null;
+    joiningDate: string | null;
+    terminationDate: string | null;
   }>({
     queryKey: ['leave', 'balance-preview', form.empFkey, form.salaryHeadItemFkey, form.fromDate],
     queryFn: () =>
@@ -108,6 +127,24 @@ function LeaveRequestsContent() {
       ).then((r) => r.json()),
     enabled: !!form.empFkey && !!form.salaryHeadItemFkey && !!form.fromDate,
   });
+
+  const leaveDays = calcLeaveDays(form.fromDate, Number(form.fromHalf), form.toDate, Number(form.toHalf));
+  // Same hard blocks as the ESS Apply Leave form (validateLeave() in addeditleave_new.ctp) — this
+  // admin form previously only disabled Submit for empty fields/bad date order, so min-service,
+  // advance-notice, balance, and min/max-per-request violations were shown as text but never
+  // actually stopped submission.
+  // Advance-notice is deliberately NOT enforced here — admin can apply leave for an employee
+  // regardless of how much notice was given, unlike the ESS self-service form.
+  const balanceBlocked = !!balancePreview && (
+    !balancePreview.minServiceOk ||
+    leaveDays > balancePreview.balance ||
+    (balancePreview.minLeaveLimit > 0 && leaveDays < balancePreview.minLeaveLimit) ||
+    (balancePreview.maxLeaveLimit > 0 && leaveDays > balancePreview.maxLeaveLimit) ||
+    // Matches getEmployeeDates()'s FROMDATE/TODATE picker bounds — leave can't be before joining
+    // or after termination (only set once the employee is actually resigned/terminated).
+    (!!balancePreview.joiningDate && form.fromDate < balancePreview.joiningDate) ||
+    (!!balancePreview.terminationDate && form.toDate > balancePreview.terminationDate)
+  );
 
   // Ported from EmployeeLeavesController::showleavedays() / showleavedays.ctp — the "Leave Details"
   // modal, shown via the row's View action.
@@ -491,9 +528,6 @@ function LeaveRequestsContent() {
                   {!balancePreview.minServiceOk && (
                     <div className="text-[color:var(--color-danger-dark)]">{balancePreview.minServiceMessage}</div>
                   )}
-                  {!balancePreview.advanceNoticeOk && (
-                    <div className="text-[color:var(--color-danger-dark)]">{balancePreview.advanceNoticeMessage}</div>
-                  )}
                   {balancePreview.balance === 0 && !balancePreview.allowNegative && (
                     <div className="text-[color:var(--color-danger-dark)]">You have no leave balance!</div>
                   )}
@@ -505,10 +539,28 @@ function LeaveRequestsContent() {
                   To date should be greater than or equal to From date.
                 </div>
               )}
+              {/* Matches getEmployeeDates()'s FROMDATE/TODATE picker bounds in addeditleave_new.ctp. */}
+              {balancePreview?.joiningDate && form.fromDate && form.fromDate < balancePreview.joiningDate && (
+                <div className="rounded-[9px] bg-[color:var(--color-danger-soft)] border border-[color:var(--color-danger-dark)]/20 px-3 py-2 text-[12.5px] text-[color:var(--color-danger-dark)]">
+                  Leave cannot be applied before the joining date ({balancePreview.joiningDate}).
+                </div>
+              )}
+              {balancePreview?.terminationDate && form.toDate && form.toDate > balancePreview.terminationDate && (
+                <div className="rounded-[9px] bg-[color:var(--color-danger-soft)] border border-[color:var(--color-danger-dark)]/20 px-3 py-2 text-[12.5px] text-[color:var(--color-danger-dark)]">
+                  Leave cannot be applied after the termination date ({balancePreview.terminationDate}).
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-[12px] font-medium text-slate-600 mb-1.5">From Date</label>
-                  <input type="date" value={form.fromDate} onChange={(e) => setForm((f) => ({ ...f, fromDate: e.target.value }))} className={cn(INPUT_CLASS, 'w-full')} />
+                  <input
+                    type="date"
+                    min={balancePreview?.joiningDate ?? undefined}
+                    max={balancePreview?.terminationDate ?? undefined}
+                    value={form.fromDate}
+                    onChange={(e) => setForm((f) => ({ ...f, fromDate: e.target.value }))}
+                    className={cn(INPUT_CLASS, 'w-full')}
+                  />
                 </div>
                 <div>
                   <label className="block text-[12px] font-medium text-slate-600 mb-1.5">From Half</label>
@@ -519,7 +571,15 @@ function LeaveRequestsContent() {
                 </div>
                 <div>
                   <label className="block text-[12px] font-medium text-slate-600 mb-1.5">To Date</label>
-                  <input type="date" value={form.toDate} onChange={(e) => setForm((f) => ({ ...f, toDate: e.target.value }))} className={cn(INPUT_CLASS, 'w-full')} />
+                  <input
+                    type="date"
+                    disabled={!form.fromDate}
+                    min={form.fromDate || balancePreview?.joiningDate || undefined}
+                    max={balancePreview?.terminationDate ?? undefined}
+                    value={form.toDate}
+                    onChange={(e) => setForm((f) => ({ ...f, toDate: e.target.value }))}
+                    className={cn(INPUT_CLASS, 'w-full', !form.fromDate && 'opacity-50 cursor-not-allowed')}
+                  />
                 </div>
                 <div>
                   <label className="block text-[12px] font-medium text-slate-600 mb-1.5">To Half</label>
@@ -531,12 +591,19 @@ function LeaveRequestsContent() {
               </div>
               <div>
                 <label className="block text-[12px] font-medium text-slate-600 mb-1.5">Reason</label>
-                <input type="text" value={form.reason} onChange={(e) => setForm((f) => ({ ...f, reason: e.target.value }))} className={cn(INPUT_CLASS, 'w-full')} />
+                <input type="text" maxLength={400} value={form.reason} onChange={(e) => setForm((f) => ({ ...f, reason: e.target.value }))} className={cn(INPUT_CLASS, 'w-full')} />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-[12px] font-medium text-slate-600 mb-1.5">Contact No.</label>
-                  <input type="text" value={form.contactNo} onChange={(e) => setForm((f) => ({ ...f, contactNo: e.target.value }))} className={cn(INPUT_CLASS, 'w-full')} />
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={10}
+                    value={form.contactNo}
+                    onChange={(e) => setForm((f) => ({ ...f, contactNo: e.target.value.replace(/\D/g, '').slice(0, 10) }))}
+                    className={cn(INPUT_CLASS, 'w-full')}
+                  />
                 </div>
                 <div>
                   <label className="block text-[12px] font-medium text-slate-600 mb-1.5">Contact Person</label>
@@ -552,6 +619,8 @@ function LeaveRequestsContent() {
                 !form.fromDate ||
                 !form.toDate ||
                 new Date(form.toDate) < new Date(form.fromDate) ||
+                !balancePreview ||
+                balanceBlocked ||
                 apply.isPending
               }
               className={cn(BTN_BASE, 'w-full justify-center mt-4 bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)] text-white')}

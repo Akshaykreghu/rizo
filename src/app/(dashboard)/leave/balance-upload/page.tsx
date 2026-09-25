@@ -272,10 +272,28 @@ export default function LeaveBalanceUploadPage() {
               <div>
                 <label className="block text-[12px] font-medium text-slate-600 mb-1.5">Leave Balance to Upload</label>
                 <input
-                  type="number"
-                  step="0.5"
+                  type="text"
+                  inputMode="decimal"
                   value={form.leaveBalance}
-                  onChange={(e) => setForm((f) => ({ ...f, leaveBalance: e.target.value }))}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    // Only allow empty, "N." (an in-progress typed decimal, any whole number), or a
+                    // non-negative value in multiples of 0.5 with no leading zero (0, 0.5, 1, 1.5, 2, ...).
+                    // A plain text input (not type="number") is used deliberately — a number input's DOM
+                    // value goes to '' for any unparseable text (e.g. "$$$$$"), so a regex check against
+                    // e.target.value can't actually reject what the user typed; it just silently clears it,
+                    // leaving stray characters visibly stuck in the field. Leading-zero must also be
+                    // rejected explicitly: without it, "0" then "." then "6" leaves "0." rejected but "06"
+                    // (typed right after the still-"0" field) would pass a bare /^\d+(\.5)?$/ check.
+                    const wholePart = /^(0|[1-9]\d*)\.$/;
+                    if (v === '' || wholePart.test(v) || /^(0|[1-9]\d*)(\.5)?$/.test(v)) {
+                      setForm((f) => ({ ...f, leaveBalance: v }));
+                    } else if (wholePart.test(form.leaveBalance)) {
+                      // Typing any digit but "5" right after "N." (e.g. "1.6") is invalid — snap back to
+                      // "N" instead of letting it fall through as "16", or leaving "N." stuck in the field.
+                      setForm((f) => ({ ...f, leaveBalance: form.leaveBalance.slice(0, -1) }));
+                    }
+                  }}
                   className={cn(INPUT_CLASS, 'w-full')}
                 />
               </div>

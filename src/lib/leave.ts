@@ -326,16 +326,27 @@ export async function runLeaveTransaction(
     status: string;
   }
 ): Promise<{ finalStatus: string; errorMessage: string | null }> {
-  await conn.query('CALL leave_transaction_prc(?, ?, ?, ?, ?, ?, ?, ?, @err)', [
-    entry.leaveEntryId, entry.empFkey, entry.fromDate, entry.fromHalf,
-    entry.toDate, entry.toHalf, entry.leaveDays, entry.status,
-  ]);
-  const [[errRow]] = await conn.query<RowDataPacket[]>('SELECT @err AS err');
-  const [[statusRow]] = await conn.query<RowDataPacket[]>(
-    'SELECT LEAVESTATUS FROM leaveentries WHERE LEAVEENTRYID = ?',
-    [entry.leaveEntryId]
-  );
-  return { finalStatus: statusRow?.LEAVESTATUS ?? entry.status, errorMessage: errRow?.err ?? null };
+  // MySQL session variables (@err) are per-connection. Every caller here was passing the shared
+  // Pool directly — each `.query()` on a Pool can be served by a different pooled connection, so
+  // the CALL, the `SELECT @err`, and (in principle) the proc's own internal session state were not
+  // guaranteed to run on the same connection. Pin to one dedicated connection for the whole
+  // sequence, matching CakePHP's single persistent connection per request that legacy relied on.
+  const isPool = typeof (conn as Pool).getConnection === 'function';
+  const dedicated = isPool ? await (conn as Pool).getConnection() : (conn as PoolConnection);
+  try {
+    await dedicated.query('CALL leave_transaction_prc(?, ?, ?, ?, ?, ?, ?, ?, @err)', [
+      entry.leaveEntryId, entry.empFkey, entry.fromDate, entry.fromHalf,
+      entry.toDate, entry.toHalf, entry.leaveDays, entry.status,
+    ]);
+    const [[errRow]] = await dedicated.query<RowDataPacket[]>('SELECT @err AS err');
+    const [[statusRow]] = await dedicated.query<RowDataPacket[]>(
+      'SELECT LEAVESTATUS FROM leaveentries WHERE LEAVEENTRYID = ?',
+      [entry.leaveEntryId]
+    );
+    return { finalStatus: statusRow?.LEAVESTATUS ?? entry.status, errorMessage: errRow?.err ?? null };
+  } finally {
+    if (isPool) (dedicated as PoolConnection).release();
+  }
 }
 
 // The proc's own rejection statuses (real values seen in the live DB: 'Can not Apply' and
