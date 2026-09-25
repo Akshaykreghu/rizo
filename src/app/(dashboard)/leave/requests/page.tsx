@@ -134,13 +134,13 @@ function LeaveRequestsContent() {
   // admin form previously only disabled Submit for empty fields/bad date order, so min-service,
   // advance-notice, balance, and min/max-per-request violations were shown as text but never
   // actually stopped submission.
-  // Advance-notice is deliberately NOT enforced here — admin can apply leave for an employee
-  // regardless of how much notice was given, unlike the ESS self-service form.
+  // Advance-notice AND min/max-leave-limit are deliberately NOT enforced here — admin can apply
+  // leave for an employee regardless of how much notice was given or the per-request day limits,
+  // unlike the ESS self-service form. Submit is only blocked by minimum-service eligibility,
+  // insufficient balance, and the joining/termination date bounds.
   const balanceBlocked = !!balancePreview && (
     !balancePreview.minServiceOk ||
     leaveDays > balancePreview.balance ||
-    (balancePreview.minLeaveLimit > 0 && leaveDays < balancePreview.minLeaveLimit) ||
-    (balancePreview.maxLeaveLimit > 0 && leaveDays > balancePreview.maxLeaveLimit) ||
     // Matches getEmployeeDates()'s FROMDATE/TODATE picker bounds — leave can't be before joining
     // or after termination (only set once the employee is actually resigned/terminated).
     (!!balancePreview.joiningDate && form.fromDate < balancePreview.joiningDate) ||
