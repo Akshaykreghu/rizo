@@ -17,6 +17,28 @@ interface LeaveType {
   allowNegative: boolean;
 }
 
+// Mirrors legacy's validateLeave() day-count formula (same as the ESS Apply Leave form) — weekends
+// excluded, half-day handling on the first/last day of the range.
+function calcLeaveDays(from: string, fromHalf: number, to: string, toHalf: number) {
+  if (!from || !to) return 0;
+  let days = 0;
+  const cur = new Date(from + 'T00:00:00');
+  const end = new Date(to + 'T00:00:00');
+  while (cur <= end) {
+    const dow = cur.getDay();
+    if (dow !== 0 && dow !== 6) {
+      const ds = cur.toISOString().split('T')[0];
+      const isFirst = ds === from, isLast = ds === to;
+      if (isFirst && isLast) days += (fromHalf === 2 || toHalf === 1) ? 0.5 : 1;
+      else if (isFirst && fromHalf === 2) days += 0.5;
+      else if (isLast && toHalf === 1) days += 0.5;
+      else days += 1;
+    }
+    cur.setDate(cur.getDate() + 1);
+  }
+  return days;
+}
+
 interface LeaveRow {
   LEAVEENTRYID: number;
   EMP_fkey: number;
@@ -108,6 +130,19 @@ function LeaveRequestsContent() {
       ).then((r) => r.json()),
     enabled: !!form.empFkey && !!form.salaryHeadItemFkey && !!form.fromDate,
   });
+
+  const leaveDays = calcLeaveDays(form.fromDate, Number(form.fromHalf), form.toDate, Number(form.toHalf));
+  // Same hard blocks as the ESS Apply Leave form (validateLeave() in addeditleave_new.ctp) — this
+  // admin form previously only disabled Submit for empty fields/bad date order, so min-service,
+  // advance-notice, balance, and min/max-per-request violations were shown as text but never
+  // actually stopped submission.
+  const balanceBlocked = !!balancePreview && (
+    !balancePreview.minServiceOk ||
+    !balancePreview.advanceNoticeOk ||
+    leaveDays > balancePreview.balance ||
+    (balancePreview.minLeaveLimit > 0 && leaveDays < balancePreview.minLeaveLimit) ||
+    (balancePreview.maxLeaveLimit > 0 && leaveDays > balancePreview.maxLeaveLimit)
+  );
 
   // Ported from EmployeeLeavesController::showleavedays() / showleavedays.ctp — the "Leave Details"
   // modal, shown via the row's View action.
@@ -552,6 +587,8 @@ function LeaveRequestsContent() {
                 !form.fromDate ||
                 !form.toDate ||
                 new Date(form.toDate) < new Date(form.fromDate) ||
+                !balancePreview ||
+                balanceBlocked ||
                 apply.isPending
               }
               className={cn(BTN_BASE, 'w-full justify-center mt-4 bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)] text-white')}

@@ -22,6 +22,10 @@ function calcLeaveDays(fromDate: string, fromHalf: number, toDate: string, toHal
   let total = days;
   if (fromHalf === 2) total -= 0.5;
   if (toHalf === 1) total -= 0.5;
+  // Math.max(NaN, 0.5) is NaN, not 0.5 — an invalid/unparseable date pair silently produced a
+  // leave_days=0 row on insert (MySQL coerces NaN to 0) instead of being caught here. The route
+  // now validates both dates parse before this is ever called, so this is a defensive backstop.
+  if (Number.isNaN(total)) return 0.5;
   return Math.max(total, 0.5);
 }
 
@@ -129,6 +133,9 @@ export async function POST(request: NextRequest) {
   }
   if (toDate < fromDate) {
     return NextResponse.json({ error: 'toDate cannot be before fromDate' }, { status: 400 });
+  }
+  if (Number.isNaN(new Date(fromDate).getTime()) || Number.isNaN(new Date(toDate).getTime())) {
+    return NextResponse.json({ error: 'fromDate and toDate must be valid dates' }, { status: 400 });
   }
 
   const pool = await getCompanyPool(session.user.companyCode);
