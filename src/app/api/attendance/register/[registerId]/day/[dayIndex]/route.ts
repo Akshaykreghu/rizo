@@ -1,16 +1,15 @@
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
-import { getRegisterDayContext, isLeaveAlreadyApplied, isLeaveCode, mergeHalfDayStatus, recalcAttendanceRegisterTotals, toISODate } from '@/lib/attendance';
+import { getRegisterDayContext, isLeaveAlreadyApplied, mergeHalfDayStatus, recalcAttendanceRegisterTotals, toISODate } from '@/lib/attendance';
 import { NextRequest, NextResponse } from 'next/server';
-import type { ResultSetHeader } from 'mysql2';
 
 // Ports chnagestatus() (parameterized — legacy's version had a real SQL-injection surface via raw
 // string concatenation). statusType: 'first' | 'second' | 'full' -> leave session 1 | 2 | 3.
-// If the new status is a leave code, auto-creates+approves a leave transaction via
-// leave_transaction_prc (matches legacy's AddLeave() side effect — ported per project decision,
-// even though there's no Leave Management UI yet, same precedent as calling leave_encash_prc for
-// Remove Employee without a Leave module existing).
+// Per explicit product decision, a leave-code status picked here is UI/FIELDn-display only — no
+// leaveentries/emp_leave_transactions row is created at Save time. The actual leave application
+// only happens when the register row is verified (see /verify/route.ts), matching "leave codes
+// aren't real leave entries until verification, just a cell value until then."
 // The half-day merge (see mergeHalfDayStatus) is legacy's own client-side JS logic, done here
 // server-side instead: `status` is just the raw code the caller picked for this one half (e.g. 'P'),
 // not a pre-combined "X/Y" string — the FIELDn column always stores both halves together.
@@ -65,29 +64,6 @@ export async function PUT(
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
-
-    if (isLeaveCode(status) && salaryHeadItemFkey) {
-      const approverId = session.user.empFkey ?? 0;
-      const fromHalf = leaveSession === 2 ? 2 : 1;
-      const toHalf = leaveSession === 1 ? 1 : 2;
-      const leaveDays = leaveSession === 3 ? 1 : 0.5;
-
-      const [insertResult] = await connection.execute<ResultSetHeader>(
-        `INSERT INTO leaveentries
-           (salary_head_item_fkey, applied_date, LEAVESTATUS, EMP_fkey, FROMDATE, FROMHALF, TODATE, TOHALF,
-            ISAutherized, ISAutherizedby, ISAPPROVED, APPROVEDBY, Reason, leave_days)
-         VALUES (?, CURDATE(), 'Approved', ?, ?, ?, ?, ?, 1, ?, 1, ?, 'Leave applied through status change', ?)`,
-        [salaryHeadItemFkey, day.empFkey, attDate, fromHalf, attDate, toHalf, approverId, approverId, leaveDays]
-      );
-      const leaveEntryId = insertResult.insertId;
-
-      await connection.query('CALL leave_transaction_prc(?, ?, ?, ?, ?, ?, ?, ?, @err)', [
-        leaveEntryId, day.empFkey, attDate, fromHalf, attDate, toHalf, leaveDays, 'Applied',
-      ]);
-      await connection.query('CALL leave_transaction_prc(?, ?, ?, ?, ?, ?, ?, ?, @err)', [
-        leaveEntryId, day.empFkey, attDate, fromHalf, attDate, toHalf, leaveDays, 'Approved',
-      ]);
-    }
 
     // A day cell always stores both halves ("X/Y") — merge this edit's half into whatever the other
     // half currently holds instead of overwriting the whole cell (see mergeHalfDayStatus).

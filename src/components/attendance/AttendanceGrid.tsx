@@ -47,6 +47,10 @@ interface Props {
   rows: AttendanceRow[];
   selected: Set<number>;
   onToggleSelect: (registerId: number) => void;
+  /** Select/deselect every row on the CURRENT page only (not all rows across pagination) —
+   * receives that page's registerIds and whether the header checkbox is being checked or
+   * unchecked. Omit to hide the header checkbox entirely. */
+  onToggleSelectPage?: (registerIds: number[], checked: boolean) => void;
   onCellClick?: (row: AttendanceRow, dayIndex: number, day: AttendanceDay) => void;
   expandedRow: number | null;
   onToggleExpand: (registerId: number) => void;
@@ -151,7 +155,7 @@ function getPageNumbers(current: number, total: number): (number | '…')[] {
 // directly below the table's own scroll box, instead of risking becoming a separate sibling element
 // elsewhere on the page. Callers should remount this component (e.g. via a `key` tied to
 // month/branch/tab) whenever the underlying row set changes context, so page/size state resets.
-export function AttendanceGrid({ rows, selected, onToggleSelect, onCellClick, expandedRow, onToggleExpand, readOnly, showSummaryCols, showMonthlyOt, onMonthlyOtSave }: Props) {
+export function AttendanceGrid({ rows, selected, onToggleSelect, onToggleSelectPage, onCellClick, expandedRow, onToggleExpand, readOnly, showSummaryCols, showMonthlyOt, onMonthlyOtSave }: Props) {
   const [pageIndex, setPageIndex] = useState(0);
   const [pageSize, setPageSize] = useState(10);
   const today = todayISO();
@@ -159,6 +163,9 @@ export function AttendanceGrid({ rows, selected, onToggleSelect, onCellClick, ex
   const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
   const clampedPageIndex = Math.min(pageIndex, pageCount - 1);
   const pagedRows = rows.slice(clampedPageIndex * pageSize, clampedPageIndex * pageSize + pageSize);
+  const pagedRegisterIds = pagedRows.map((r) => r.registerId);
+  const allPagedSelected = pagedRegisterIds.length > 0 && pagedRegisterIds.every((id) => selected.has(id));
+  const somePagedSelected = pagedRegisterIds.some((id) => selected.has(id));
 
   // table-layout:fixed only reliably locks column widths to what's declared on the first row when
   // the <table> itself also has an explicit width (per spec, a table left at width:auto is allowed
@@ -173,7 +180,19 @@ export function AttendanceGrid({ rows, selected, onToggleSelect, onCellClick, ex
         <table className="text-sm border-separate border-spacing-0 table-fixed" style={{ width: rem(totalTableWidthRem) }}>
           <thead>
             <tr className="[&>th]:sticky [&>th]:top-0 [&>th]:z-10">
-              <th className={cn(CHECKBOX_COL, GRID_LINE, '!z-20 bg-slate-50 p-1.5')} />
+              <th className={cn(CHECKBOX_COL, GRID_LINE, '!z-20 bg-slate-50 p-1.5')}>
+                {onToggleSelectPage && (
+                  <input
+                    type="checkbox"
+                    checked={allPagedSelected}
+                    ref={(el) => { if (el) el.indeterminate = !allPagedSelected && somePagedSelected; }}
+                    onChange={() => onToggleSelectPage(pagedRegisterIds, !allPagedSelected)}
+                    aria-label={allPagedSelected ? 'Deselect all on this page' : 'Select all on this page'}
+                    title={allPagedSelected ? 'Deselect all on this page' : 'Select all on this page'}
+                    className="w-3.5 h-3.5 rounded-full accent-[color:var(--color-primary)] cursor-pointer"
+                  />
+                )}
+              </th>
               <th className={cn(NAME_COL, GRID_LINE, '!z-20 bg-slate-50 px-2 py-1.5 text-left', !showSummaryCols && STICKY_EDGE)}>
                 <span className="text-[10.5px] font-semibold text-slate-500 uppercase tracking-wide">Employee</span>
               </th>

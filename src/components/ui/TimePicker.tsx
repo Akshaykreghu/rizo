@@ -4,13 +4,12 @@ import { useState } from 'react';
 import { ChevronUp, ChevronDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-// A 12-hour Hour/Minute/Second spinner + AM/PM toggle that reads and emits 24-hour "HH:MM:SS" —
-// swapped in for the native <input type="time" step="1">, whose rendered widget varies wildly by
-// browser/OS and looks particularly rough with second-level granularity. Each segment is a boxed
-// number with up/down arrows (not a dropdown list) per the requested design. Seconds are kept (not
-// simplified away) because legacy's own punch-entry widget (EditPunches/form.ctp's
-// `$('#LOGTIME').timepicker(...)`) is configured with `format: 'hh:mm:ss', showSeconds: true` —
-// second-level precision on a manually-entered punch is a real legacy behavior.
+// A 24-hour Hour/Minute/Second spinner that reads and emits 24-hour "HH:MM:SS" — swapped in for the
+// native <input type="time" step="1">, whose rendered widget varies wildly by browser/OS and looks
+// particularly rough with second-level granularity. Each segment is a boxed number with up/down
+// arrows (not a dropdown list) per the requested design. Seconds are kept (not simplified away)
+// because legacy's own punch-entry widget (EditAttendanceController's "Time" field, confirmed live
+// at 18:00:15) shows hour values from 00-23, not a 12-hour clock with AM/PM.
 // Each segment is also directly typeable, not just arrow-steppable: onKeyDown rejects any keystroke
 // that isn't a digit, a navigation/editing key, or a keyboard shortcut (Ctrl/Cmd+something), so
 // nothing invalid ever lands in the field; onChange further strips non-digits and caps at 2 characters
@@ -18,26 +17,22 @@ import { cn } from '@/lib/utils';
 // clamped (never wrapped) into the segment's valid range on commit.
 
 interface Parsed {
-  hour12: number;
+  hour: number;
   minute: number;
   second: number;
-  meridiem: 'AM' | 'PM';
 }
 
 function parse24(value: string): Parsed | null {
   const m = /^(\d{1,2}):(\d{2})(?::(\d{2}))?/.exec(value ?? '');
   if (!m) return null;
-  const h24 = Number(m[1]);
+  const hour = Number(m[1]);
   const minute = Number(m[2]);
   const second = m[3] ? Number(m[3]) : 0;
-  const meridiem: 'AM' | 'PM' = h24 >= 12 ? 'PM' : 'AM';
-  const hour12 = h24 % 12 === 0 ? 12 : h24 % 12;
-  return { hour12, minute, second, meridiem };
+  return { hour, minute, second };
 }
 
-function to24({ hour12, minute, second, meridiem }: Parsed): string {
-  const h24 = (hour12 % 12) + (meridiem === 'PM' ? 12 : 0);
-  return `${String(h24).padStart(2, '0')}:${String(minute).padStart(2, '0')}:${String(second).padStart(2, '0')}`;
+function to24({ hour, minute, second }: Parsed): string {
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:${String(second).padStart(2, '0')}`;
 }
 
 /** Wraps n into [min, max] (inclusive), stepping by delta (+1/-1). */
@@ -154,35 +149,17 @@ export function TimePicker({
   disabled?: boolean;
   className?: string;
 }) {
-  const parsed = parse24(value) ?? { hour12: 9, minute: 0, second: 0, meridiem: 'AM' as const };
+  const parsed = parse24(value) ?? { hour: 9, minute: 0, second: 0 };
 
   const update = (patch: Partial<Parsed>) => onChange(to24({ ...parsed, ...patch }));
 
   return (
     <div className={cn('flex items-center gap-1.5', className)}>
-      <SpinnerSegment label="hour" value={parsed.hour12} min={1} max={12} disabled={disabled} onChange={(hour12) => update({ hour12 })} />
+      <SpinnerSegment label="hour" value={parsed.hour} min={0} max={23} disabled={disabled} onChange={(hour) => update({ hour })} />
       <span className="text-[#86868B] text-[13px] font-semibold">:</span>
       <SpinnerSegment label="minute" value={parsed.minute} min={0} max={59} disabled={disabled} onChange={(minute) => update({ minute })} />
       <span className="text-[#86868B] text-[13px] font-semibold">:</span>
       <SpinnerSegment label="second" value={parsed.second} min={0} max={59} disabled={disabled} onChange={(second) => update({ second })} />
-      <div className="flex flex-col gap-0.5 ml-1">
-        {(['AM', 'PM'] as const).map((mer) => (
-          <button
-            key={mer}
-            type="button"
-            disabled={disabled}
-            onClick={() => update({ meridiem: mer })}
-            className={cn(
-              'px-1.5 py-[3px] rounded-[6px] text-[11px] font-semibold transition-all duration-150 disabled:cursor-not-allowed',
-              parsed.meridiem === mer
-                ? 'bg-[color:var(--color-primary)]/10 text-[color:var(--color-primary)]'
-                : 'text-[#86868B] hover:text-[#1D1D1F]'
-            )}
-          >
-            {mer}
-          </button>
-        ))}
-      </div>
     </div>
   );
 }

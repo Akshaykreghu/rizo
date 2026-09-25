@@ -69,7 +69,15 @@ function deriveLeaveSummary(rows: Record<string, unknown>[]): Record<string, unk
 }
 
 function deriveLeaveBalance(rows: Record<string, unknown>[]): Record<string, unknown>[] {
-  return rows.map((r) => ({ ...r, leave_policy_label: POLICY_TYPE_LABEL[String(r.leave_policy_type)] ?? 'Present Days' }));
+  return rows.map((r) => ({
+    ...r,
+    leave_policy_label: POLICY_TYPE_LABEL[String(r.leave_policy_type)] ?? 'Present Days',
+    // Legacy's screen view (reportleavebalancenew.ctp) renders the same `leavebalance` value under
+    // two separate headers — "Eligibility For Selected Date" (a misleading label; it's not a date,
+    // just the balance already zeroed out for an employee not yet eligible as of the selected date)
+    // and "Leave Balance (End Of Period)" — so both columns read the identical number.
+    eligibility_balance: r.leavebalance,
+  }));
 }
 
 function deriveMonthlyLeave(rows: Record<string, unknown>[]): Record<string, unknown>[] {
@@ -147,7 +155,7 @@ const SUBTYPE_META: Record<Subtype, SubtypeMeta> = {
     groupBy: unitsGroupBy,
     deriveRows: deriveLeaveBalance,
     slNo: true,
-    currencyKeys: new Set(['alloted_leave_forthe_year', 'carryforwarded', 'leavetaken', 'encashed_leave', 'leavebalance', 'yearlybalance']),
+    currencyKeys: new Set(['alloted_leave_forthe_year', 'carryforwarded', 'leavetaken', 'encashed_leave', 'eligibility_balance', 'leavebalance']),
     columns: [
       { key: 'emp_name', label: 'Employee Name' }, { key: 'employee_id', label: 'Employee ID' },
       { key: 'joining_date', label: 'Date Of Joining' }, { key: 'branch', label: 'Branch' },
@@ -155,8 +163,8 @@ const SUBTYPE_META: Record<Subtype, SubtypeMeta> = {
       { key: 'leave_type', label: 'Leave Type' }, { key: 'leave_policy_label', label: 'Leave Policy' },
       { key: 'alloted_leave_forthe_year', label: 'Allotted Leave For The Year' }, { key: 'carryforwarded', label: 'Carry Forwarded' },
       { key: 'leavetaken', label: 'Leave Taken' }, { key: 'encashed_leave', label: 'Encashed Leaves' },
+      { key: 'eligibility_balance', label: 'Eligibility For Selected Date' },
       { key: 'leavebalance', label: 'Leave Balance (End Of Period)' },
-      { key: 'yearlybalance', label: 'Yearly Balance' },
     ],
   },
   MonthlyLeave: {

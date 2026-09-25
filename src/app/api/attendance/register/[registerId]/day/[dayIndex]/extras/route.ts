@@ -1,7 +1,7 @@
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
-import { getDailyOt, getRegisterDayContext, isOtEligibleDay } from '@/lib/attendance';
+import { getDailyOt, getRegisterDayContext, isLeaveAlreadyApplied, isOtEligibleDay } from '@/lib/attendance';
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket } from 'mysql2';
 
@@ -32,7 +32,7 @@ export async function GET(
   const day = await getRegisterDayContext(pool, registerId, dayIdx);
   if (!day) return NextResponse.json({ error: 'Register row not found' }, { status: 404 });
 
-  const [punches, otEligible, ot, computedRow] = await Promise.all([
+  const [punches, otEligible, ot, computedRow, leaveFirst, leaveSecond, leaveFull] = await Promise.all([
     pool.execute<RowDataPacket[]>(
       `SELECT device_attandance_seq, LOGDATE, C1 AS direction, status
        FROM device_attandance
@@ -52,6 +52,13 @@ export async function GET(
        ORDER BY emp_detail_timeattandance_pkey DESC LIMIT 1`,
       [day.empFkey, day.attDate]
     ).then(([rows]) => rows[0] as RowDataPacket | undefined),
+    // Surfaced so the modal can warn/disable *before* a save attempt fails — mirrors the same
+    // per-session check the PUT /day/[dayIndex] status route enforces server-side
+    // (isLeaveAlreadyApplied, ported from AttendanceRegisterNewController::isLeaveAlreadyApplied()):
+    // a leave on session 1 (first half) blocks editing session 1 and "full day", but not session 2.
+    isLeaveAlreadyApplied(pool, day.empFkey, day.attDate, 1),
+    isLeaveAlreadyApplied(pool, day.empFkey, day.attDate, 2),
+    isLeaveAlreadyApplied(pool, day.empFkey, day.attDate, 3),
   ]);
 
   const computedAttendance = computedRow
@@ -63,5 +70,13 @@ export async function GET(
       }
     : null;
 
-  return NextResponse.json({ attDate: day.attDate, locked: day.locked, punches, otEligible, ot, computedAttendance });
+  return NextResponse.json({
+    attDate: day.attDate,
+    locked: day.locked,
+    punches,
+    otEligible,
+    ot,
+    computedAttendance,
+    leaveExists: { first: leaveFirst, second: leaveSecond, full: leaveFull },
+  });
 }

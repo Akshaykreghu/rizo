@@ -3,7 +3,7 @@ import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
 import {
   FIELD_COLUMNS, getAttPeriod, upsertMonthlyOt, computeAttendanceTotals, getNaPeriodBounds,
-  saveAttendanceTotals, fieldsToArray,
+  saveAttendanceTotals, fieldsToArray, applyLeaveCodesOnVerify,
 } from '@/lib/attendance';
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket } from 'mysql2';
@@ -50,6 +50,18 @@ export async function POST(request: NextRequest) {
     }
 
     await pool.execute("UPDATE attendance_register SET isdelete = 'N' WHERE registerid = ?", [row.registerid]);
+
+    // Leave codes picked via the day-cell editor are UI/FIELDn-display only until this point — this
+    // is where they actually become real leaveentries/emp_leave_transactions rows, matching "leave
+    // entries only get created on attendance verification, not on cell save."
+    try {
+      await applyLeaveCodesOnVerify(
+        pool, row.emp_fkey, row.month_year, fieldsToArray(row), calendarDays, session.user.empFkey ?? 0
+      );
+    } catch {
+      // Best-effort, same failure handling as the surrounding totals/OT recompute steps below —
+      // a leave-application hiccup for one day shouldn't block the whole verify action.
+    }
 
     // Mirrors legacy's verifyAttendance(): recompute + persist the totals as part of verifying.
     try {

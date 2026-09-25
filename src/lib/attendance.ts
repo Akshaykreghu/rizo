@@ -1,4 +1,4 @@
-import type { Pool, PoolConnection, RowDataPacket } from 'mysql2/promise';
+import type { Pool, PoolConnection, ResultSetHeader, RowDataPacket } from 'mysql2/promise';
 import { toISODate } from './settlement';
 
 export { toISODate };
@@ -169,6 +169,76 @@ export async function isLeaveAlreadyApplied(
 }
 
 const STANDARD_CODES = new Set(['P', 'A', 'WO', 'HO', 'NA', 'LOP', '']);
+
+// Per explicit product decision: picking a leave code on a day cell (day-cell status route) is
+// UI/FIELDn-display only — no leaveentries/emp_leave_transactions row is created at Save time.
+// The actual leave application is deferred to here, called once per register row from
+// /verify/route.ts, so a leave only becomes real once the register row is verified.
+// Scans FIELD_n for each half (session 1/2), resolves the code to this employee's matching leave
+// head (by occurance, same resolution getLeaveTypeOptions exposes to the day-cell modal), and
+// creates+approves it via leave_transaction_prc exactly as the day-cell route used to do inline —
+// skipping any half that isn't a leave code, or that already has an active leave applied.
+export async function applyLeaveCodesOnVerify(
+  connection: Pool | PoolConnection,
+  empFkey: number,
+  monthYear: string,
+  fields: string[],
+  calendarDays: number,
+  approverId: number
+): Promise<void> {
+  const [[proff]] = await connection.execute<RowDataPacket[]>(
+    'SELECT LEAVEPOLICY_GROUP_ID FROM emp_proff WHERE emp_fkey = ?',
+    [empFkey]
+  );
+  if (!proff?.LEAVEPOLICY_GROUP_ID) return;
+
+  const [heads] = await connection.execute<RowDataPacket[]>(
+    `SELECT shi.salary_head_item_pkey, shi.occurance
+     FROM leavepolicy lp
+     JOIN salary_head_items shi ON shi.salary_head_item_pkey = lp.salary_head_item_fkey
+     WHERE lp.LEAVEPOLICY_GROUP_ID = ? AND lp.status = 1 AND shi.item_type = 'Leave' AND shi.status = 1`,
+    [proff.LEAVEPOLICY_GROUP_ID]
+  );
+  if (heads.length === 0) return;
+  const headByCode = new Map<string, number>(heads.map((h) => [String(h.occurance).toUpperCase(), h.salary_head_item_pkey]));
+
+  for (let d = 1; d <= calendarDays; d++) {
+    const raw = (fields[d - 1] ?? '').trim();
+    if (!raw) continue;
+    const [firstCode, secondCode] = raw.includes('/') ? raw.split('/') : [raw, raw];
+    const attDate = `${monthYear}-${String(d).padStart(2, '0')}`;
+
+    for (const [session, code] of [[1, firstCode], [2, secondCode]] as const) {
+      const upper = code.trim().toUpperCase();
+      if (STANDARD_CODES.has(upper)) continue;
+      const salaryHeadItemFkey = headByCode.get(upper);
+      if (!salaryHeadItemFkey) continue;
+
+      const alreadyApplied = await isLeaveAlreadyApplied(connection, empFkey, attDate, session);
+      if (alreadyApplied) continue;
+
+      const fromHalf = session === 2 ? 2 : 1;
+      const toHalf = session === 1 ? 1 : 2;
+      const leaveDays = 0.5;
+
+      const [insertResult] = await connection.execute<ResultSetHeader>(
+        `INSERT INTO leaveentries
+           (salary_head_item_fkey, applied_date, LEAVESTATUS, EMP_fkey, FROMDATE, FROMHALF, TODATE, TOHALF,
+            ISAutherized, ISAutherizedby, ISAPPROVED, APPROVEDBY, Reason, leave_days)
+         VALUES (?, CURDATE(), 'Approved', ?, ?, ?, ?, ?, 1, ?, 1, ?, 'Leave applied through attendance verification', ?)`,
+        [salaryHeadItemFkey, empFkey, attDate, fromHalf, attDate, toHalf, approverId, approverId, leaveDays]
+      );
+      const leaveEntryId = insertResult.insertId;
+
+      await connection.query('CALL leave_transaction_prc(?, ?, ?, ?, ?, ?, ?, ?, @err)', [
+        leaveEntryId, empFkey, attDate, fromHalf, attDate, toHalf, leaveDays, 'Applied',
+      ]);
+      await connection.query('CALL leave_transaction_prc(?, ?, ?, ?, ?, ?, ?, ?, @err)', [
+        leaveEntryId, empFkey, attDate, fromHalf, attDate, toHalf, leaveDays, 'Approved',
+      ]);
+    }
+  }
+}
 
 export function isLeaveCode(code: string): boolean {
   return !STANDARD_CODES.has((code ?? '').trim().toUpperCase());

@@ -133,7 +133,6 @@ export interface LeaveBalanceReportRow extends RowDataPacket {
   carryforwarded: number;
   leavebalance: number;
   leavetaken: number;
-  yearlybalance: number;
   encashed_leave: number;
 }
 
@@ -172,12 +171,6 @@ export async function generateLeaveBalanceReport(pool: Pool, params: LeaveBalanc
         params.asOfDate,
         policy.dynamic_period
       );
-
-      const [[yearlyRow]] = await pool.execute<RowDataPacket[]>(
-        `SELECT leave_balance_inthe_year_fn(?, ?, ?) AS yearlybalance`,
-        [emp.emp_pkey, policy.salary_head_item_fkey, cycle.end]
-      );
-      const yearlybalance = Number(yearlyRow?.yearlybalance ?? 0);
 
       const [[detail]] = await pool.execute<RowDataPacket[]>(
         `SELECT ed.emp_pkey, CONCAT(ed.first_name, ' ', IFNULL(ed.last_name, '')) AS emp_name,
@@ -224,7 +217,6 @@ export async function generateLeaveBalanceReport(pool: Pool, params: LeaveBalanc
         carryforwarded: carryLimit != null ? Math.min(carryforwarded, carryLimit) : carryforwarded,
         leavebalance: Math.round(leavebalance * 10) / 10,
         leavetaken: Number(detail.leavetaken ?? 0),
-        yearlybalance: Math.round(yearlybalance * 10) / 10,
         encashed_leave: Number(detail.encashed_leave ?? 0),
       } as LeaveBalanceReportRow);
     }

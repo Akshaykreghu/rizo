@@ -55,6 +55,10 @@ interface DayExtras {
   otEligible: boolean;
   ot: { otDurationMin: number | null; setDurationMin: number | null; remarks: string | null; isManual: boolean } | null;
   computedAttendance: { inTime: string | null; outTime: string | null; durationMin: number | null; present: string | null } | null;
+  /** Per-session leave conflict, ported from AttendanceRegisterNewController::isLeaveAlreadyApplied()
+   * — an Applied/Authorized/Approved leave on session 1 (first half) blocks editing session 1 and
+   * "full day", but not session 2, and vice versa; any session blocks "full day". */
+  leaveExists: { first: boolean; second: boolean; full: boolean };
 }
 
 function formatDurationMin(min: number): string {
@@ -65,13 +69,12 @@ function formatDurationMin(min: number): string {
   return `${h}h ${m}m`;
 }
 
-// Renders a 24h "HH:MM:SS" (the TimePicker's own value format) as a 12h "hh:mm AM/PM" display string,
-// matching how already-saved punches are displayed elsewhere in this modal.
-function formatHHMMSS12(hhmmss: string): string {
-  const [h, m] = hhmmss.split(':').map(Number);
-  const d = new Date();
-  d.setHours(h, m, 0, 0);
-  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+// Renders a 24h "HH:MM:SS" as "HH:MM" — matches legacy's own punch-entry widget (confirmed live at
+// e.g. 18:00:15, not a 12-hour clock with AM/PM) and how already-saved punches are displayed
+// elsewhere in this modal.
+function formatHHMM24(hhmmss: string): string {
+  const [h, m] = hhmmss.split(':');
+  return `${h.padStart(2, '0')}:${m.padStart(2, '0')}`;
 }
 
 export default function AttendanceRegisterPage() {
@@ -83,6 +86,13 @@ export default function AttendanceRegisterPage() {
   const [expandedRow, setExpandedRow] = useState<number | null>(null);
   const [editCell, setEditCell] = useState<{ row: AttendanceRow; dayIndex: number; day: AttendanceDay } | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  // Auto-dismiss the bottom-right toast after a few seconds instead of leaving it up until the next
+  // action happens to call setMessage again.
+  useEffect(() => {
+    if (!message) return;
+    const t = setTimeout(() => setMessage(null), 5000);
+    return () => clearTimeout(t);
+  }, [message]);
   const [showBulkUpdate, setShowBulkUpdate] = useState(false);
   const [showSummaryCols, setShowSummaryCols] = useState(true);
   const { slotEl } = useHeaderSlot();
@@ -224,6 +234,18 @@ export default function AttendanceRegisterPage() {
     });
   };
 
+  // Select/deselect only the current page's rows — never the full filtered set across pagination.
+  const toggleSelectPage = (registerIds: number[], checked: boolean) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const id of registerIds) {
+        if (checked) next.add(id);
+        else next.delete(id);
+      }
+      return next;
+    });
+  };
+
   return (
     <div>
       {/* Page title sits in the global Header row, left-aligned with this content, alongside the account controls. */}
@@ -297,7 +319,10 @@ export default function AttendanceRegisterPage() {
       </div>
 
       {message && (
-        <div className="mb-3 text-[12.5px] font-medium bg-[color:var(--color-primary-light)] text-[color:var(--color-primary-dark)] px-3.5 py-2 rounded-lg">
+        <div
+          className="fixed bottom-5 right-5 z-[60] max-w-sm text-[12.5px] font-medium bg-[color:var(--color-primary-light)] text-[color:var(--color-primary-dark)] px-3.5 py-2.5 rounded-lg shadow-lg animate-fade-in"
+          role="status"
+        >
           {message}
         </div>
       )}
@@ -400,6 +425,7 @@ export default function AttendanceRegisterPage() {
           rows={rows}
           selected={selected}
           onToggleSelect={toggleSelect}
+          onToggleSelectPage={toggleSelectPage}
           onCellClick={tab === 'unverified' ? (row, dayIndex, day) => setEditCell({ row, dayIndex, day }) : undefined}
           expandedRow={expandedRow}
           onToggleExpand={(id) => setExpandedRow((prev) => (prev === id ? null : id))}
@@ -505,6 +531,17 @@ function DayEditor({
     queryKey: ['attendance-day-extras', registerId, dayIndex],
     queryFn: () => fetch(`/api/attendance/register/${registerId}/day/${dayIndex}/extras`).then((r) => r.json()),
   });
+
+  // Whether the currently-selected half/full-day tab conflicts with an existing leave — "full day"
+  // conflicts if EITHER half has one (matches isLeaveAlreadyApplied's session=3 OR-across-sessions
+  // check server-side).
+  const leaveConflict = extras
+    ? half === 'full'
+      ? extras.leaveExists.first || extras.leaveExists.second || extras.leaveExists.full
+      : half === 'first'
+        ? extras.leaveExists.first || extras.leaveExists.full
+        : extras.leaveExists.second || extras.leaveExists.full
+    : false;
 
   const [punchTime, setPunchTime] = useState(nowAsHHMMSS);
   const [punchDirection, setPunchDirection] = useState<'in' | 'out'>('in');
@@ -640,7 +677,7 @@ function DayEditor({
           anySuccess = true;
         } catch (err) {
           stillPending.push(p);
-          errorParts.push(`${p.direction} punch at ${formatHHMMSS12(p.time)}: ${err instanceof Error ? err.message : 'failed'}`);
+          errorParts.push(`${p.direction} punch at ${formatHHMM24(p.time)}: ${err instanceof Error ? err.message : 'failed'}`);
         }
       }
       if (addedCount > 0) successParts.push(`${addedCount} punch${addedCount === 1 ? '' : 'es'} added`);
@@ -716,6 +753,16 @@ function DayEditor({
         <div className="overflow-y-auto scroll-fade flex-1">
           {/* Status */}
           <section className="px-7 pb-6">
+            {leaveConflict && (
+              <div className="flex items-start gap-2 mb-3.5 px-3.5 py-2.5 rounded-[10px] bg-amber-50 border border-amber-200 text-amber-800 text-[12.5px]">
+                <Lock className="w-3.5 h-3.5 mt-[1px] flex-shrink-0" />
+                <span>
+                  An active leave (Applied/Approved/Authorized) already exists for this{' '}
+                  {half === 'full' ? 'day' : half === 'first' ? "day's first half" : "day's second half"}.
+                  Cancel it in the Leave module before changing this status.
+                </span>
+              </div>
+            )}
             <div className="flex bg-[#F5F5F7] rounded-[10px] p-[3px] mb-4">
               {HALVES.map((h) => (
                 <button
@@ -738,7 +785,7 @@ function DayEditor({
                   <button
                     key={c}
                     onClick={() => setPendingStatus({ half, status: c })}
-                    disabled={saving}
+                    disabled={saving || leaveConflict}
                     className="text-[13px] font-medium px-3.5 py-[7px] rounded-[9px] border disabled:opacity-40 transition-all duration-150"
                     style={{
                       backgroundColor: hexToRgba(color.bg, isSelected ? 0.16 : 0.08),
@@ -756,7 +803,7 @@ function DayEditor({
                   <button
                     key={lo.salary_head_item_fkey}
                     onClick={() => setPendingStatus({ half, status: lo.code, salaryHeadItemFkey: lo.salary_head_item_fkey })}
-                    disabled={saving || (!lo.isIndirect && lo.balance <= 0)}
+                    disabled={saving || leaveConflict || (!lo.isIndirect && lo.balance <= 0)}
                     className="text-[13px] font-medium px-3.5 py-[7px] rounded-[9px] border disabled:opacity-40 transition-all duration-150"
                     style={{
                       backgroundColor: hexToRgba('#8b5cf6', isSelected ? 0.16 : 0.08),
@@ -860,7 +907,7 @@ function DayEditor({
                       </span>
                       <span className="flex items-center gap-2.5">
                         <span className={cn('text-[13px] tabular-nums', isInactive ? 'text-amber-700' : 'text-[#6E6E73]')}>
-                          {new Date(p.LOGDATE).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' })}
+                          {new Date(p.LOGDATE).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC' })}
                         </span>
                         {!locked && (
                           <>
@@ -924,7 +971,7 @@ function DayEditor({
                         <span className="text-[10.5px] font-semibold text-[color:var(--color-primary)] bg-white px-1.5 py-[1px] rounded-[4px]">Pending</span>
                       </span>
                       <span className="flex items-center gap-2.5">
-                        <span className="text-[13px] text-[#6E6E73] tabular-nums">{formatHHMMSS12(p.time)}</span>
+                        <span className="text-[13px] text-[#6E6E73] tabular-nums">{formatHHMM24(p.time)}</span>
                         <button
                           onClick={() => setStagedPunches((prev) => prev.filter((_, idx) => idx !== i))}
                           disabled={isSaving}
@@ -1040,10 +1087,6 @@ function DayEditor({
     </div>
   );
 }
-
-// Bare codes — see the matching comment on HALVES' 'full' entry above; the day route's
-// mergeHalfDayStatus does the "X/X" doubling itself for statusType: 'full'.
-const BULK_STATUS_CODES = ['P', 'HO', 'WO', 'LOP'];
 
 // Matches legacy's own Bulk Update "Status" dropdown (EditAttendanceController), which offers
 // composite half-day codes directly rather than a bare code + separate half selector: Select,
@@ -1216,28 +1259,6 @@ function BulkUpdateModal({
               );
             })}
           </div>
-          <div className="flex flex-wrap gap-2 mb-1">
-            {BULK_STATUS_CODES.map((c) => {
-              const color = getCellColor(c, false);
-              const isSelected = status === c;
-              return (
-                <button
-                  key={c}
-                  onClick={() => setStatus(isSelected ? null : c)}
-                  disabled={running}
-                  className="text-[13px] font-medium px-3.5 py-[7px] rounded-[9px] border disabled:opacity-40 transition-all duration-150"
-                  style={{
-                    backgroundColor: hexToRgba(color.bg, isSelected ? 0.16 : 0.08),
-                    color: color.bg,
-                    borderColor: isSelected ? hexToRgba(color.bg, 0.5) : 'transparent',
-                  }}
-                >
-                  {c}
-                </button>
-              );
-            })}
-          </div>
-          <p className="text-[12px] text-[#86868B]">Leave codes aren&apos;t offered here, balances/policy vary per employee -- use the day-cell editor for those.</p>
         </div>
 
         <div className="px-7 pb-6 border-t border-black/[0.06] pt-6">
