@@ -33,12 +33,6 @@
   --color-danger-light: #fff0f6;
   --color-danger-soft: rgba(232, 62, 140, 0.08);
 
-  /* Orange — Leave status (attendance register only) */
-  --color-leave: #f97316;
-  --color-leave-dark: #c2570a;
-  --color-leave-light: #fff3e8;
-  --color-leave-soft: rgba(249, 115, 22, 0.10);
-
   --color-text-primary: #0f172a;
   --color-text-secondary: #475569;
   --color-text-muted: #94a3b8;
