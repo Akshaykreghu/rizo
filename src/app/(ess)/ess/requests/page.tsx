@@ -912,7 +912,7 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<LeaveBalancePreview | null>(null);
-  const [form, setForm] = useState({ leave_type_id: defaultTypeId ? String(defaultTypeId) : '', from_date: today(), from_half: '1', to_date: '', to_half: '2', reason: '', contact_person: '', contact_no: '' });
+  const [form, setForm] = useState({ leave_type_id: defaultTypeId ? String(defaultTypeId) : '', from_date: '', from_half: '1', to_date: '', to_half: '2', reason: '', contact_person: '', contact_no: '' });
   // Mirrors validateLeave()'s exact trigger-gating (addeditleave_new.ctp:921-933) — legacy only
   // checks max_leave_limit when #TODATE fires changeDate, and min_leave_limit only when #TOHALF
   // fires change. Neither check ever runs from any other field change (including FROMHALF), so a
