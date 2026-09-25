@@ -1097,7 +1097,6 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
               <div style={{ background: 'var(--bg-page)', border: '1px solid var(--border)', borderRadius: 9, padding: '8px 12px', marginTop: 8, fontSize: 12.5 }}>
                 <div style={{ fontWeight: 700, color: 'var(--text-primary)' }}>
                   Available Leave Balance: <strong style={{ color: preview.balance > 0 ? BRAND : '#dc2626' }}>{preview.balance}</strong>
-                  {preview.maxLeaveLimit > 0 && <span style={{ fontWeight: 500, color: 'var(--text-muted)' }}> · You can apply for at most {preview.maxLeaveLimit} day{preview.maxLeaveLimit === 1 ? '' : 's'} at a time</span>}
                 </div>
                 {preview.balance <= 0 && !preview.allowNegative && (
                   <div style={{ color: '#dc2626', marginTop: 2 }}>You have no leave balance!</div>
