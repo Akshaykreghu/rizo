@@ -19,23 +19,18 @@ interface LeaveType {
 
 // Mirrors legacy's validateLeave() day-count formula (same as the ESS Apply Leave form) — weekends
 // excluded, half-day handling on the first/last day of the range.
+// Ported from GetLeaveBalanceNew() (LeaveRequestController.php:5792-5805) — a plain inclusive
+// calendar-day diff between From and To, adjusted only for half-day sessions. Legacy does NOT
+// exclude weekends or holidays here (a weekoff/holiday check exists elsewhere but is dead/commented
+// out in legacy itself), so this must not filter days out either.
 function calcLeaveDays(from: string, fromHalf: number, to: string, toHalf: number) {
   if (!from || !to) return 0;
-  let days = 0;
-  const cur = new Date(from + 'T00:00:00');
+  const start = new Date(from + 'T00:00:00');
   const end = new Date(to + 'T00:00:00');
-  while (cur <= end) {
-    const dow = cur.getDay();
-    if (dow !== 0 && dow !== 6) {
-      const ds = cur.toISOString().split('T')[0];
-      const isFirst = ds === from, isLast = ds === to;
-      if (isFirst && isLast) days += (fromHalf === 2 || toHalf === 1) ? 0.5 : 1;
-      else if (isFirst && fromHalf === 2) days += 0.5;
-      else if (isLast && toHalf === 1) days += 0.5;
-      else days += 1;
-    }
-    cur.setDate(cur.getDate() + 1);
-  }
+  let days = Math.round((end.getTime() - start.getTime()) / 86400000) + 1;
+  if (fromHalf === 1 && toHalf === 1) days -= 0.5;
+  else if (fromHalf === 2 && toHalf === 2) days -= 0.5;
+  else if (fromHalf === 2 && toHalf === 1) days -= 1;
   return days;
 }
 
@@ -578,11 +573,12 @@ function LeaveRequestsContent() {
                   <label className="block text-[12px] font-medium text-slate-600 mb-1.5">To Date</label>
                   <input
                     type="date"
-                    min={balancePreview?.joiningDate ?? undefined}
+                    disabled={!form.fromDate}
+                    min={form.fromDate || balancePreview?.joiningDate || undefined}
                     max={balancePreview?.terminationDate ?? undefined}
                     value={form.toDate}
                     onChange={(e) => setForm((f) => ({ ...f, toDate: e.target.value }))}
-                    className={cn(INPUT_CLASS, 'w-full')}
+                    className={cn(INPUT_CLASS, 'w-full', !form.fromDate && 'opacity-50 cursor-not-allowed')}
                   />
                 </div>
                 <div>

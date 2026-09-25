@@ -274,8 +274,19 @@ export default function LeaveBalanceUploadPage() {
                 <input
                   type="number"
                   step="0.5"
+                  min="0"
+                  inputMode="decimal"
                   value={form.leaveBalance}
-                  onChange={(e) => setForm((f) => ({ ...f, leaveBalance: e.target.value }))}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    // Only allow empty, or a non-negative value in multiples of 0.5 (0, 0.5, 1, 1.5, 2, ...)
+                    if (v === '' || /^\d+(\.5)?$/.test(v)) {
+                      setForm((f) => ({ ...f, leaveBalance: v }));
+                    }
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === '-' || e.key === 'e' || e.key === 'E' || e.key === '+') e.preventDefault();
+                  }}
                   className={cn(INPUT_CLASS, 'w-full')}
                 />
               </div>

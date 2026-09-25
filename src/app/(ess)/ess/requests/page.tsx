@@ -51,23 +51,18 @@ function nowTime() {
 const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 function fmtMonth(m: string) { const [y, mo] = m.split('-'); return `${MONTHS_SHORT[parseInt(mo) - 1]} ${y}`; }
 function halfLabel(h?: number | null) { return h === 1 ? 'First Half' : h === 2 ? 'Second Half' : '—'; }
+// Ported from GetLeaveBalanceNew() (LeaveRequestController.php:5792-5805) — a plain inclusive
+// calendar-day diff between From and To, adjusted only for half-day sessions. Legacy does NOT
+// exclude weekends or holidays here (a weekoff/holiday check exists elsewhere but is dead/commented
+// out in legacy itself), so this must not filter days out either.
 function calcLeaveDays(from: string, fromHalf: number, to: string, toHalf: number) {
   if (!from || !to) return 0;
-  let days = 0;
-  const cur = new Date(from + 'T00:00:00');
+  const start = new Date(from + 'T00:00:00');
   const end = new Date(to + 'T00:00:00');
-  while (cur <= end) {
-    const dow = cur.getDay();
-    if (dow !== 0 && dow !== 6) {
-      const ds = cur.toISOString().split('T')[0];
-      const isFirst = ds === from, isLast = ds === to;
-      if (isFirst && isLast) days += (fromHalf === 2 || toHalf === 1) ? 0.5 : 1;
-      else if (isFirst && fromHalf === 2) days += 0.5;
-      else if (isLast && toHalf === 1) days += 0.5;
-      else days += 1;
-    }
-    cur.setDate(cur.getDate() + 1);
-  }
+  let days = Math.round((end.getTime() - start.getTime()) / 86400000) + 1;
+  if (fromHalf === 1 && toHalf === 1) days -= 0.5;
+  else if (fromHalf === 2 && toHalf === 2) days -= 0.5;
+  else if (fromHalf === 2 && toHalf === 1) days -= 1;
   return days;
 }
 
@@ -1102,7 +1097,7 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
               <div style={{ background: 'var(--bg-page)', border: '1px solid var(--border)', borderRadius: 9, padding: '8px 12px', marginTop: 8, fontSize: 12.5 }}>
                 <div style={{ fontWeight: 700, color: 'var(--text-primary)' }}>
                   Available Leave Balance: <strong style={{ color: preview.balance > 0 ? BRAND : '#dc2626' }}>{preview.balance}</strong>
-                  {preview.maxLeaveLimit > 0 && <span style={{ fontWeight: 500, color: 'var(--text-muted)' }}> · Max {preview.maxLeaveLimit}/request</span>}
+                  {preview.maxLeaveLimit > 0 && <span style={{ fontWeight: 500, color: 'var(--text-muted)' }}> · You can apply for at most {preview.maxLeaveLimit} day{preview.maxLeaveLimit === 1 ? '' : 's'} at a time</span>}
                 </div>
                 {preview.balance <= 0 && !preview.allowNegative && (
                   <div style={{ color: '#dc2626', marginTop: 2 }}>You have no leave balance!</div>
@@ -1146,9 +1141,10 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
                   <input
                     type="date"
                     required
-                    min={preview?.joiningDate ?? undefined}
+                    disabled={label === 'To' && !form.from_date}
+                    min={label === 'To' ? (form.from_date || preview?.joiningDate || undefined) : (preview?.joiningDate ?? undefined)}
                     max={preview?.terminationDate ?? undefined}
-                    style={{ ...inp, marginBottom: 6 }}
+                    style={{ ...inp, marginBottom: 6, ...(label === 'To' && !form.from_date ? { opacity: 0.5, cursor: 'not-allowed' } : {}) }}
                     value={form[dk]}
                     onChange={(e) => {
                       setForm((f) => ({ ...f, [dk]: e.target.value }));
