@@ -825,6 +825,7 @@ interface LeaveBalancePreview {
   minServiceOk: boolean; minServiceMessage: string | null;
   advanceNoticeOk: boolean; advanceNoticeMessage: string | null;
   documentMandatory: boolean; remarks: string | null;
+  joiningDate: string | null; terminationDate: string | null;
 }
 
 // These modals are bespoke fixed-overlay divs (not the shared components/ui/Modal, which already
@@ -1007,6 +1008,17 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
       setError('To date should be greater than or equal to From date.');
       return;
     }
+    // Matches getEmployeeDates()'s FROMDATE/TODATE picker bounds in addeditleave_new.ctp — leave
+    // can't be applied before the employee's joining date or after their termination date (only set
+    // once the employee is actually resigned/terminated).
+    if (preview?.joiningDate && form.from_date < preview.joiningDate) {
+      setError(`Leave cannot be applied before the joining date (${preview.joiningDate}).`);
+      return;
+    }
+    if (preview?.terminationDate && form.to_date > preview.terminationDate) {
+      setError(`Leave cannot be applied after the termination date (${preview.terminationDate}).`);
+      return;
+    }
     if (!form.reason.trim()) { setError('Please enter a reason for your leave.'); return; }
     if (!authorizerFkey) { setError('Please select who should Authorize this leave.'); return; }
     if (!approverFkey) { setError('Please select who should Approve this leave.'); return; }
@@ -1059,14 +1071,31 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
               options={types.map((t) => ({ value: String(t.salaryHeadItemFkey), label: t.occurance ? `${t.name} (${t.occurance})` : t.name }))}
             />
             {preview && (
-              <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginTop: 6 }}>
-                Balance: <strong style={{ color: preview.balance > 0 ? BRAND : '#dc2626' }}>{preview.balance}</strong> day(s)
-                {preview.maxLeaveLimit > 0 && <span style={{ fontWeight: 500, color: 'var(--text-muted)' }}> · Max {preview.maxLeaveLimit}/request</span>}
-              </div>
-            )}
-            {preview && preview.balance <= 0 && (
-              <div style={{ fontSize: 12, fontWeight: 700, color: '#dc2626', marginTop: 4 }}>
-                ⚠ You have no leave balance for this leave type.
+              <div style={{ background: 'var(--bg-page)', border: '1px solid var(--border)', borderRadius: 9, padding: '8px 12px', marginTop: 8, fontSize: 12.5 }}>
+                <div style={{ fontWeight: 700, color: 'var(--text-primary)' }}>
+                  Available Leave Balance: <strong style={{ color: preview.balance > 0 ? BRAND : '#dc2626' }}>{preview.balance}</strong>
+                  {preview.maxLeaveLimit > 0 && <span style={{ fontWeight: 500, color: 'var(--text-muted)' }}> · Max {preview.maxLeaveLimit}/request</span>}
+                </div>
+                {preview.balance <= 0 && !preview.allowNegative && (
+                  <div style={{ color: '#dc2626', marginTop: 2 }}>You have no leave balance!</div>
+                )}
+                {!preview.minServiceOk && (
+                  <div style={{ color: '#dc2626', marginTop: 2 }}>{preview.minServiceMessage}</div>
+                )}
+                {preview.minServiceOk && !preview.advanceNoticeOk && (
+                  <div style={{ color: '#dc2626', marginTop: 2 }}>{preview.advanceNoticeMessage}</div>
+                )}
+                {/* Matches getEmployeeDates()'s FROMDATE/TODATE picker bounds in addeditleave_new.ctp. */}
+                {preview.joiningDate && form.from_date && form.from_date < preview.joiningDate && (
+                  <div style={{ color: '#dc2626', marginTop: 2 }}>Leave cannot be applied before the joining date ({preview.joiningDate}).</div>
+                )}
+                {preview.terminationDate && form.to_date && form.to_date > preview.terminationDate && (
+                  <div style={{ color: '#dc2626', marginTop: 2 }}>Leave cannot be applied after the termination date ({preview.terminationDate}).</div>
+                )}
+                {/* Matches validateLeave()'s `edt < sdt` hard block in addeditleave_new.ctp. */}
+                {form.from_date && form.to_date && new Date(form.to_date) < new Date(form.from_date) && (
+                  <div style={{ color: '#dc2626', marginTop: 2 }}>To date should be greater than or equal to From date.</div>
+                )}
               </div>
             )}
           </div>
@@ -1077,19 +1106,21 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
               return (
                 <div key={label}>
                   <label style={lbl}>{label} Date *</label>
-                  <input type="date" required style={{ ...inp, marginBottom: 6 }} value={form[dk]} onChange={(e) => setForm((f) => ({ ...f, [dk]: e.target.value }))} />
+                  <input
+                    type="date"
+                    required
+                    min={preview?.joiningDate ?? undefined}
+                    max={preview?.terminationDate ?? undefined}
+                    style={{ ...inp, marginBottom: 6 }}
+                    value={form[dk]}
+                    onChange={(e) => setForm((f) => ({ ...f, [dk]: e.target.value }))}
+                  />
                   <EssDropdown value={form[hk]} onChange={(v) => setForm((f) => ({ ...f, [hk]: v }))} clearable={false}
                     options={[{ value: '1', label: 'First Half' }, { value: '2', label: 'Second Half' }]} />
                 </div>
               );
             })}
           </div>
-          {leaveDays > 0 && preview && (!preview.minServiceOk || (preview.minServiceOk && !preview.advanceNoticeOk)) && (
-            <div style={{ marginBottom: 14, padding: '8px 14px', borderRadius: 8, background: `${BRAND}12`, border: `1px solid ${BRAND}33`, fontSize: 11, fontWeight: 700, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-              {!preview.minServiceOk && <span style={{ color: '#dc2626' }}>Not yet eligible</span>}
-              {preview.minServiceOk && !preview.advanceNoticeOk && <span style={{ color: '#d97706' }}>Needs more advance notice</span>}
-            </div>
-          )}
           <div style={{ marginBottom: 14 }}>
             <label style={lbl}>Reason *</label>
             <input required type="text" maxLength={400} style={inp} value={form.reason} onChange={(e) => setForm((f) => ({ ...f, reason: e.target.value }))} />

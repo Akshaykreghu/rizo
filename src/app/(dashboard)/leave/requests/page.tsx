@@ -122,6 +122,8 @@ function LeaveRequestsContent() {
     minServiceMessage: string | null;
     advanceNoticeOk: boolean;
     advanceNoticeMessage: string | null;
+    joiningDate: string | null;
+    terminationDate: string | null;
   }>({
     queryKey: ['leave', 'balance-preview', form.empFkey, form.salaryHeadItemFkey, form.fromDate],
     queryFn: () =>
@@ -136,12 +138,17 @@ function LeaveRequestsContent() {
   // admin form previously only disabled Submit for empty fields/bad date order, so min-service,
   // advance-notice, balance, and min/max-per-request violations were shown as text but never
   // actually stopped submission.
+  // Advance-notice is deliberately NOT enforced here — admin can apply leave for an employee
+  // regardless of how much notice was given, unlike the ESS self-service form.
   const balanceBlocked = !!balancePreview && (
     !balancePreview.minServiceOk ||
-    !balancePreview.advanceNoticeOk ||
     leaveDays > balancePreview.balance ||
     (balancePreview.minLeaveLimit > 0 && leaveDays < balancePreview.minLeaveLimit) ||
-    (balancePreview.maxLeaveLimit > 0 && leaveDays > balancePreview.maxLeaveLimit)
+    (balancePreview.maxLeaveLimit > 0 && leaveDays > balancePreview.maxLeaveLimit) ||
+    // Matches getEmployeeDates()'s FROMDATE/TODATE picker bounds — leave can't be before joining
+    // or after termination (only set once the employee is actually resigned/terminated).
+    (!!balancePreview.joiningDate && form.fromDate < balancePreview.joiningDate) ||
+    (!!balancePreview.terminationDate && form.toDate > balancePreview.terminationDate)
   );
 
   // Ported from EmployeeLeavesController::showleavedays() / showleavedays.ctp — the "Leave Details"
@@ -526,9 +533,6 @@ function LeaveRequestsContent() {
                   {!balancePreview.minServiceOk && (
                     <div className="text-[color:var(--color-danger-dark)]">{balancePreview.minServiceMessage}</div>
                   )}
-                  {!balancePreview.advanceNoticeOk && (
-                    <div className="text-[color:var(--color-danger-dark)]">{balancePreview.advanceNoticeMessage}</div>
-                  )}
                   {balancePreview.balance === 0 && !balancePreview.allowNegative && (
                     <div className="text-[color:var(--color-danger-dark)]">You have no leave balance!</div>
                   )}
@@ -540,10 +544,28 @@ function LeaveRequestsContent() {
                   To date should be greater than or equal to From date.
                 </div>
               )}
+              {/* Matches getEmployeeDates()'s FROMDATE/TODATE picker bounds in addeditleave_new.ctp. */}
+              {balancePreview?.joiningDate && form.fromDate && form.fromDate < balancePreview.joiningDate && (
+                <div className="rounded-[9px] bg-[color:var(--color-danger-soft)] border border-[color:var(--color-danger-dark)]/20 px-3 py-2 text-[12.5px] text-[color:var(--color-danger-dark)]">
+                  Leave cannot be applied before the joining date ({balancePreview.joiningDate}).
+                </div>
+              )}
+              {balancePreview?.terminationDate && form.toDate && form.toDate > balancePreview.terminationDate && (
+                <div className="rounded-[9px] bg-[color:var(--color-danger-soft)] border border-[color:var(--color-danger-dark)]/20 px-3 py-2 text-[12.5px] text-[color:var(--color-danger-dark)]">
+                  Leave cannot be applied after the termination date ({balancePreview.terminationDate}).
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-[12px] font-medium text-slate-600 mb-1.5">From Date</label>
-                  <input type="date" value={form.fromDate} onChange={(e) => setForm((f) => ({ ...f, fromDate: e.target.value }))} className={cn(INPUT_CLASS, 'w-full')} />
+                  <input
+                    type="date"
+                    min={balancePreview?.joiningDate ?? undefined}
+                    max={balancePreview?.terminationDate ?? undefined}
+                    value={form.fromDate}
+                    onChange={(e) => setForm((f) => ({ ...f, fromDate: e.target.value }))}
+                    className={cn(INPUT_CLASS, 'w-full')}
+                  />
                 </div>
                 <div>
                   <label className="block text-[12px] font-medium text-slate-600 mb-1.5">From Half</label>
@@ -554,7 +576,14 @@ function LeaveRequestsContent() {
                 </div>
                 <div>
                   <label className="block text-[12px] font-medium text-slate-600 mb-1.5">To Date</label>
-                  <input type="date" value={form.toDate} onChange={(e) => setForm((f) => ({ ...f, toDate: e.target.value }))} className={cn(INPUT_CLASS, 'w-full')} />
+                  <input
+                    type="date"
+                    min={balancePreview?.joiningDate ?? undefined}
+                    max={balancePreview?.terminationDate ?? undefined}
+                    value={form.toDate}
+                    onChange={(e) => setForm((f) => ({ ...f, toDate: e.target.value }))}
+                    className={cn(INPUT_CLASS, 'w-full')}
+                  />
                 </div>
                 <div>
                   <label className="block text-[12px] font-medium text-slate-600 mb-1.5">To Half</label>
