@@ -566,12 +566,19 @@ function LeaveRequestsContent() {
               </div>
               <div>
                 <label className="block text-[12px] font-medium text-slate-600 mb-1.5">Reason</label>
-                <input type="text" value={form.reason} onChange={(e) => setForm((f) => ({ ...f, reason: e.target.value }))} className={cn(INPUT_CLASS, 'w-full')} />
+                <input type="text" maxLength={400} value={form.reason} onChange={(e) => setForm((f) => ({ ...f, reason: e.target.value }))} className={cn(INPUT_CLASS, 'w-full')} />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-[12px] font-medium text-slate-600 mb-1.5">Contact No.</label>
-                  <input type="text" value={form.contactNo} onChange={(e) => setForm((f) => ({ ...f, contactNo: e.target.value }))} className={cn(INPUT_CLASS, 'w-full')} />
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={10}
+                    value={form.contactNo}
+                    onChange={(e) => setForm((f) => ({ ...f, contactNo: e.target.value.replace(/\D/g, '').slice(0, 10) }))}
+                    className={cn(INPUT_CLASS, 'w-full')}
+                  />
                 </div>
                 <div>
                   <label className="block text-[12px] font-medium text-slate-600 mb-1.5">Contact Person</label>

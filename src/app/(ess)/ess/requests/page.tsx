@@ -1092,7 +1092,7 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
           )}
           <div style={{ marginBottom: 14 }}>
             <label style={lbl}>Reason *</label>
-            <input required type="text" style={inp} value={form.reason} onChange={(e) => setForm((f) => ({ ...f, reason: e.target.value }))} />
+            <input required type="text" maxLength={400} style={inp} value={form.reason} onChange={(e) => setForm((f) => ({ ...f, reason: e.target.value }))} />
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}>
             <div>
@@ -1101,7 +1101,14 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
             </div>
             <div>
               <label style={lbl}>Contact During Leave</label>
-              <input style={inp} value={form.contact_no} onChange={(e) => setForm((f) => ({ ...f, contact_no: e.target.value }))} />
+              <input
+                type="text"
+                inputMode="numeric"
+                maxLength={10}
+                style={inp}
+                value={form.contact_no}
+                onChange={(e) => setForm((f) => ({ ...f, contact_no: e.target.value.replace(/\D/g, '').slice(0, 10) }))}
+              />
             </div>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}>
