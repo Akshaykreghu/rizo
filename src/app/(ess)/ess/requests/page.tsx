@@ -918,6 +918,12 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<LeaveBalancePreview | null>(null);
   const [form, setForm] = useState({ leave_type_id: defaultTypeId ? String(defaultTypeId) : '', from_date: today(), from_half: '1', to_date: '', to_half: '2', reason: '', contact_person: '', contact_no: '' });
+  // Mirrors validateLeave()'s exact trigger-gating (addeditleave_new.ctp:921-933) — legacy only
+  // checks max_leave_limit when #TODATE fires changeDate, and min_leave_limit only when #TOHALF
+  // fires change. Neither check ever runs from any other field change (including FROMHALF), so a
+  // submission that never touched TODATE/TOHALF after their initial defaults skips both checks
+  // entirely in legacy too — replicated exactly here rather than checking both unconditionally.
+  const [limitTrigger, setLimitTrigger] = useState<'dateChange' | 'sessionChange' | null>(null);
 
   useEffect(() => {
     fetch(`/api/leave/types?employee=${empId}`).then((r) => (r.ok ? r.json() : { data: [] })).then((d) => setTypes(d.data || []));
@@ -955,6 +961,26 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
   }, [empId, form.from_date]);
 
   const leaveDays = calcLeaveDays(form.from_date, Number(form.from_half), form.to_date, Number(form.to_half));
+  // Same hard-block set shown live in the "Available Leave Balance" box — computed once here so
+  // Submit is actually disabled (not just an alert shown after clicking), matching the admin Apply
+  // Leave form's balanceBlocked pattern. Previously Submit was only ever disabled on `saving`, so
+  // every one of these violations was surfaced as text but never stopped the request from going
+  // through on a second click once whatever changed re-triggered the mutation.
+  const dateOrderInvalid = !!form.from_date && !!form.to_date && new Date(form.to_date) < new Date(form.from_date);
+  const beforeJoining = !!preview?.joiningDate && !!form.from_date && form.from_date < preview.joiningDate;
+  const afterTermination = !!preview?.terminationDate && !!form.to_date && form.to_date > preview.terminationDate;
+  const blocked =
+    dateOrderInvalid ||
+    beforeJoining ||
+    afterTermination ||
+    !preview ||
+    (preview.documentMandatory && !file) ||
+    (preview.documentMandatory && !fileDisplayName.trim()) ||
+    !preview.minServiceOk ||
+    !preview.advanceNoticeOk ||
+    leaveDays > preview.balance ||
+    (limitTrigger === 'sessionChange' && preview.minLeaveLimit > 0 && leaveDays < preview.minLeaveLimit) ||
+    (limitTrigger === 'dateChange' && preview.maxLeaveLimit > 0 && leaveDays > preview.maxLeaveLimit);
 
   async function doSubmit() {
     setSaving(true);
@@ -1042,12 +1068,14 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
     }
     // Min/max-per-request limits are hard stops too, not a Continue-Anyway warning — legacy's
     // validateLeave() alerts and disables the Submit button outright for both
-    // ("Minimum N day(s) leave required." / "Maximum allowed leave is N day(s).").
-    if (preview.minLeaveLimit > 0 && leaveDays < preview.minLeaveLimit) {
+    // ("Minimum N day(s) leave required." / "Maximum allowed leave is N day(s).") — but ONLY when
+    // triggered by the matching field (#TOHALF for min, #TODATE for max — see limitTrigger above),
+    // exactly like legacy.
+    if (limitTrigger === 'sessionChange' && preview.minLeaveLimit > 0 && leaveDays < preview.minLeaveLimit) {
       setError(`Minimum ${preview.minLeaveLimit} day(s) leave required.`);
       return;
     }
-    if (preview.maxLeaveLimit > 0 && leaveDays > preview.maxLeaveLimit) {
+    if (limitTrigger === 'dateChange' && preview.maxLeaveLimit > 0 && leaveDays > preview.maxLeaveLimit) {
       setError(`Maximum allowed leave is ${preview.maxLeaveLimit} day(s).`);
       return;
     }
@@ -1096,6 +1124,15 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
                 {form.from_date && form.to_date && new Date(form.to_date) < new Date(form.from_date) && (
                   <div style={{ color: '#dc2626', marginTop: 2 }}>To date should be greater than or equal to From date.</div>
                 )}
+                {/* Min-leave-limit only ever fires on #TOHALF change, max only on #TODATE change —
+                    matching validateLeave()'s exact trigger-gating (addeditleave_new.ctp:921-933),
+                    not a blanket always-on check. */}
+                {limitTrigger === 'sessionChange' && preview.minLeaveLimit > 0 && leaveDays < preview.minLeaveLimit && (
+                  <div style={{ color: '#dc2626', marginTop: 2 }}>Minimum {preview.minLeaveLimit} day(s) leave required.</div>
+                )}
+                {limitTrigger === 'dateChange' && preview.maxLeaveLimit > 0 && leaveDays > preview.maxLeaveLimit && (
+                  <div style={{ color: '#dc2626', marginTop: 2 }}>Maximum allowed leave is {preview.maxLeaveLimit} day(s).</div>
+                )}
               </div>
             )}
           </div>
@@ -1113,10 +1150,20 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
                     max={preview?.terminationDate ?? undefined}
                     style={{ ...inp, marginBottom: 6 }}
                     value={form[dk]}
-                    onChange={(e) => setForm((f) => ({ ...f, [dk]: e.target.value }))}
+                    onChange={(e) => {
+                      setForm((f) => ({ ...f, [dk]: e.target.value }));
+                      if (label === 'To') setLimitTrigger('dateChange');
+                    }}
                   />
-                  <EssDropdown value={form[hk]} onChange={(v) => setForm((f) => ({ ...f, [hk]: v }))} clearable={false}
-                    options={[{ value: '1', label: 'First Half' }, { value: '2', label: 'Second Half' }]} />
+                  <EssDropdown
+                    value={form[hk]}
+                    onChange={(v) => {
+                      setForm((f) => ({ ...f, [hk]: v }));
+                      if (label === 'To') setLimitTrigger('sessionChange');
+                    }}
+                    clearable={false}
+                    options={[{ value: '1', label: 'First Half' }, { value: '2', label: 'Second Half' }]}
+                  />
                 </div>
               );
             })}
@@ -1181,7 +1228,7 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
           {error && <div style={{ marginBottom: 12, fontSize: 12, color: '#dc2626' }}>{error}</div>}
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
             <button type="button" onClick={onClose} style={{ padding: '8px 18px', borderRadius: 8, border: '1.5px solid var(--border)', background: 'var(--bg-page)', color: 'var(--text-muted)', fontWeight: 700, cursor: 'pointer', fontSize: 13 }}>Cancel</button>
-            <button type="submit" disabled={saving} style={{ padding: '8px 22px', borderRadius: 8, border: 'none', background: BRAND, color: '#fff', fontWeight: 800, cursor: 'pointer', fontSize: 13, opacity: saving ? 0.7 : 1 }}>
+            <button type="submit" disabled={saving || blocked} style={{ padding: '8px 22px', borderRadius: 8, border: 'none', background: BRAND, color: '#fff', fontWeight: 800, cursor: 'pointer', fontSize: 13, opacity: saving || blocked ? 0.5 : 1 }}>
               {uploading ? 'Uploading…' : saving ? 'Submitting…' : 'Submit Leave'}
             </button>
           </div>
