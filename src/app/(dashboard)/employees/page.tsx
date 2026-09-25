@@ -322,6 +322,7 @@ export default function EmployeesPage({
         pageSize={pageSize}
         totalRows={data?.total ?? 0}
         page={page}
+        fitToViewport
         onPageChange={(p) => setPage(p)}
         isLoading={isLoading}
         onRowClick={(row) => setSelectedEmpPkey((prev) => (prev === row.emp_pkey ? null : row.emp_pkey))}

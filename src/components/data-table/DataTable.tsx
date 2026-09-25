@@ -10,7 +10,7 @@ import {
   type SortingState,
   type PaginationState,
 } from '@tanstack/react-table';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ChevronUp, ChevronDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -34,6 +34,9 @@ interface DataTableProps<TData> {
   isRowSelected?: (row: TData) => boolean;
   /** Extra class names applied to a row's <tr>, layered on top of the default striping/hover. */
   rowClassName?: (row: TData) => string | undefined;
+  /** Rows scroll inside the grid (header row pinned) and the grid is sized to end at the bottom
+   *  of the window, so the page itself doesn't scroll the rows under the controls above it. */
+  fitToViewport?: boolean;
 }
 
 function getPageNumbers(current: number, total: number): (number | '…')[] {
@@ -63,7 +66,27 @@ export function DataTable<TData>({
   onRowClick,
   isRowSelected,
   rowClassName,
+  fitToViewport,
 }: DataTableProps<TData>) {
+  // fitToViewport: the scroll area's max height = window height − its top − the pager footer and
+  // page padding below it. Measured in a rAF/resize callback (not synchronously in the effect).
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [scrollMaxHeight, setScrollMaxHeight] = useState<number | null>(null);
+  useEffect(() => {
+    if (!fitToViewport) return;
+    const measure = () => {
+      const el = scrollRef.current;
+      if (!el) return;
+      const FOOTER_AND_PADDING = 76; // pager row + bottom breathing room
+      setScrollMaxHeight(Math.max(240, window.innerHeight - el.getBoundingClientRect().top - FOOTER_AND_PADDING));
+    };
+    const frame = requestAnimationFrame(measure);
+    window.addEventListener('resize', measure);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener('resize', measure);
+    };
+  }, [fitToViewport, data.length]);
   const [sorting, setSorting] = useState<SortingState>([]);
   const [pagination, setPagination] = useState<PaginationState>({
     pageIndex: 0,
@@ -124,7 +147,11 @@ export function DataTable<TData>({
   return (
     <div className={cn('space-y-4', className)}>
       <div className="surface-card rounded-2xl overflow-hidden">
-        <div className="overflow-x-auto">
+        <div
+          ref={scrollRef}
+          className={fitToViewport ? 'overflow-auto' : 'overflow-x-auto'}
+          style={fitToViewport && scrollMaxHeight ? { maxHeight: scrollMaxHeight } : undefined}
+        >
           <table className="w-full text-[13px] border-separate border-spacing-0">
             <thead className="sticky top-0 z-10 bg-slate-100 border-b border-slate-200">
               {table.getHeaderGroups().map((headerGroup) => (

@@ -419,7 +419,9 @@ export default function EmployeeJoinPage() {
         </div>
       )}
 
-      <div className="sticky top-0 z-20 glass-card-strong rounded-xl px-3 py-2 flex items-center justify-between mb-4 flex-wrap gap-3">
+      {/* Not sticky: the grids below scroll inside themselves (fitToViewport), so rows never slide
+          underneath this bar. */}
+      <div className="glass-card-strong rounded-xl px-3 py-2 flex items-center justify-between mb-4 flex-wrap gap-3">
         <div className="flex items-center gap-1 text-[12.5px] bg-slate-900/[0.03] rounded-lg p-0.5">
           {[
             { value: 'joining' as const, label: 'Employee Join' },
@@ -489,6 +491,7 @@ export default function EmployeeJoinPage() {
           pageSize={pageSize}
           totalRows={data?.total ?? 0}
           page={page}
+          fitToViewport
           onPageChange={(p, size) => { setPage(p); if (size !== pageSize) setPageSize(size); }}
           pageSizeOptions={PAGE_SIZE_OPTIONS}
           isLoading={isLoading}
