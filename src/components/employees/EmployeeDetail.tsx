@@ -20,7 +20,7 @@ import { EMP_TYPES } from '@/lib/employeeOptions';
 import { EMPLOYEE_FIELD_LIMITS, CHILD_FIELD_LIMITS } from '@/lib/employeeFieldLimits';
 import {
   FAMILY_GENDERS, marksError, salaryError, contactNumberError, documentNumberError,
-  onlyDigits, onlyAlphanumeric, onlyPercent,
+  onlyDigits, onlyAlphanumeric, onlyPercent, cleanName,
 } from '@/lib/childRowValidation';
 import {
   dobError, ageAtDateError, aadhaarError, panError, esiError, uanError, lwfError, accountNoError, pfNumberError,
@@ -161,8 +161,10 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
     if (data?.employee && data?.professional !== undefined && !seeded.current) {
       seeded.current = true;
       const initial = {
-        first_name: data.employee.first_name ?? '',
-        last_name: data.employee.last_name ?? '',
+        // One Name field, as in legacy (setups.ctp): any separate last name is merged in and saved
+        // back the legacy way — full name in first_name, last_name empty.
+        first_name: `${data.employee.first_name ?? ''} ${data.employee.last_name ?? ''}`.trim(),
+        last_name: '',
         date_of_birth: data.employee.date_of_birth?.split('T')[0] ?? '',
         mobile_no: data.employee.mobile_no ?? '',
         email: data.employee.email ?? '',
@@ -336,7 +338,7 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
   // drift apart — legacy's setup.ctp runs the same per-field checks on 'keyup blur', not just on
   // submit, which is what these fields were missing before.
   const fieldValidators: Record<string, (v: string) => string> = {
-    first_name: (v) => v.trim() ? '' : 'First name is required',
+    first_name: (v) => v.trim() ? '' : 'Name is required',
     classification: (v) => v ? '' : 'Gender is required',
     nationality_id: (v) => v ? '' : 'Nationality is required',
     date_of_birth: (v) => v ? (dobError(v) ?? '') : 'Date of birth is required',
@@ -546,7 +548,7 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
   const emp = data.employee;
   const embedded = !showBackLink;
   const statusInfo = STATUS_BADGE[Number(emp.status)] ?? STATUS_BADGE[1];
-  const headerName = `${emp.first_name} ${emp.last_name}`.trim();
+  const headerName = `${emp.first_name ?? ''} ${emp.last_name ?? ''}`.trim();
   const metaParts = [
     // Employee ID (emp_proff.emp_company_id) — same as the Employees list; defaults to the login ID.
     data.professional?.emp_company_id || emp.emp_id,
@@ -648,13 +650,9 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                 // Registration Number as a single flat form with no sub-section headers.
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-5 gap-y-5">
                   <div>
-                    <label className={LABEL_CLASS}>First Name<RequiredMark /></label>
-                    <input className={cn(INPUT_CLASS, fieldErrors.first_name && ERROR_INPUT_CLASS)} {...f('first_name')} />
+                    <label className={LABEL_CLASS}>Name<RequiredMark /></label>
+                    <input className={cn(INPUT_CLASS, fieldErrors.first_name && ERROR_INPUT_CLASS)} {...f('first_name')} onChange={(e) => updateField('first_name', cleanName(e.target.value))} placeholder="Full name" />
                     <FieldError>{fieldErrors.first_name}</FieldError>
-                  </div>
-                  <div>
-                    <label className={LABEL_CLASS}>Last Name</label>
-                    <input className={INPUT_CLASS} {...f('last_name')} />
                   </div>
                   <div>
                     <label className={LABEL_CLASS}>Date of Birth<RequiredMark /></label>
@@ -673,7 +671,9 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                     />
                     <FieldError>{fieldErrors.classification}</FieldError>
                   </div>
-                  <div>
+                  {/* Two columns wide on the 3-column layout: fills the slot the removed Last Name
+                      field left in this row. */}
+                  <div className="lg:col-span-2">
                     <label className={LABEL_CLASS}>Email</label>
                     <input type="email" className={INPUT_CLASS} {...f('email')} />
                   </div>

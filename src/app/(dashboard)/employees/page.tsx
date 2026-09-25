@@ -5,7 +5,7 @@ import dynamic from 'next/dynamic';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSetupRows } from '@/lib/setupOptions';
 import { useRouter } from 'next/navigation';
-import { Plus, Search, Eye, KeyRound, ListTree, Package, Receipt, TrendingUp, UserMinus, History, FileText, UserCheck, Loader2 } from 'lucide-react';
+import { Plus, Search, Eye, KeyRound, ListTree, Package, Receipt, TrendingUp, UserMinus, History, UserCheck } from 'lucide-react';
 import { DataTable } from '@/components/data-table/DataTable';
 import { CellText } from '@/components/data-table/CellText';
 import { Avatar } from '@/components/ui/Avatar';
@@ -24,7 +24,6 @@ const PromotionApprovalPage = dynamic(() => import('./promotions/page'), { ssr: 
 const ResignationsPage = dynamic(() => import('./resignations/page'), { ssr: false });
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { cn, formatDate } from '@/lib/utils';
-import { downloadEmployeeResumePdf } from '@/lib/employeeResumePdf';
 import type { EmployeeListFilter } from '@/lib/employeeList';
 import type { ColumnDef } from '@tanstack/react-table';
 
@@ -33,7 +32,7 @@ interface Employee {
   emp_id: string;
   emp_company_id: string | null;
   first_name: string;
-  last_name: string;
+  last_name: string | null;
   mobile_no: string;
   branch_name: string;
   dept_name: string;
@@ -96,11 +95,10 @@ export default function EmployeesPage({
   const [promoOpen, setPromoOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [removeOpen, setRemoveOpen] = useState(false);
-  const [downloadingPkey, setDownloadingPkey] = useState<number | null>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
   const search = embedded ? (searchProp ?? '') : debouncedSearchInput;
-  const pageSize = embedded ? (pageSizeProp ?? 25) : 25;
+  const pageSize = embedded ? (pageSizeProp ?? 10) : 10;
   const filter = embedded ? (filterProp ?? 'active') : internalFilter;
   const branch = embedded ? (branchProp ?? '') : internalBranch;
 
@@ -145,19 +143,9 @@ export default function EmployeesPage({
     onError: (err: Error) => setToast({ message: err.message, type: 'error' }),
   });
 
-  async function downloadResume(emp: Employee) {
-    setDownloadingPkey(emp.emp_pkey);
-    try {
-      await downloadEmployeeResumePdf(emp.emp_pkey);
-    } catch (err) {
-      setToast({ message: err instanceof Error ? err.message : 'Could not create the PDF', type: 'error' });
-    } finally {
-      setDownloadingPkey(null);
-    }
-  }
-
   // Legacy All Employees columns: Image · Employee ID · Full Name · Designation · Joined Date ·
-  // Branch Name · Profile Completion · Doc (Department kept from this app's own list).
+  // Branch Name · Profile Completion (Department kept from this app's own list; legacy's Doc
+  // column is hidden on request).
   const columns: ColumnDef<Employee, unknown>[] = [
     {
       id: 'slNo',
@@ -171,18 +159,18 @@ export default function EmployeesPage({
     {
       id: 'name',
       header: 'Employee',
-      accessorFn: (row) => `${row.first_name} ${row.last_name}`,
+      accessorFn: (row) => `${row.first_name} ${row.last_name ?? ''}`.trim(),
       meta: { className: 'w-[24%]' },
       cell: ({ row }) => (
         <div className="flex items-center gap-2.5 min-w-0 max-w-[260px]">
-          <Avatar name={`${row.original.first_name} ${row.original.last_name}`} imageUrl={row.original.profile_pic} className="flex-shrink-0" />
+          <Avatar name={`${row.original.first_name} ${row.original.last_name ?? ''}`.trim()} imageUrl={row.original.profile_pic} className="flex-shrink-0" />
           <div className="leading-tight min-w-0">
             {/* One line, cut with "…" — a long name must not wrap and push the row out of line. */}
             <p
               title={`${row.original.first_name} ${row.original.last_name ?? ''}`.trim()}
               className={cn('font-semibold text-sm truncate', row.original.status === 2 ? 'text-[color:var(--color-danger)] italic' : 'text-[#0F172A]')}
             >
-              {row.original.first_name} {row.original.last_name}
+              {row.original.first_name} {row.original.last_name ?? ''}
             </p>
             {/* Employee ID (emp_proff.emp_company_id) — legacy's list column; defaults to the login
                 user ID (e.g. GRTL100016) when none was entered at onboarding. */}
@@ -231,25 +219,6 @@ export default function EmployeesPage({
           </div>
         );
       },
-    },
-    {
-      id: 'doc',
-      header: 'Doc',
-      meta: { className: 'w-12' },
-      cell: ({ row }) => (
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            downloadResume(row.original);
-          }}
-          disabled={downloadingPkey === row.original.emp_pkey}
-          aria-label="Download employee profile PDF"
-          title="Download profile PDF"
-          className="p-1.5 rounded-lg text-slate-400 hover:text-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-light)] transition-colors duration-[180ms] disabled:opacity-60"
-        >
-          {downloadingPkey === row.original.emp_pkey ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
-        </button>
-      ),
     },
     {
       id: 'view',
@@ -352,6 +321,7 @@ export default function EmployeesPage({
         columns={columns}
         pageSize={pageSize}
         totalRows={data?.total ?? 0}
+        page={page}
         onPageChange={(p) => setPage(p)}
         isLoading={isLoading}
         onRowClick={(row) => setSelectedEmpPkey((prev) => (prev === row.emp_pkey ? null : row.emp_pkey))}

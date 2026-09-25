@@ -80,7 +80,7 @@ export async function POST(request: NextRequest) {
     dobError(body.date_of_birth ?? '') ||
     mobileError(body.mobile_no ?? '') ||
     statutoryFieldErrors(body, { aadhaarRequired: true }) ||
-    (!body.first_name?.trim() ? 'First name is required' : null) ||
+    (!body.first_name?.trim() ? 'Name is required' : null) ||
     (!body.classification ? 'Gender is required' : null) ||
     (!body.nationality_id ? 'Nationality is required' : null);
   if (validationError) {

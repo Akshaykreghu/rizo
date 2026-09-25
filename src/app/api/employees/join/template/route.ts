@@ -22,6 +22,9 @@ export async function GET() {
   }
 
   const worksheet = XLSX.utils.aoa_to_sheet([TEMPLATE_HEADERS]);
+  // Each column as wide as its heading (+2 padding, min 12) so no heading is cut off when the
+  // template is opened.
+  worksheet['!cols'] = TEMPLATE_HEADERS.map((h) => ({ wch: Math.max(12, h.length + 2) }));
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, 'Employee Join');
   const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });

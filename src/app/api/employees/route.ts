@@ -98,7 +98,7 @@ export async function POST(request: NextRequest) {
   const pool = await getCompanyPool(session.user.companyCode);
 
   const validationError =
-    (!body.first_name?.trim() ? 'First name is required' : null) ||
+    (!body.first_name?.trim() ? 'Name is required' : null) ||
     (!body.classification ? 'Gender is required' : null) ||
     (!body.date_of_birth ? 'Date of birth is required' : dobError(body.date_of_birth)) ||
     (!body.id_card ? 'Aadhaar/ID Card is required' : null) ||

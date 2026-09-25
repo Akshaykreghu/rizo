@@ -145,7 +145,7 @@ export async function PUT(
   }
 
   const validationError =
-    (body.first_name !== undefined && !body.first_name?.trim() ? 'First name is required' : null) ||
+    (body.first_name !== undefined && !body.first_name?.trim() ? 'Name is required' : null) ||
     (body.classification !== undefined && !body.classification ? 'Gender is required' : null) ||
     (body.nationality_id !== undefined && !body.nationality_id ? 'Nationality is required' : null) ||
     (body.date_of_birth !== undefined

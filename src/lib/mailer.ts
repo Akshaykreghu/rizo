@@ -25,6 +25,7 @@ export async function sendMail(opts: {
   subject: string;
   html: string;
   text?: string;
+  replyTo?: string;
 }): Promise<SendResult> {
   if (!isMailConfigured()) {
     console.info(`[mailer] SMTP not configured — skipping mail to ${opts.to} ("${opts.subject}")`);
@@ -46,6 +47,7 @@ export async function sendMail(opts: {
     subject: opts.subject,
     html: opts.html,
     text: opts.text,
+    replyTo: opts.replyTo,
   });
 
   return { status: 'sent', messageId: info.messageId };

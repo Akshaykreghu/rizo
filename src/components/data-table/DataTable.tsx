@@ -10,7 +10,7 @@ import {
   type SortingState,
   type PaginationState,
 } from '@tanstack/react-table';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ChevronUp, ChevronDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -22,6 +22,9 @@ interface DataTableProps<TData> {
   totalRows?: number;
   /** Server-side pagination callback */
   onPageChange?: (page: number, pageSize: number) => void;
+  /** Server-side: the 1-based page the parent actually fetched. When given, the footer and
+   *  pager follow it instead of an internal counter that can drift from the parent's state. */
+  page?: number;
   /** If provided, shows a "Rows per page" selector in the pagination footer with these choices. */
   pageSizeOptions?: number[];
   isLoading?: boolean;
@@ -52,6 +55,7 @@ export function DataTable<TData>({
   columns,
   pageSize: initialPageSize = 25,
   totalRows,
+  page,
   onPageChange,
   pageSizeOptions,
   isLoading,
@@ -67,15 +71,40 @@ export function DataTable<TData>({
   });
 
   const isServerSide = totalRows !== undefined;
+  // Server-side: the parent's page (what was actually fetched) wins over this table's own
+  // counter, so the footer never shows "Page 1" while page 2's (empty) rows are on screen — e.g.
+  // after the parent resets to page 1 on a new search/filter, or this table is re-mounted on a
+  // tab switch while the parent is still on a later page.
+  const serverPageCount = isServerSide ? Math.ceil((totalRows ?? 0) / pagination.pageSize) : 0;
+  const requestedIndex = isServerSide && page !== undefined ? Math.max(0, page - 1) : pagination.pageIndex;
+  // Never display a page past the last one (see the clamp effect below).
+  const effectivePagination: PaginationState = {
+    ...pagination,
+    pageIndex: isServerSide && serverPageCount > 0 ? Math.min(requestedIndex, serverPageCount - 1) : requestedIndex,
+  };
+
+  // A re-mounted table starts at page 1; bring an uncontrolled parent back in line with it.
+  useEffect(() => {
+    if (isServerSide && page === undefined) onPageChange?.(1, pagination.pageSize);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once, on mount
+  }, []);
+
+  // Rows removed (delete, onboard, a narrower filter) can leave the current page past the last
+  // one: the server returns no rows yet a non-zero total. Step back to the last real page.
+  // The footer is already clamped above; this makes the parent actually fetch that page.
+  useEffect(() => {
+    if (!isServerSide || isLoading || serverPageCount === 0) return;
+    if (requestedIndex >= serverPageCount) onPageChange?.(serverPageCount, pagination.pageSize);
+  }, [isServerSide, isLoading, serverPageCount, requestedIndex, pagination.pageSize, onPageChange]);
 
   const table = useReactTable({
     data,
     columns,
-    state: { sorting, pagination },
+    state: { sorting, pagination: effectivePagination },
     onSortingChange: setSorting,
     onPaginationChange: (updater) => {
       const next =
-        typeof updater === 'function' ? updater(pagination) : updater;
+        typeof updater === 'function' ? updater(effectivePagination) : updater;
       setPagination(next);
       if (isServerSide && onPageChange) {
         onPageChange(next.pageIndex + 1, next.pageSize);
@@ -85,9 +114,7 @@ export function DataTable<TData>({
     getSortedRowModel: getSortedRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
     manualPagination: isServerSide,
-    pageCount: isServerSide
-      ? Math.ceil((totalRows ?? 0) / pagination.pageSize)
-      : undefined,
+    pageCount: isServerSide ? serverPageCount : undefined,
   });
 
   const pageIndex = table.getState().pagination.pageIndex;

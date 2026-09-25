@@ -154,12 +154,11 @@ export async function POST(request: NextRequest) {
     if (!nationalityId) { errors.push({ row: rowNum, message: `Unrecognized Nationality "${cell('Nationality *')}"` }); continue; }
 
     const name = titleCase(cell('Name *').replace(/\s+/g, ' '));
-    if (/[^\p{L}0-9.\s-]/u.test(name)) {
+    // Legacy bulk upload's own Name rule: letters, digits, spaces, "." and "-".
+    if (/[^A-Za-z0-9.\s-]/.test(name)) {
       errors.push({ row: rowNum, message: 'Name can only contain letters, numbers, spaces, "." and "-"' });
       continue;
     }
-    const [firstName, ...rest] = name.split(' ');
-    const lastName = rest.join(' ');
 
     const blood = cell('Blood Group').toUpperCase().replace(/\s+/g, '');
     if (blood && !VALID_BLOOD_GROUPS.includes(blood)) {
@@ -188,8 +187,8 @@ export async function POST(request: NextRequest) {
     const physicalHandicap = locomotive === 'Y' || hearing === 'Y' || visual === 'Y' ? 'Y' : yn(row['Physical Handicap (Yes/No)']);
 
     const v: Record<string, string> = {
-      first_name: firstName,
-      last_name: lastName,
+      // Whole name in first_name, last_name left empty — as legacy stores it (single Name field).
+      first_name: name,
       email: cell('Email Address').toLowerCase(),
       mobile_no: cell('Phone Number').replace(/[\s-]/g, ''),
       address: cell('Address'),
@@ -224,7 +223,7 @@ export async function POST(request: NextRequest) {
     if (tooLong) {
       const [k] = tooLong;
       const LABELS: Record<string, string> = {
-        first_name: 'First name', last_name: 'Last name (everything after the first word of Name)', email: 'Email Address',
+        first_name: 'Name', email: 'Email Address',
         address: 'Address', state: 'State', district: 'District', guradian: 'Guardian Name', relation_guardian: 'Relation',
         bank: 'Bank Name', bank_branch: 'Branch', ifsc_code: 'IFSC Code', esi_dispensary: 'ESI Dispensary',
         previous_member_id: 'Previous Member ID', wps_code: 'WPS ID',
@@ -251,7 +250,7 @@ export async function POST(request: NextRequest) {
             international_worker, country_origin, locomotive, hearing, visual)
          VALUES (0, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
-          v.first_name, v.last_name || null, birthDate, gender, v.email || null, v.mobile_no || null,
+          v.first_name, null, birthDate, gender, v.email || null, v.mobile_no || null,
           v.address || null, v.pincode || null, nationalityId, v.state || null, v.district || null,
           maritalRaw || null, v.guradian || null, v.relation_guardian || null, blood || null,
           v.id_card, v.pan_no || null, v.bank || null, v.bank_branch || null, v.ifsc_code || null, v.account_no || null,

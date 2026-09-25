@@ -17,7 +17,7 @@ import { EMP_TYPES } from '@/lib/employeeOptions';
 import { EMPLOYEE_FIELD_LIMITS, CHILD_FIELD_LIMITS } from '@/lib/employeeFieldLimits';
 import {
   FAMILY_GENDERS, marksError, salaryError, contactNumberError, documentNumberError,
-  onlyDigits, onlyAlphanumeric, onlyPercent,
+  onlyDigits, onlyAlphanumeric, onlyPercent, cleanName,
 } from '@/lib/childRowValidation';
 import {
   dobError, mobileError, aadhaarError, panError, esiError, uanError, lwfError,
@@ -100,6 +100,19 @@ const INPUT_CLASS = 'w-full px-3 py-2 border border-slate-200 rounded-lg text-sm
 const ERROR_INPUT_CLASS = 'border-[color:var(--color-danger)] focus:ring-[color:var(--color-danger)]/25 focus:border-[color:var(--color-danger)]';
 const LABEL_CLASS = 'block text-[12.5px] font-medium text-slate-600 mb-1';
 
+// A failed request can come back with an empty or non-JSON body (e.g. an unhandled server error);
+// res.json() would then throw "Unexpected end of JSON input" and hide what actually went wrong.
+async function responseError(res: Response, fallback: string): Promise<string> {
+  const text = await res.text().catch(() => '');
+  try {
+    const body = JSON.parse(text) as { error?: string };
+    if (body?.error) return body.error;
+  } catch {
+    /* not JSON */
+  }
+  return `${fallback} (server error ${res.status}${res.statusText ? ' ' + res.statusText : ''})`;
+}
+
 function toFormState(join: Record<string, string>): Record<string, string> {
   const form: Record<string, string> = { ...join };
   // Numeric ids (nationality_id, country_origin) come back as numbers, but the dropdowns match
@@ -110,6 +123,10 @@ function toFormState(join: Record<string, string>): Record<string, string> {
   for (const key of DATE_KEYS) {
     if (form[key]) form[key] = String(form[key]).slice(0, 10);
   }
+  // One Name field, as in legacy: a record that still has a separate last name shows it merged in,
+  // and is saved back the legacy way (full name in first_name, last_name empty).
+  form.first_name = `${form.first_name ?? ''} ${form.last_name ?? ''}`.trim();
+  form.last_name = '';
   return form;
 }
 
@@ -180,7 +197,7 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
     enabled: !!effectiveId,
     queryFn: async () => {
       const res = await fetch(`/api/employees/join/${effectiveId}`);
-      if (!res.ok) throw new Error((await res.json()).error ?? 'Failed to load join record');
+      if (!res.ok) throw new Error(await responseError(res, 'Failed to load join record'));
       return res.json();
     },
   });
@@ -232,7 +249,7 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(form),
       });
-      if (!res.ok) throw new Error((await res.json()).error ?? 'Failed to create join record');
+      if (!res.ok) throw new Error(await responseError(res, 'Failed to create join record'));
       return res.json() as Promise<{ emp_join_pkey: number }>;
     },
   });
@@ -244,7 +261,7 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(form),
       });
-      if (!res.ok) throw new Error((await res.json()).error ?? 'Failed to save');
+      if (!res.ok) throw new Error(await responseError(res, 'Failed to save'));
       return res.json();
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['employees/join'] }),
@@ -260,7 +277,7 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(onboardForm),
       });
-      if (!res.ok) throw new Error((await res.json()).error ?? 'Failed to onboard employee');
+      if (!res.ok) throw new Error(await responseError(res, 'Failed to onboard employee'));
       return res.json() as Promise<{ emp_pkey: number }>;
     },
   });
@@ -273,7 +290,7 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
   // drift apart — legacy's setup.ctp runs the same per-field regex on 'keyup blur', not just when
   // Save & Continue is clicked (liveValidate()), which is what these fields were missing before.
   const fieldValidators: Record<string, (v: string) => string> = {
-    first_name: (v) => v.trim() ? '' : 'First name is required',
+    first_name: (v) => v.trim() ? '' : 'Name is required',
     date_of_birth: (v) => v ? (dobError(v) ?? '') : 'Date of birth is required',
     mobile_no: (v) => mobileError(v) ?? '',
     id_card: (v) => v ? (aadhaarError(v) ?? '') : 'Aadhaar / ID Card is required',
@@ -606,12 +623,8 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-5 gap-y-4">
           <div>
             <label className={LABEL_CLASS}>Name <span className="text-[color:var(--color-danger)]">*</span></label>
-            <input className={cn(INPUT_CLASS, fieldErrors.first_name && ERROR_INPUT_CLASS)} {...f('first_name')} placeholder="First name" />
+            <input className={cn(INPUT_CLASS, fieldErrors.first_name && ERROR_INPUT_CLASS)} {...f('first_name')} onChange={(e) => updateField('first_name', cleanName(e.target.value))} placeholder="Full name" />
             <FieldError>{fieldErrors.first_name}</FieldError>
-          </div>
-          <div>
-            <label className={LABEL_CLASS}>Last Name</label>
-            <input className={INPUT_CLASS} {...f('last_name')} />
           </div>
           <div>
             <label className={LABEL_CLASS}>Birth Date <span className="text-[color:var(--color-danger)]">*</span></label>
@@ -635,7 +648,8 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
             />
             <FieldError>{fieldErrors.classification}</FieldError>
           </div>
-          <div>
+          {/* Two columns wide: fills the slot the removed Last Name field left in this row. */}
+          <div className="sm:col-span-2">
             <label className={LABEL_CLASS}>Email Address</label>
             <input type="email" className={INPUT_CLASS} {...f('email')} />
           </div>

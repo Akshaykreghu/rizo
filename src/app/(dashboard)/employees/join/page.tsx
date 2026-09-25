@@ -37,7 +37,7 @@ interface BranchOption {
   branch_name: string;
 }
 
-const PAGE_SIZE_OPTIONS = [7, 10, 20, 30, 40, 50];
+const PAGE_SIZE_OPTIONS = [10, 20, 30, 40, 50];
 
 export default function EmployeeJoinPage() {
   const queryClient = useQueryClient();
@@ -48,7 +48,8 @@ export default function EmployeeJoinPage() {
   const [searchInput, setSearchInput] = useState('');
   const search = useDebouncedValue(searchInput, 300);
   const [uploadResult, setUploadResult] = useState<{ inserted: number; errors: { row: number; message: string }[] } | null>(null);
-  const [pageSize, setPageSize] = useState(7);
+  // 10 rows per page by default, on both the Employee Join and All Employees tabs.
+  const [pageSize, setPageSize] = useState(10);
   const [selectedJoinId, setSelectedJoinId] = useState<number | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [allFilter, setAllFilter] = useState<EmployeeListFilter>('active');
@@ -395,25 +396,6 @@ export default function EmployeeJoinPage() {
             );
           })}
         </div>
-
-        {tab === 'joining' && (
-          <div className="flex items-center gap-2">
-            <button
-              key={`new-join-${tab}`}
-              onClick={() => { setSelectedJoinId(null); setJoinEditDirty(false); setJoinInitialStep(undefined); setJoinIncludeOnboarding(false); setModalOpen(true); }}
-              className="cta-pulse flex items-center gap-1.5 bg-[color:var(--color-primary)] hover:bg-[#1E88E5] active:bg-[#1976D2] hover:scale-[1.03] active:scale-100 text-white px-3 py-1.5 rounded-[9px] text-[12.5px] font-semibold shadow-sm transition-all duration-[180ms]"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              New Join
-            </button>
-            <button
-              onClick={() => setBulkUploadOpen(true)}
-              className="flex items-center gap-1.5 text-[12.5px] font-semibold text-slate-600 hover:text-[color:var(--color-primary)] px-3 py-1.5 rounded-[9px] glass-panel transition-all duration-[180ms]"
-            >
-              <UploadCloud className="w-3.5 h-3.5" /> Bulk Upload
-            </button>
-          </div>
-        )}
       </div>
 
       {uploadResult && (
@@ -467,6 +449,27 @@ export default function EmployeeJoinPage() {
             branches={branches}
           />
         )}
+
+        {/* Employee Join tab: its actions sit at the right of the tab bar, same place as the
+            All Employees tab's Filter button. */}
+        {tab === 'joining' && (
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setBulkUploadOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12.5px] font-medium border bg-white/80 text-slate-600 border-slate-200 hover:bg-white hover:text-[color:var(--color-primary)] transition-colors duration-[180ms]"
+            >
+              <UploadCloud className="w-3.5 h-3.5" /> Bulk Upload
+            </button>
+            <button
+              key={`new-join-${tab}`}
+              onClick={() => { setSelectedJoinId(null); setJoinEditDirty(false); setJoinInitialStep(undefined); setJoinIncludeOnboarding(false); setModalOpen(true); }}
+              className="cta-pulse flex items-center gap-1.5 bg-[color:var(--color-primary)] hover:bg-[#1E88E5] active:bg-[#1976D2] text-white px-3 py-1.5 rounded-lg text-[12.5px] font-semibold shadow-sm transition-all duration-[180ms]"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              New Join
+            </button>
+          </div>
+        )}
       </div>
 
       {tab === 'all' ? (
@@ -485,6 +488,7 @@ export default function EmployeeJoinPage() {
           columns={columns}
           pageSize={pageSize}
           totalRows={data?.total ?? 0}
+          page={page}
           onPageChange={(p, size) => { setPage(p); if (size !== pageSize) setPageSize(size); }}
           pageSizeOptions={PAGE_SIZE_OPTIONS}
           isLoading={isLoading}

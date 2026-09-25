@@ -40,6 +40,11 @@ export function documentNumberError(v: unknown): string | null {
 }
 
 // Input sanitizers for the forms: drop characters the rule would reject as they're typed.
+// Legacy View/EmployeeJoin/setup.ctp + View/Employee/setups.ctp have a single "Name" field (Last Name
+// is commented out there): the full name is stored in first_name and last_name stays empty. Letters,
+// digits, spaces and "." only — same as legacy's pattern/oninput filter.
+export const cleanName = (v: string) => v.replace(/[^A-Za-z0-9.\s]/g, '');
+
 export const onlyDigits = (s: string) => s.replace(/\D/g, '');
 export const onlyAlphanumeric = (s: string) => s.replace(/[^A-Za-z0-9]/g, '');
 export const onlyPercent = (s: string) => {

@@ -216,7 +216,12 @@ export async function POST(
     return NextResponse.json({ emp_pkey: empPkey, username }, { status: 201 });
   } catch (err) {
     await connection.rollback();
-    throw err;
+    // Re-throwing made Next answer with an empty 500 body, which the form could only report as
+    // "Unexpected end of JSON input" — hiding the real cause. Nothing was saved (rolled back
+    // above); send the actual reason so the admin can see and fix it (admin-only route).
+    console.error('[onboard] failed for emp_join', id, err);
+    const reason = err instanceof Error ? err.message : String(err);
+    return NextResponse.json({ error: `Onboarding failed — nothing was saved. Reason: ${reason}` }, { status: 500 });
   } finally {
     connection.release();
   }

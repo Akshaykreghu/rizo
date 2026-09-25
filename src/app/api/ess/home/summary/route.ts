@@ -20,6 +20,7 @@ const minsOf = (t: unknown) => {
 //   month  — working days so far this month (shift working days up to today, less holidays), how
 //            many were present, late (check-in after shift start + the shift's late-in limit),
 //            on leave, and absent.
+//   workDays — the shift's working weekdays (Sunday first), for week-offs on the home calendar.
 //   team   — direct reports (or, for someone with none, their manager and peers) with today's
 //            status: on leave (authorized/approved leave today), in office (checked in today),
 //            off today (week off / holiday) or not in yet.
@@ -145,6 +146,8 @@ export async function GET() {
   }
 
   return NextResponse.json({
+    // Sunday-first, true = the employee's shift works that weekday (false = week off).
+    workDays: DAYS.map((d) => (shift ? shift[d] === 'Y' : true)),
     week: { days: week, workedMins: week.reduce((s, w) => s + w.minutes, 0), targetMins: weekTargetMins },
     month: { workingDays, present, late, onLeave, absent },
     team,
