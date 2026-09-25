@@ -227,7 +227,7 @@ export function AttendanceGrid({ rows, selected, onToggleSelect, onCellClick, ex
               return (
                 <Fragment key={row.registerId}>
                   <tr className={cn('group/row transition-colors duration-150', isSelected ? 'bg-[color:var(--color-primary)]/[0.06]' : 'hover:bg-[color:var(--color-primary)]/[0.03]')}>
-                    <td className={cn(CHECKBOX_COL, GRID_LINE, 'bg-white group-hover/row:bg-inherit', isSelected && 'bg-[color:var(--color-primary-light)]', 'p-1.5')}>
+                    <td className={cn(CHECKBOX_COL, GRID_LINE, 'bg-white', isSelected && 'bg-[color:var(--color-primary-light)]', 'p-1.5')}>
                       <input
                         type="checkbox"
                         checked={isSelected}
@@ -293,7 +293,7 @@ export function AttendanceGrid({ rows, selected, onToggleSelect, onCellClick, ex
                           title={d.value}
                         >
                           <span
-                            className="inline-flex min-w-[26px] items-center justify-center rounded-md px-1 py-0.5 text-[10.5px] font-semibold leading-none"
+                            className="inline-flex min-w-[26px] items-center justify-center rounded-md p-2 text-[10.5px] font-semibold leading-none"
                             style={{ backgroundColor: bg, color: fg }}
                           >
                             {formatStatusDisplay(d.value) || '—'}

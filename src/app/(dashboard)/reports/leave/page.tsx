@@ -90,6 +90,20 @@ function toDMY(value: unknown): string {
   return `${String(d.getDate()).padStart(2, '0')}-${String(d.getMonth() + 1).padStart(2, '0')}-${d.getFullYear()}`;
 }
 
+// Table-cell display: several columns across these reports (joining_date, leave_applied_on,
+// Autherized_date, APPROVED_date, Rejected_date, transaction_date, etc.) come back from the API as
+// raw ISO datetime strings (e.g. mysql2 serializing a DATE/DATETIME column via JSON.stringify) --
+// format any such value as DD-MM-YYYY instead of showing the full "2021-01-01T00:00:00.000Z".
+// Values that already went through a *_display/*_label derive step, or aren't date-shaped at all
+// (names, remarks, statuses), pass through untouched.
+const ISO_DATETIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/;
+function formatCellValue(value: unknown): string {
+  if (value == null || value === '') return '';
+  const s = String(value);
+  if (ISO_DATETIME_RE.test(s)) return toDMY(s);
+  return s;
+}
+
 function deriveCompOff(rows: Record<string, unknown>[]): Record<string, unknown>[] {
   return rows.map((r) => {
     const policyLabel = POLICY_TYPE_LABEL[String(r.leave_policy_type)] ?? '';
@@ -426,7 +440,7 @@ export default function LeaveReportPage() {
                       {meta.slNo && <td className="px-4 py-2 text-[#0F172A] whitespace-nowrap">{i + 1}</td>}
                       {meta.columns.map((c) => (
                         <td key={c.key} className="px-4 py-2 text-[#0F172A] whitespace-nowrap">
-                          {currencyKeys.has(c.key) ? String(row[c.key] ?? 0) : String(row[c.key] ?? '')}
+                          {currencyKeys.has(c.key) ? String(row[c.key] ?? 0) : formatCellValue(row[c.key])}
                         </td>
                       ))}
                     </tr>
@@ -463,7 +477,7 @@ export default function LeaveReportPage() {
                   {meta.slNo && <td className="px-4 py-2 text-[#0F172A] whitespace-nowrap">{i + 1}</td>}
                   {meta.columns.map((c) => (
                     <td key={c.key} className="px-4 py-2 text-[#0F172A] whitespace-nowrap">
-                      {currencyKeys.has(c.key) ? String(row[c.key] ?? 0) : String(row[c.key] ?? '')}
+                      {currencyKeys.has(c.key) ? String(row[c.key] ?? 0) : formatCellValue(row[c.key])}
                     </td>
                   ))}
                 </tr>

@@ -11,7 +11,7 @@ import { SearchableSelect } from '@/components/ui/SearchableSelect';
 import { TimePicker, nowAsHHMMSS } from '@/components/ui/TimePicker';
 import { ATTENDANCE_LEGEND, getCellColor, formatStatusDisplay } from '@/lib/attendance';
 import { cn } from '@/lib/utils';
-import { ShieldCheck, ShieldOff, X, Clock, Timer, LogIn, LogOut, Lock, Plus, Layers, Eye, EyeOff, BadgeCheck, Power } from 'lucide-react';
+import { ShieldCheck, ShieldOff, X, Clock, Timer, LogIn, LogOut, Lock, Plus, Layers, Eye, EyeOff, BadgeCheck, Power, Pencil, Check } from 'lucide-react';
 
 const useLookup = useSetupOptions;
 
@@ -561,6 +561,28 @@ function DayEditor({
     onError: (err: Error) => onMessage(err.message),
   });
 
+  // Which existing punch (by device_attandance_seq) is currently open for inline time/direction
+  // editing — ports EditPunchesController::savepunch()'s in-place edit (an UPDATE keyed on the same
+  // PK, not deactivate-old+insert-new).
+  const [editingPunchSeq, setEditingPunchSeq] = useState<number | null>(null);
+  const [editPunchTime, setEditPunchTime] = useState('');
+  const [editPunchDirection, setEditPunchDirection] = useState<'in' | 'out'>('in');
+
+  const editPunchMutation = useMutation({
+    mutationFn: (vars: { deviceAttandanceSeq: number; logTime: string; direction: 'in' | 'out' }) =>
+      fetch(`/api/attendance/register/${registerId}/day/${dayIndex}/punches`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(vars),
+      }).then(async (r) => {
+        const body = await r.json();
+        if (!r.ok) throw new Error(body.error ?? 'Failed to update punch');
+        return body;
+      }),
+    onSuccess: () => { setEditingPunchSeq(null); refetchExtras(); onSaved(); },
+    onError: (err: Error) => onMessage(err.message),
+  });
+
   // mutateAsync's own rejection is what handleSave below reacts to, so this only needs to handle the
   // success side-effect (clearing the local override so `otValue`/`otRemark` fall back to reading the
   // freshly-saved server value once `extras` is refetched).
@@ -767,6 +789,47 @@ function DayEditor({
                 {extras!.punches.map((p) => {
                   const isIn = p.direction.toLowerCase() === 'in';
                   const isInactive = p.status === 'N';
+                  const isEditing = editingPunchSeq === p.device_attandance_seq;
+                  // DB connections read datetimes tagged as UTC (lib/db.ts timezone: '+00:00') though
+                  // the schema only ever stores naive local wall-clock time — timeZone: 'UTC' here
+                  // reads back the stored value verbatim instead of re-shifting by the browser's offset.
+                  const currentHHMMSS = new Date(p.LOGDATE).toLocaleTimeString('en-GB', { hour12: false, timeZone: 'UTC' });
+
+                  if (isEditing) {
+                    return (
+                      <div key={p.device_attandance_seq} className="flex items-center gap-2 px-3.5 py-2.5 rounded-[10px] bg-[color:var(--color-primary)]/[0.06] border border-[color:var(--color-primary)]/15">
+                        <TimePicker value={editPunchTime} onChange={setEditPunchTime} disabled={editPunchMutation.isPending} className="flex-1" />
+                        <select
+                          value={editPunchDirection}
+                          onChange={(e) => setEditPunchDirection(e.target.value as 'in' | 'out')}
+                          disabled={editPunchMutation.isPending}
+                          className="h-11 px-3 rounded-[11px] border border-black/[0.08] bg-white text-[13px] text-[#1D1D1F] focus:outline-none focus:ring-[3px] focus:ring-[color:var(--color-primary)]/15 focus:border-[color:var(--color-primary)] disabled:opacity-50 transition-all duration-150"
+                        >
+                          <option value="in">In</option>
+                          <option value="out">Out</option>
+                        </select>
+                        <button
+                          onClick={() => editPunchMutation.mutate({ deviceAttandanceSeq: p.device_attandance_seq, logTime: editPunchTime, direction: editPunchDirection })}
+                          disabled={editPunchMutation.isPending}
+                          aria-label="Save punch edit"
+                          title="Save"
+                          className="w-9 h-9 rounded-full flex items-center justify-center text-[color:var(--color-success-dark)] hover:bg-[color:var(--color-success-soft)] disabled:opacity-40 transition-colors duration-150 flex-shrink-0"
+                        >
+                          <Check className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => setEditingPunchSeq(null)}
+                          disabled={editPunchMutation.isPending}
+                          aria-label="Cancel punch edit"
+                          title="Cancel"
+                          className="w-9 h-9 rounded-full flex items-center justify-center text-[#86868B] hover:bg-black/[0.05] disabled:opacity-40 transition-colors duration-150 flex-shrink-0"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    );
+                  }
+
                   return (
                     <div
                       key={p.device_attandance_seq}
@@ -796,31 +859,41 @@ function DayEditor({
                         )}
                       </span>
                       <span className="flex items-center gap-2.5">
-                        {/* DB connections read datetimes tagged as UTC (lib/db.ts timezone: '+00:00')
-                            though the schema only ever stores naive local wall-clock time — timeZone:
-                            'UTC' here reads back the stored value verbatim instead of re-shifting by
-                            the browser's offset. */}
                         <span className={cn('text-[13px] tabular-nums', isInactive ? 'text-amber-700' : 'text-[#6E6E73]')}>
                           {new Date(p.LOGDATE).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' })}
                         </span>
                         {!locked && (
-                          <button
-                            onClick={() => {
-                              if (!isInactive && !confirm('Deactivate this punch? It will stop counting toward duration/OT but can be reactivated later.')) return;
-                              togglePunchActiveMutation.mutate({ deviceAttandanceSeq: p.device_attandance_seq, active: isInactive });
-                            }}
-                            disabled={togglePunchActiveMutation.isPending}
-                            aria-label={isInactive ? 'Reactivate punch' : 'Deactivate punch'}
-                            title={isInactive ? 'Reactivate punch' : 'Deactivate punch'}
-                            className={cn(
-                              'w-6 h-6 rounded-full flex items-center justify-center disabled:opacity-40 transition-colors duration-150',
-                              isInactive
-                                ? 'text-amber-600 hover:text-[color:var(--color-success-dark)] hover:bg-[color:var(--color-success-soft)]'
-                                : 'text-[#86868B] hover:text-amber-700 hover:bg-amber-100'
-                            )}
-                          >
-                            <Power className="w-3.5 h-3.5" />
-                          </button>
+                          <>
+                            <button
+                              onClick={() => {
+                                setEditingPunchSeq(p.device_attandance_seq);
+                                setEditPunchTime(currentHHMMSS);
+                                setEditPunchDirection(isIn ? 'in' : 'out');
+                              }}
+                              aria-label="Edit punch"
+                              title="Edit time/direction"
+                              className="w-6 h-6 rounded-full flex items-center justify-center text-[#86868B] hover:text-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-light)] transition-colors duration-150"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => {
+                                if (!isInactive && !confirm('Deactivate this punch? It will stop counting toward duration/OT but can be reactivated later.')) return;
+                                togglePunchActiveMutation.mutate({ deviceAttandanceSeq: p.device_attandance_seq, active: isInactive });
+                              }}
+                              disabled={togglePunchActiveMutation.isPending}
+                              aria-label={isInactive ? 'Reactivate punch' : 'Deactivate punch'}
+                              title={isInactive ? 'Reactivate punch' : 'Deactivate punch'}
+                              className={cn(
+                                'w-6 h-6 rounded-full flex items-center justify-center disabled:opacity-40 transition-colors duration-150',
+                                isInactive
+                                  ? 'text-amber-600 hover:text-[color:var(--color-success-dark)] hover:bg-[color:var(--color-success-soft)]'
+                                  : 'text-[#86868B] hover:text-amber-700 hover:bg-amber-100'
+                              )}
+                            >
+                              <Power className="w-3.5 h-3.5" />
+                            </button>
+                          </>
                         )}
                       </span>
                     </div>
@@ -972,6 +1045,19 @@ function DayEditor({
 // mergeHalfDayStatus does the "X/X" doubling itself for statusType: 'full'.
 const BULK_STATUS_CODES = ['P', 'HO', 'WO', 'LOP'];
 
+// Matches legacy's own Bulk Update "Status" dropdown (EditAttendanceController), which offers
+// composite half-day codes directly rather than a bare code + separate half selector: Select,
+// P/P, P/LOP, LOP/P, LOP/LOP.
+const BULK_COMPOSITE_STATUS_CODES = ['P/P', 'P/LOP', 'LOP/P', 'LOP/LOP'];
+
+// Matches legacy's "Option" dropdown next to Status: "All Dates" applies the chosen status to
+// every non-NA day cell; "LOP Dates" narrows that to only cells that currently contain LOP
+// (either half), leaving Present/Week Off/Holiday days untouched.
+const BULK_OPTIONS = [
+  { value: 'all', label: 'All Dates' },
+  { value: 'lop', label: 'LOP Dates' },
+] as const;
+
 // Ports EditAttendanceController::bulkipdatestatus()'s intent (bulk-apply one status across many
 // selected date rows for an employee) onto our multi-employee grid instead: select employee ROWS,
 // then apply one status and/or one OT value across every day cell in each selected employee's month
@@ -988,6 +1074,7 @@ function BulkUpdateModal({
   onDone: (message: string) => void;
 }) {
   const [status, setStatus] = useState<string | null>(null);
+  const [option, setOption] = useState<'all' | 'lop'>('all');
   const [otValue, setOtValue] = useState('');
   const [otRemark, setOtRemark] = useState('');
   const [running, setRunning] = useState(false);
@@ -998,23 +1085,52 @@ function BulkUpdateModal({
   const handleApply = async () => {
     setRunning(true);
     let skippedNA = 0;
+    let skippedOption = 0;
     const tasks: Promise<boolean>[] = [];
 
     for (const row of rows) {
       row.days.forEach((day, i) => {
-        if ((day.value ?? '').trim().toUpperCase() === 'NA') {
+        const value = (day.value ?? '').trim().toUpperCase();
+        if (value === 'NA') {
           skippedNA++;
+          return;
+        }
+        // "LOP Dates" narrows the Status write to cells that currently contain LOP in either
+        // half, leaving Present/Week Off/Holiday days untouched — matches legacy's Option filter.
+        if (status && option === 'lop' && !value.includes('LOP')) {
+          skippedOption++;
           return;
         }
         const dayIndex = i + 1;
         if (status) {
-          tasks.push(
-            fetch(`/api/attendance/register/${row.registerId}/day/${dayIndex}`, {
-              method: 'PUT',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ statusType: 'full', status }),
-            }).then((r) => r.ok).catch(() => false)
-          );
+          // Composite codes (e.g. "P/LOP") are written as two half-day PUTs so mergeHalfDayStatus
+          // can compose them the same way the single-day editor does; bare codes (P/HO/WO/LOP)
+          // still go through statusType: 'full' as before.
+          if (status.includes('/')) {
+            const [firstCode, secondCode] = status.split('/');
+            tasks.push(
+              fetch(`/api/attendance/register/${row.registerId}/day/${dayIndex}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ statusType: 'first', status: firstCode }),
+              }).then((r) => r.ok).catch(() => false)
+            );
+            tasks.push(
+              fetch(`/api/attendance/register/${row.registerId}/day/${dayIndex}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ statusType: 'second', status: secondCode }),
+              }).then((r) => r.ok).catch(() => false)
+            );
+          } else {
+            tasks.push(
+              fetch(`/api/attendance/register/${row.registerId}/day/${dayIndex}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ statusType: 'full', status }),
+              }).then((r) => r.ok).catch(() => false)
+            );
+          }
         }
         if (otValue !== '') {
           tasks.push(
@@ -1036,6 +1152,7 @@ function BulkUpdateModal({
     onDone(
       `Bulk update applied: ${succeeded} write(s) succeeded across ${rows.length} employee(s)` +
       `${skippedNA ? `, ${skippedNA} NA day(s) skipped` : ''}` +
+      `${skippedOption ? `, ${skippedOption} day(s) skipped (not LOP)` : ''}` +
       `${failed ? `, ${failed} failed (verified/locked month or leave conflict)` : ''}.`
     );
   };
@@ -1064,7 +1181,41 @@ function BulkUpdateModal({
         </div>
 
         <div className="px-7 pb-6">
-          <label className="block text-[12px] font-medium text-[#6E6E73] mb-1.5">Status (applies to every non-NA day)</label>
+          <div className="flex items-center justify-between mb-1.5">
+            <label className="block text-[12px] font-medium text-[#6E6E73]">Status (applies to every non-NA day)</label>
+            <div className="flex items-center gap-1.5">
+              <span className="text-[12px] font-medium text-[#6E6E73]">Option</span>
+              <select
+                value={option}
+                onChange={(e) => setOption(e.target.value as 'all' | 'lop')}
+                disabled={running}
+                className="text-[12.5px] border border-black/10 rounded-[8px] px-2 py-1 disabled:opacity-40"
+              >
+                {BULK_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2 mb-1">
+            {BULK_COMPOSITE_STATUS_CODES.map((c) => {
+              const color = getCellColor(c, false);
+              const isSelected = status === c;
+              return (
+                <button
+                  key={c}
+                  onClick={() => setStatus(isSelected ? null : c)}
+                  disabled={running}
+                  className="text-[13px] font-medium px-3.5 py-[7px] rounded-[9px] border disabled:opacity-40 transition-all duration-150"
+                  style={{
+                    backgroundColor: hexToRgba(color.bg, isSelected ? 0.16 : 0.08),
+                    color: color.bg,
+                    borderColor: isSelected ? hexToRgba(color.bg, 0.5) : 'transparent',
+                  }}
+                >
+                  {c}
+                </button>
+              );
+            })}
+          </div>
           <div className="flex flex-wrap gap-2 mb-1">
             {BULK_STATUS_CODES.map((c) => {
               const color = getCellColor(c, false);

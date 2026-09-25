@@ -85,9 +85,11 @@ export async function PATCH(
   }
 
   const body = await request.json();
-  const { deviceAttandanceSeq, active } = body as { deviceAttandanceSeq: number; active: boolean };
-  if (!deviceAttandanceSeq || typeof active !== 'boolean') {
-    return NextResponse.json({ error: 'deviceAttandanceSeq and active are required' }, { status: 400 });
+  const { deviceAttandanceSeq, active, logTime, direction } = body as {
+    deviceAttandanceSeq: number; active?: boolean; logTime?: string; direction?: 'in' | 'out';
+  };
+  if (!deviceAttandanceSeq || (typeof active !== 'boolean' && !logTime && !direction)) {
+    return NextResponse.json({ error: 'deviceAttandanceSeq and at least one of active/logTime/direction are required' }, { status: 400 });
   }
 
   const pool = await getCompanyPool(session.user.companyCode);
@@ -99,22 +101,32 @@ export async function PATCH(
 
   // 'D' (hard-deleted) rows are excluded — this toggles only between 'Y' (active) and 'N' (inactive).
   const [[punch]] = await pool.execute<RowDataPacket[]>(
-    `SELECT device_attandance_seq, company_code, branch_code, emp_id, LOGDATE, C1, C2
+    `SELECT device_attandance_seq, company_code, branch_code, emp_id, LOGDATE, C1, C2, status
      FROM device_attandance
      WHERE device_attandance_seq = ? AND emp_id = ? AND SHIFTDATE = ? AND status IN ('Y', 'N')`,
     [deviceAttandanceSeq, day.empId, day.attDate]
   );
   if (!punch) return NextResponse.json({ error: 'Punch not found for this day' }, { status: 404 });
 
-  const newStatus = active ? 'Y' : 'N';
-  await pool.execute('UPDATE device_attandance SET status = ? WHERE device_attandance_seq = ?', [newStatus, deviceAttandanceSeq]);
+  // Ports EditPunchesController::savepunch() — an in-place UPDATE keyed on device_attandance_seq
+  // (not a deactivate-old + insert-new), so time/direction and the active toggle can all be edited
+  // on the same existing row. Each field is independently optional so the modal can send just a
+  // time change, just a direction change, just the active toggle, or any combination in one call.
+  const newStatus = typeof active === 'boolean' ? (active ? 'Y' : 'N') : punch.status;
+  const newLogDate = logTime ? `${day.attDate} ${logTime}` : punch.LOGDATE;
+  const newDirection = direction ?? punch.C1;
+
+  await pool.execute(
+    'UPDATE device_attandance SET status = ?, LOGDATE = ?, C1 = ? WHERE device_attandance_seq = ?',
+    [newStatus, newLogDate, newDirection, deviceAttandanceSeq]
+  );
   await pool.execute(
     `INSERT INTO device_attandance_hist
        (device_attandance_seq, company_code, branch_code, emp_id, LOGDATE, C1, C2, status, created_by, action)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
-      punch.device_attandance_seq, punch.company_code, punch.branch_code, punch.emp_id, punch.LOGDATE, punch.C1, punch.C2,
-      newStatus, session.user.loginUserId, active ? 'Active' : 'Inactive',
+      punch.device_attandance_seq, punch.company_code, punch.branch_code, punch.emp_id, newLogDate, newDirection, punch.C2,
+      newStatus, session.user.loginUserId, typeof active === 'boolean' ? (active ? 'Active' : 'Inactive') : 'Edited',
     ]
   );
 
