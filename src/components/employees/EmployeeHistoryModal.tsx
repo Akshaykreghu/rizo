@@ -3,6 +3,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { History } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { TableSkeleton } from '@/components/ui/Skeleton';
 
 interface HistoryRow {
   type: string;
@@ -42,7 +43,7 @@ export function EmployeeHistoryModal({ empPkey, empName }: { empPkey: number; em
         </div>
       </div>
 
-      {isLoading && <p className="text-sm text-slate-400 py-8 text-center">Loading…</p>}
+      {isLoading && <TableSkeleton rows={6} cols={4} />}
       {isError && <p className="text-sm text-[color:var(--color-danger)] py-8 text-center">Couldn&apos;t load the history.</p>}
       {!isLoading && !isError && rows.length === 0 && (
         <p className="text-sm text-slate-400 py-8 text-center border border-dashed border-slate-200 rounded-xl">

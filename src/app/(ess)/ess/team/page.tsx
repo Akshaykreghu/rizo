@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useSession } from 'next-auth/react';
 import { photoUrl } from '@/lib/utils';
+import { PageSkeleton } from '@/components/ui/Skeleton';
 
 // Port of New Rizo's pages/ESS/ESSTeam.jsx, backed by /api/employees/[id]/team (hierarchy)
 // and /api/ess/directory (search) — see those routes' comments for why they're separate
@@ -377,9 +378,8 @@ export default function EssTeamPage() {
 
   if (loading) {
     return (
-      <div style={{ height: '60vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <div style={{ width: 32, height: 32, border: '3px solid var(--border)', borderTopColor: '#1E516E', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-        <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+      <div style={{ padding: '24px 28px 40px' }}>
+        <PageSkeleton hero body="cards" />
       </div>
     );
   }

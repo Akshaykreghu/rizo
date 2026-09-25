@@ -7,6 +7,7 @@ import { EmployeeMultiSearch } from '@/components/employees/EmployeeMultiSearch'
 import { Plus, X, Trash2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
+import { TableSkeleton } from '@/components/ui/Skeleton';
 
 // Ports ScheduledBreakOffController (legacy menu label: "Special Events Attendance") — override a
 // date's computed attendance for specific employees: call people in on an off-day ("Attendance"),
@@ -172,7 +173,7 @@ export default function SpecialEventsPage() {
 
           <div className="surface-card rounded-xl overflow-hidden">
             {isLoading ? (
-              <div className="px-4 py-6 text-center text-[12.5px] text-slate-400">Loading…</div>
+              <TableSkeleton rows={6} cols={5} framed={false} />
             ) : rows.length === 0 ? (
               <div className="px-4 py-6 text-center text-[12.5px] text-slate-400">No employees added for this date yet</div>
             ) : (

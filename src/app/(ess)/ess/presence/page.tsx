@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSession } from 'next-auth/react';
 import AppTabs from '@/components/ess/AppTabs';
+import { PageSkeleton } from '@/components/ui/Skeleton';
 
 // Port of New Rizo's pages/ESS/ESSPresence.jsx, backed by /api/employees/[id]/presence-summary
 // (which already supports ?month= and returns per-day worked_minutes, so the month picker and
@@ -491,9 +492,8 @@ export default function EssPresencePage() {
 
   if (loading || !presence) {
     return (
-      <div style={{ height: '60vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <div style={{ width: 32, height: 32, border: '3px solid var(--border)', borderTopColor: BRAND, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-        <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+      <div style={{ padding: '24px 28px 40px' }}>
+        <PageSkeleton stats={4} body="table" />
       </div>
     );
   }

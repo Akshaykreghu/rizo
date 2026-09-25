@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Search } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { SkeletonText } from '@/components/ui/Skeleton';
 
 // Shift Allocation tab of "Allocate Policies in Bulk" — the 3-panel per-employee multi-shift
 // manager from legacy EmployeeConfig/index.ctp tab12. One employee is selected at a time;
@@ -28,12 +29,12 @@ function ListPanel<T>({
   isSelected: (row: T) => boolean;
   onSelect: (row: T) => void;
   renderRow: (row: T) => React.ReactNode;
-  emptyText: string;
+  emptyText: React.ReactNode;
 }) {
   return (
     <div className="h-[360px] overflow-y-auto border border-slate-100 rounded-xl">
       {rows.length === 0 && (
-        <p className="px-2.5 py-3 text-slate-400 text-[11.5px]">{emptyText}</p>
+        <div className="px-2.5 py-3 text-slate-400 text-[11.5px]">{emptyText}</div>
       )}
       <ul className="divide-y divide-slate-50">
         {rows.map((row) => (
@@ -201,7 +202,7 @@ export function ShiftAllocator() {
             isSelected={(s) => s.day_time_seq === unallocSelected}
             onSelect={(s) => setUnallocSelected(s.day_time_seq)}
             renderRow={(s) => <span className="text-[#0F172A]">{s.day_time_desc}</span>}
-            emptyText={empPkey == null ? 'Select an employee.' : isLoading ? 'Loading…' : 'No unallocated shifts.'}
+            emptyText={empPkey == null ? 'Select an employee.' : isLoading ? <SkeletonText lines={3} height={10} /> : 'No unallocated shifts.'}
           />
         </div>
 
@@ -242,7 +243,7 @@ export function ShiftAllocator() {
                 )}
               </div>
             )}
-            emptyText={empPkey == null ? 'Select an employee.' : isLoading ? 'Loading…' : 'No shifts allocated.'}
+            emptyText={empPkey == null ? 'Select an employee.' : isLoading ? <SkeletonText lines={3} height={10} /> : 'No shifts allocated.'}
           />
         </div>
       </div>

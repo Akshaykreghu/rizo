@@ -7,6 +7,7 @@ import { useSetupOptions } from '@/lib/setupOptions';
 import { Download, Upload, Trash2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
+import { TableSkeleton } from '@/components/ui/Skeleton';
 
 // Ports EmployeeAttendanceUploadController's upload/list/delete screen. See
 // api/attendance/upload/route.ts for the full behavior notes (trigger-driven promotion into
@@ -158,7 +159,7 @@ export default function AttendanceUploadPage() {
 
       <div className="surface-card rounded-xl overflow-hidden">
         {isLoading ? (
-          <div className="px-4 py-6 text-center text-[12.5px] text-slate-400">Loading…</div>
+          <TableSkeleton rows={6} cols={6} framed={false} />
         ) : rows.length === 0 ? (
           <div className="px-4 py-6 text-center text-[12.5px] text-slate-400">No uploaded records for this month</div>
         ) : (

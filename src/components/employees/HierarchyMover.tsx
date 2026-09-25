@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { SkeletonText } from '@/components/ui/Skeleton';
 
 interface Employee { emp_pkey: number; first_name: string; last_name: string | null; emp_id: string }
 
@@ -113,7 +114,7 @@ export function HierarchyMover({ type, title, employees }: {
           />
           <div className="h-72 overflow-y-auto border border-gray-100 rounded-lg divide-y divide-gray-50">
             {!parentId && <p className="p-2 text-xs text-gray-400">Select an employee on the left first.</p>}
-            {parentId && isLoading && <p className="p-2 text-xs text-gray-400">Loading…</p>}
+            {parentId && isLoading && <div className="p-2"><SkeletonText lines={3} /></div>}
             {available.map((e) => (
               <label key={e.emp_pkey} className="flex items-center gap-2 px-2 py-1.5 text-sm hover:bg-gray-50 cursor-pointer">
                 <input type="checkbox" checked={checkedAvail.has(e.emp_pkey)} onChange={() => toggleAvail(e.emp_pkey)} />

@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import AppTabs from '@/components/ess/AppTabs';
 import { EssPagination } from '@/components/ess/EssPagination';
+import { TableSkeleton } from '@/components/ui/Skeleton';
 
 // New page — no legacy source to port from. Backs the two real emp_menu items admin can grant an
 // employee that had no ESS destination yet: id 1283 "My Documents" (menu_url
@@ -304,7 +305,7 @@ function MyAssetsTab() {
       .catch(() => setRows([]));
   }, []);
 
-  if (rows === null) return <EmptyState text="Loading…" />;
+  if (rows === null) return <TableSkeleton rows={5} cols={5} framed={false} />;
   if (rows.length === 0) return <EmptyState text="No assets have been allocated to you yet." />;
 
   const pageRows = rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
@@ -386,7 +387,7 @@ function MyDocumentsTab() {
       .catch(() => setRows([]));
   }, []);
 
-  if (rows === null) return <EmptyState text="Loading…" />;
+  if (rows === null) return <TableSkeleton rows={5} cols={5} framed={false} />;
   if (rows.length === 0) return <EmptyState text="No documents have been allocated to you yet." />;
 
   const pageRows = rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);

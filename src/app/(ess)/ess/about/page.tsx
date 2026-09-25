@@ -8,6 +8,7 @@ import { FilePreviewModal } from '@/components/ui/FilePreviewModal';
 import { EssDropdown } from '@/components/ess/EssDropdown';
 import { photoUrl } from '@/lib/utils';
 import { documentNumberError, onlyAlphanumeric } from '@/lib/childRowValidation';
+import { PageSkeleton } from '@/components/ui/Skeleton';
 
 // Read-only port of New Rizo's pages/ESS/ESSAbout.jsx. Self-service editing (the pencil icon /
 // inline ListEditor forms in the original) is intentionally not included in this pass — this
@@ -760,9 +761,8 @@ export default function EssAboutPage() {
 
   if (loading) {
     return (
-      <div style={{ height: '60vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <div style={{ width: 36, height: 36, border: '3px solid var(--border)', borderTopColor: '#1E516E', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-        <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+      <div style={{ padding: '24px 28px 40px' }}>
+        <PageSkeleton title={false} body="detail" />
       </div>
     );
   }

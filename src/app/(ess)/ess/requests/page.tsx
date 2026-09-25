@@ -9,6 +9,7 @@ import { EssPagination } from '@/components/ess/EssPagination';
 import { essPortal } from '@/components/ess/essPortal';
 import { DocumentUploadField } from '@/components/employees/DocumentUploadField';
 import { FilePreviewModal } from '@/components/ui/FilePreviewModal';
+import { SkeletonTableRows, TableSkeleton } from '@/components/ui/Skeleton';
 
 // Port of New Rizo's pages/ESS/ESSRequests.jsx (Expense Claims / Regularisation / Salary Advance
 // / Loan Application tabs). Differences from a literal port, driven by what the real backend
@@ -278,7 +279,7 @@ function ExpensesTab() {
             <thead><tr>{['Sl.No', 'Applied Date & Time', 'Expense Amount', 'Expense Type', 'Expense Date', 'Authorized By', 'Approved By', 'Remarks', 'Status', ''].map((h) => <th key={h} style={thS}>{h}</th>)}</tr></thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={10} style={{ ...tdS, textAlign: 'center', color: 'var(--text-muted)' }}>Loading…</td></tr>
+                <SkeletonTableRows rows={5} cols={10} cellStyle={tdS} />
               ) : rows.length === 0 ? (
                 <tr><td colSpan={10} style={{ ...tdS, textAlign: 'center', color: 'var(--text-muted)' }}>No expense requests found</td></tr>
               ) : rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map((r, i) => (
@@ -482,7 +483,7 @@ function RegularizationTab({ initialDate }: { initialDate?: string }) {
           <thead><tr>{['Sl.No', 'Date', 'Direction', 'Time', 'Remarks', 'Status'].map((h) => <th key={h} style={thS}>{h}</th>)}</tr></thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={6} style={{ ...tdS, textAlign: 'center', color: 'var(--text-muted)' }}>Loading…</td></tr>
+              <SkeletonTableRows rows={5} cols={6} cellStyle={tdS} />
             ) : rows.length === 0 ? (
               <tr><td colSpan={6} style={{ ...tdS, textAlign: 'center', color: 'var(--text-muted)' }}>No requests for {month}</td></tr>
             ) : rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map((r, i) => (
@@ -615,7 +616,7 @@ function AdvanceTab() {
           <thead><tr>{['Sl.No', 'Affected Month', 'Amount', 'Remarks', 'Status', ''].map((h) => <th key={h} style={thS}>{h}</th>)}</tr></thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={6} style={{ ...tdS, textAlign: 'center', color: 'var(--text-muted)' }}>Loading…</td></tr>
+              <SkeletonTableRows rows={5} cols={6} cellStyle={tdS} />
             ) : rows.length === 0 ? (
               <tr><td colSpan={6} style={{ ...tdS, textAlign: 'center', color: 'var(--text-muted)' }}>No advance requests yet</td></tr>
             ) : rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map((r, i) => (
@@ -745,7 +746,7 @@ function LoanTab() {
             <thead><tr>{['Sl.No', 'Loan Amount', 'Tenure', 'Interest Rate', 'EMI Start', 'Status', ''].map((h) => <th key={h} style={thS}>{h}</th>)}</tr></thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={7} style={{ ...tdS, textAlign: 'center', color: 'var(--text-muted)' }}>Loading…</td></tr>
+                <SkeletonTableRows rows={5} cols={7} cellStyle={tdS} />
               ) : rows.length === 0 ? (
                 <tr><td colSpan={7} style={{ ...tdS, textAlign: 'center', color: 'var(--text-muted)' }}>No loan applications found</td></tr>
               ) : rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map((r, i) => (
@@ -1359,7 +1360,7 @@ function LeaveTab({ empId }: { empId: number }) {
       </div>
 
       {loading ? (
-        <div style={{ padding: 30, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>Loading…</div>
+        <TableSkeleton rows={6} cols={6} />
       ) : (
         <>
           <div style={{ ...card, overflow: 'hidden' }}>

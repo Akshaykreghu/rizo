@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { ChevronDown, Search } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -42,6 +43,39 @@ export function SearchableSelect({
   const [query, setQuery] = useState('');
   const containerRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const popupRef = useRef<HTMLDivElement>(null);
+  // The list is portalled to <body> with fixed positioning so a scroll area, collapsible section
+  // or modal around the field can't clip it; it opens upward when there's no room below.
+  const [pos, setPos] = useState<{ top: number; left: number; width: number; maxList: number } | null>(null);
+  const place = useCallback(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const SEARCH = 42; // search row height
+    const below = window.innerHeight - r.bottom - 12;
+    const above = r.top - 12;
+    const up = below < 180 && above > below;
+    const maxList = Math.max(120, Math.min(224, (up ? above : below) - SEARCH - 8));
+    const height = SEARCH + maxList + 8;
+    const width = Math.max(r.width, 180);
+    setPos({
+      top: up ? Math.max(8, r.top - height - 4) : r.bottom + 4,
+      left: Math.min(Math.max(8, r.left), window.innerWidth - width - 8),
+      width,
+      maxList,
+    });
+  }, []);
+  useLayoutEffect(() => {
+    if (!open) return;
+    const frame = requestAnimationFrame(place);
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', place, true);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener('resize', place);
+      window.removeEventListener('scroll', place, true);
+    };
+  }, [open, place]);
 
   const selected = options.find((o) => o.value === value) ?? null;
 
@@ -54,7 +88,8 @@ export function SearchableSelect({
   useEffect(() => {
     if (!open) return;
     function onClickOutside(e: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+      const t = e.target as Node;
+      if (containerRef.current && !containerRef.current.contains(t) && !popupRef.current?.contains(t)) {
         setOpen(false);
         setQuery('');
       }
@@ -89,8 +124,12 @@ export function SearchableSelect({
         <ChevronDown className={cn('w-4 h-4 text-gray-400 shrink-0', wrap && 'mt-px')} />
       </button>
 
-      {open && (
-        <div className="absolute z-50 mt-1 w-full min-w-full bg-white border border-gray-200 rounded-lg shadow-lg overflow-hidden">
+      {open && pos && typeof document !== 'undefined' && createPortal(
+        <div
+          ref={popupRef}
+          style={{ position: 'fixed', top: pos.top, left: pos.left, width: pos.width }}
+          className="z-[1400] bg-white border border-gray-200 rounded-lg shadow-lg overflow-hidden"
+        >
           <div className="flex items-center gap-2 px-2.5 py-2 border-b border-gray-100">
             <Search className="w-3.5 h-3.5 text-gray-400 shrink-0" />
             <input
@@ -102,7 +141,7 @@ export function SearchableSelect({
               className="w-full text-sm focus:outline-none"
             />
           </div>
-          <ul className="max-h-56 overflow-y-auto py-1">
+          <ul className="overflow-y-auto py-1" style={{ maxHeight: pos.maxList }}>
             <li>
               <button
                 type="button"
@@ -135,7 +174,8 @@ export function SearchableSelect({
               <li className="px-3 py-2 text-sm text-gray-400">No matches</li>
             )}
           </ul>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

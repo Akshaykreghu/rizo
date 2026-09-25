@@ -7,6 +7,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, CheckCircle2 } from 'lucide-react';
 import { cn, formatCurrency } from '@/lib/utils';
 import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
+import { DetailSkeleton } from '@/components/ui/Skeleton';
 
 interface LoanScheduleRow {
   emp_loan_info_pkey: number;
@@ -141,7 +142,7 @@ export default function LoanDetailPage() {
       </button>
 
       {message && <p className="text-[12.5px] text-slate-500 mb-4">{message}</p>}
-      {isLoading && <p className="text-[12.5px] text-slate-500">Loading…</p>}
+      {isLoading && <DetailSkeleton fields={8} />}
       {error && <p className="text-[12.5px] text-[color:var(--color-danger)]">{(error as Error).message}</p>}
 
       {loan && (

@@ -6,6 +6,8 @@ import { EssDropdown } from '@/components/ess/EssDropdown';
 import AppTabs from '@/components/ess/AppTabs';
 import { SalarySlipModal } from '@/components/payroll/SalarySlipModal';
 import { essPortal } from '@/components/ess/essPortal';
+import { PageSkeleton } from '@/components/ui/Skeleton';
+import { Skeleton } from '@/components/ui/Skeleton';
 
 // Port of New Rizo's pages/ESS/ESSSalary.jsx (Salary & Benefits + Tax Declarations tabs), backed
 // by the new /api/employees/[id]/pay-summary endpoint and the existing tax-* routes (now with
@@ -24,7 +26,7 @@ const card: React.CSSProperties = { background: 'var(--bg-card)', border: '1.5px
 
 // ── Salary trend bar chart ────────────────────────────────────────────────────
 function SalaryTrendChart({ allFYMonths, processedMap, monthlyCTC }: { allFYMonths: string[]; processedMap: Map<string, { net_salary: number }>; monthlyCTC: number }) {
-  if (!allFYMonths.length) return <div style={{ height: 180, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: 12 }}>Loading…</div>;
+  if (!allFYMonths.length) return <Skeleton height={180} radius={12} />;
   if (processedMap.size === 0) {
     return (
       <div style={{ height: 60, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: 12 }}>
@@ -213,9 +215,8 @@ export default function EssSalaryPage() {
 
   if (loading && !payData) {
     return (
-      <div style={{ height: '60vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <div style={{ width: 32, height: 32, border: '3px solid var(--border)', borderTopColor: BRAND, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-        <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+      <div style={{ padding: '24px 28px 40px' }}>
+        <PageSkeleton stats={3} body="table" />
       </div>
     );
   }

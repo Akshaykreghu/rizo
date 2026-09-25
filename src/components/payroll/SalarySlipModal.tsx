@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { X, Download } from 'lucide-react';
 import { formatCurrency } from '@/lib/utils';
 import { generatePayslipPdf } from '@/lib/payslipPdf';
+import { TableSkeleton } from '@/components/ui/Skeleton';
 
 interface SlipItem {
   salary_head_item_desc: string | null;
@@ -123,7 +124,7 @@ export function SalarySlipModal({ payrollMasterPkey, onClose }: { payrollMasterP
         </div>
 
         <div className="px-6 py-4">
-          {isLoading && <div className="text-slate-500 text-sm">Loading...</div>}
+          {isLoading && <TableSkeleton rows={8} cols={3} />}
           {error && <div className="text-[color:var(--color-danger)] text-sm">{(error as Error).message}</div>}
 
           {data && (

@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Search, ChevronDown } from 'lucide-react';
+import { SkeletonText } from '@/components/ui/Skeleton';
 
 interface Option { value: number; label: string }
 
@@ -129,7 +130,7 @@ export function EmployeeChecklist({
               />
             </div>
             <div className="max-h-52 overflow-y-auto">
-              {isLoading && <div className="text-xs text-gray-400 py-2">Loading...</div>}
+              {isLoading && <div className="py-2"><SkeletonText lines={4} /></div>}
               {!isLoading && options.length === 0 && <div className="text-xs text-gray-400 py-2">No matches.</div>}
               {options.map((o) => (
                 <label key={o.value} className="flex items-center gap-2 px-1 py-1.5 text-sm text-gray-700 cursor-pointer border-b border-gray-50 last:border-0">

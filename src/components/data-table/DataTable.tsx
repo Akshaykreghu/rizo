@@ -13,6 +13,7 @@ import {
 import { useEffect, useRef, useState } from 'react';
 import { ChevronUp, ChevronDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { SkeletonTableRows } from '@/components/ui/Skeleton';
 
 interface DataTableProps<TData> {
   data: TData[];
@@ -187,11 +188,7 @@ export function DataTable<TData>({
             </thead>
             <tbody>
               {isLoading ? (
-                <tr>
-                  <td colSpan={columns.length} className="px-4 py-12 text-center text-slate-400">
-                    Loading…
-                  </td>
-                </tr>
+                <SkeletonTableRows rows={Math.min(pagination.pageSize, 8)} cols={columns.length} cellClassName="px-4 py-3.5" />
               ) : table.getRowModel().rows.length === 0 ? (
                 <tr>
                   <td colSpan={columns.length} className="px-4 py-12 text-center text-slate-400">

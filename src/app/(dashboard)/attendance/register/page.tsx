@@ -12,6 +12,7 @@ import { TimePicker, nowAsHHMMSS } from '@/components/ui/TimePicker';
 import { ATTENDANCE_LEGEND, getCellColor, formatStatusDisplay } from '@/lib/attendance';
 import { cn } from '@/lib/utils';
 import { ShieldCheck, ShieldOff, X, Clock, Timer, LogIn, LogOut, Lock, Plus, Layers, Eye, EyeOff, BadgeCheck, Power, Pencil, Check } from 'lucide-react';
+import { TableSkeleton } from '@/components/ui/Skeleton';
 
 const useLookup = useSetupOptions;
 
@@ -417,7 +418,7 @@ export default function AttendanceRegisterPage() {
       )}
 
       {!branch && <p className="text-sm text-slate-400">Select a branch to view attendance.</p>}
-      {branch && isLoading && <p className="text-sm text-slate-400">Loading…</p>}
+      {branch && isLoading && <TableSkeleton rows={8} cols={8} />}
       {branch && !isLoading && rows.length === 0 && <p className="text-sm text-slate-400">No records for this month/branch. Try Process first.</p>}
       {branch && rows.length > 0 && (
         <AttendanceGrid

@@ -10,6 +10,7 @@ import type { ColumnDef } from '@tanstack/react-table';
 import { cn } from '@/lib/utils';
 import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
 import { DataTable } from '@/components/data-table/DataTable';
+import { SkeletonText } from '@/components/ui/Skeleton';
 
 interface LeaveType {
   salaryHeadItemFkey: number;
@@ -645,7 +646,7 @@ function LeaveRequestsContent() {
             </div>
 
             {detailsLoading || !details ? (
-              <p className="text-sm text-slate-500">Loading…</p>
+              <SkeletonText lines={6} />
             ) : (
               <div className="space-y-4">
                 <div className="grid grid-cols-2 gap-x-4 gap-y-3">

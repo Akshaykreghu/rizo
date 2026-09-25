@@ -10,6 +10,7 @@ import type { ColumnDef } from '@tanstack/react-table';
 import { cn } from '@/lib/utils';
 import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
 import { DataTable } from '@/components/data-table/DataTable';
+import { SkeletonText } from '@/components/ui/Skeleton';
 
 const useLookup = useSetupOptions;
 
@@ -388,7 +389,7 @@ export default function RegularisationPage() {
             <p className="text-[12.5px] text-slate-500 mb-4">{punchModal.label} &middot; {punchModal.attDate}</p>
 
             <div className="space-y-2 mb-4 max-h-48 overflow-y-auto">
-              {punchesLoading && <p className="text-[12.5px] text-slate-400">Loading…</p>}
+              {punchesLoading && <SkeletonText lines={3} />}
               {!punchesLoading && punches.length === 0 && <p className="text-[12.5px] text-slate-400">No punches for this date.</p>}
               {punches.map((p) => (
                 <div

@@ -11,6 +11,7 @@ import type { LucideIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
 import { DataTable } from '@/components/data-table/DataTable';
+import { SkeletonText } from '@/components/ui/Skeleton';
 
 type Category = 'Emergency' | 'Important' | 'Information';
 type AudienceType = 'ALL' | 'EMPLOYEE' | 'BRANCH' | 'DEPARTMENT' | 'DESIGNATION';
@@ -167,7 +168,7 @@ function ChecklistPicker({ options, selected, onChange, loading }: {
         </button>
       </div>
       <div className="max-h-44 overflow-y-auto py-1">
-        {loading && <p className="px-3 py-2 text-[12px] text-slate-400">Loading…</p>}
+        {loading && <div className="px-3 py-2"><SkeletonText lines={4} /></div>}
         {!loading && !filtered.length && <p className="px-3 py-2 text-[12px] text-slate-400">No matches</p>}
         {filtered.map((o) => (
           <label key={o.value} className="flex items-center gap-2.5 px-3 py-1.5 text-[12.5px] text-[#0F172A] hover:bg-slate-50 cursor-pointer">

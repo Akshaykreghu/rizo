@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import type { CSSProperties } from 'react';
 import { resolveMenuEmoji } from '@/lib/faIconMap';
+import { GridCardsSkeleton } from '@/components/ui/Skeleton';
 
 // Was a static links grid ported from New Rizo's pages/ESS/ESSOthers.jsx. Replaced with a live
 // list driven by whatever admin has actually granted the logged-in employee via Menu Allocation
@@ -51,7 +52,7 @@ export default function EssOthersPage() {
       </div>
 
       {items === null ? (
-        <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>Loading…</div>
+        <GridCardsSkeleton count={6} />
       ) : groups.size === 0 ? (
         <div className="empty-state">
           <div className="empty-state-title">Nothing allocated yet</div>

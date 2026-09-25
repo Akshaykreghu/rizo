@@ -9,6 +9,7 @@ import {
   Info, LogIn, LogOut, Mail, Megaphone, MessageSquareQuote, PartyPopper, Phone, Pin, Siren, Star, TreePalm, X,
   type LucideIcon,
 } from 'lucide-react';
+import { PageSkeleton } from '@/components/ui/Skeleton';
 
 // Employee home. Layout follows the "Home — desktop" design reference (hero with a punch card,
 // four stat cards, company updates + leadership strip beside a profile/team rail, and a
@@ -355,9 +356,8 @@ export default function EssHomePage() {
 
   if (loading) {
     return (
-      <div style={{ height: '60vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <div style={{ width: 36, height: 36, border: '3px solid var(--border)', borderTopColor: BRAND, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-        <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+      <div style={{ padding: '24px 28px 40px' }}>
+        <PageSkeleton hero stats={4} body="split" />
       </div>
     );
   }
@@ -487,10 +487,13 @@ export default function EssHomePage() {
         .home-grid-week { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 10px; }
         .home-week-cell { transition: border-color .15s ease, box-shadow .15s ease; }
         .home-week-cell:hover { box-shadow: 0 12px 24px -20px rgba(20,23,26,0.5); }
+        .home-week-list { scrollbar-width: thin; }
+        .home-week-list::-webkit-scrollbar { width: 5px; }
+        .home-week-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 999px; }
         @media (max-width: 1280px) { .home-grid-week { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
         @media (max-width: 860px) { .home-grid-week { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
         @media (max-width: 640px) { .home-grid-week { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-        @media (max-width: 400px) { .home-grid-week { grid-template-columns: minmax(0, 1fr); } .home-week-cell { min-height: 0 !important; } }
+        @media (max-width: 400px) { .home-grid-week { grid-template-columns: minmax(0, 1fr); } .home-week-cell { height: auto !important; max-height: 320px; } }
         .home-grid-month { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 1px; background: var(--border); border: 1px solid var(--border); border-radius: 16px; overflow: hidden; }
         .home-hero { display: flex; align-items: center; gap: 30px; flex-wrap: wrap; }
         .home-punch { flex: 0 0 auto; width: auto; margin-left: auto; }
@@ -821,7 +824,7 @@ export default function EssHomePage() {
                 const hol = holidayOn(d);
                 const off = !hol && isWeekOff(d);
                 return (
-                  <div key={i} className="home-week-cell" style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: 10, borderRadius: 16, minHeight: 200, minWidth: 0,
+                  <div key={i} className="home-week-cell" style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: 10, borderRadius: 16, height: 250, minWidth: 0,
                     background: isToday ? HERO_GRADIENT : hol ? 'rgba(225,29,72,0.05)' : evs.length ? 'var(--bg-card)' : 'var(--bg-page)',
                     border: isToday ? 'none' : `1px solid ${hol ? 'rgba(225,29,72,0.22)' : 'var(--border)'}`, boxShadow: isToday ? '0 14px 28px -18px rgba(7,21,32,0.7)' : 'none' }}>
                     <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, padding: '4px 4px 2px' }}>
@@ -832,7 +835,12 @@ export default function EssHomePage() {
                         : hol ? <span style={{ marginLeft: 'auto', alignSelf: 'center', fontSize: 9.5, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em', color: HOLI, background: 'rgba(225,29,72,0.1)', padding: '3px 8px', borderRadius: 999 }}>Holiday</span>
                         : off ? <span style={{ marginLeft: 'auto', alignSelf: 'center', fontSize: 9.5, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em', background: 'var(--border)', padding: '3px 8px', borderRadius: 999, ...muted }}>Week off</span>
                         : null}
+                      {evs.length + (hol ? 1 : 0) > 2 && (
+                        <span title={`${evs.length + (hol ? 1 : 0)} items — scroll to see all`} style={{ marginLeft: isToday || isTomorrow || hol || off ? 4 : 'auto', alignSelf: 'center', fontSize: 10, fontWeight: 800, padding: '3px 7px', borderRadius: 999,
+                          background: isToday ? 'rgba(255,255,255,0.18)' : BRAND_DIM, color: isToday ? '#fff' : BRAND }}>{evs.length + (hol ? 1 : 0)}</span>
+                      )}
                     </div>
+                    <div className="home-week-list" style={{ flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8, margin: '0 -4px', padding: '0 4px 6px' }}>
                     {hol && (
                       <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: 10, borderRadius: 12, minWidth: 0, background: 'var(--bg-card)', border: '1px solid rgba(225,29,72,0.25)', borderLeft: `3px solid ${HOLI}` }}>
                         <span style={{ width: 34, height: 34, borderRadius: '50%', flexShrink: 0, background: 'rgba(225,29,72,0.1)', color: HOLI, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><PartyPopper size={17} aria-hidden="true" /></span>
@@ -878,6 +886,7 @@ export default function EssHomePage() {
                         </div>
                       );
                     })}
+                    </div>
                   </div>
                 );
               })}

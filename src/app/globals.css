@@ -102,6 +102,30 @@ body {
   box-shadow: 0 8px 30px -12px rgba(15, 23, 42, 0.08);
 }
 
+/* Skeleton loading placeholders (admin + ESS) — see src/components/ui/Skeleton.tsx.
+   ESS dark mode overrides the two tones on .ess-legacy[data-theme="dark"]. */
+:root {
+  --skeleton-base: #e8edf3;
+  --skeleton-shine: #f5f8fb;
+}
+.ess-legacy[data-theme="dark"] {
+  --skeleton-base: #1b2939;
+  --skeleton-shine: #24364a;
+}
+.skeleton {
+  display: block;
+  background: linear-gradient(90deg, var(--skeleton-base) 25%, var(--skeleton-shine) 37%, var(--skeleton-base) 63%);
+  background-size: 400% 100%;
+  animation: skeleton-shimmer 1.4s ease infinite;
+}
+@keyframes skeleton-shimmer {
+  from { background-position: 100% 50%; }
+  to { background-position: 0 50%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton { animation: none; }
+}
+
 .brand-ring {
   background: rgba(33, 150, 243, 0.10);
   border: 1px solid rgba(33, 150, 243, 0.20);

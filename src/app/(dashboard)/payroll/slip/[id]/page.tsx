@@ -7,6 +7,7 @@ import { Download } from 'lucide-react';
 import { formatCurrency } from '@/lib/utils';
 import { generatePayslipPdf } from '@/lib/payslipPdf';
 import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
+import { PageSkeleton } from '@/components/ui/Skeleton';
 
 interface SlipItem {
   salary_head_item_desc: string | null;
@@ -75,7 +76,7 @@ export default function PayslipPage({ params }: { params: Promise<{ id: string }
     queryFn: () => fetch('/api/company').then((r) => r.json()),
   });
 
-  if (isLoading) return <div className="text-slate-500 text-sm">Loading...</div>;
+  if (isLoading) return <PageSkeleton body="detail" />;
   if (error) return <div className="text-[color:var(--color-danger)] text-sm">{(error as Error).message}</div>;
   if (!data) return null;
 

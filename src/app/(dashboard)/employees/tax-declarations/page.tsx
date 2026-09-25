@@ -10,6 +10,7 @@ import { Modal } from '@/components/ui/Modal';
 import Form16Page from '@/app/(dashboard)/taxation/form16/page';
 import { cn, formatCurrency } from '@/lib/utils';
 import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
+import { FormSkeleton, SkeletonText } from '@/components/ui/Skeleton';
 
 const BTN_BASE =
   'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[9px] text-[12.5px] font-semibold shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
@@ -334,7 +335,7 @@ export default function TaxDeclarationsPage({ embeddedEmpPkey }: TaxDeclarations
       {!embedded && !isAdmin && !selfEmpId && (
         <p className="text-[12.5px] text-slate-400">No employee record is linked to your account.</p>
       )}
-      {empId && isLoading && <p className="text-[12.5px] text-slate-400">Loading…</p>}
+      {empId && isLoading && <FormSkeleton fields={8} />}
 
       {data?.noFinYear && (
         <div className="surface-card rounded-2xl p-6 text-[13px] text-slate-500">
@@ -712,7 +713,7 @@ export default function TaxDeclarationsPage({ embeddedEmpPkey }: TaxDeclarations
           {declTab === 'worksheet' && (
           <div className="surface-card rounded-2xl p-5">
             <h2 className="text-[13.5px] font-semibold text-slate-600 uppercase tracking-wide mb-3">Projection Worksheet</h2>
-            {!worksheet && <p className="text-[12px] text-slate-400">Loading…</p>}
+            {!worksheet && <SkeletonText lines={6} />}
             {worksheet?.noFinYear && <p className="text-[12px] text-slate-400">No open financial year for this branch.</p>}
             {worksheet && !worksheet.noFinYear && !worksheet.hasPayroll && (
               <p className="text-[12px] text-slate-400">

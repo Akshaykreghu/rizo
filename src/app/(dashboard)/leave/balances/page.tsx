@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import { useQuery } from '@tanstack/react-query';
 import { EmployeeSearch } from '@/components/employees/EmployeeSearch';
 import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
+import { CardsSkeleton } from '@/components/ui/Skeleton';
 
 interface BalanceRow {
   salaryHeadItemFkey: number;
@@ -46,7 +47,7 @@ export default function LeaveBalancesPage() {
       </div>
 
       {!employee && <p className="text-[12.5px] text-slate-400">Select an employee to view balances.</p>}
-      {employee && isLoading && <p className="text-[12.5px] text-slate-400">Loading…</p>}
+      {employee && isLoading && <CardsSkeleton count={4} />}
       {employee && !isLoading && rows.length === 0 && <p className="text-[12.5px] text-slate-400">No leave policy assigned for this employee.</p>}
 
       {rows.length > 0 && (

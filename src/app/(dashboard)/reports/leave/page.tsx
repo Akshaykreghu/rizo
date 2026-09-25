@@ -11,6 +11,7 @@ import {
 } from '@/lib/reportExport';
 import { cn } from '@/lib/utils';
 import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
+import { TableSkeleton } from '@/components/ui/Skeleton';
 
 // Ports MiscellaniousReportsController's four leave report types (LeaveSummary, LeaveBalance,
 // MonthlyLeave, Compoff) into ONE tile with a Report Type dropdown — matching the structure of the
@@ -425,7 +426,7 @@ export default function LeaveReportPage() {
       {displayRows.length === 0 ? (
         <div className="surface-card rounded-xl px-4 py-8 text-center text-[12.5px] text-slate-400">
           {generate.isPending
-            ? 'Loading...'
+            ? <TableSkeleton rows={5} cols={6} framed={false} />
             : generate.isSuccess
               ? 'No records found for the selected criteria.'
               : 'Choose at least one criteria value and click View.'}

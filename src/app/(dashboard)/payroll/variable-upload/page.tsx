@@ -9,6 +9,7 @@ import { EmployeeSearch } from '@/components/employees/EmployeeSearch';
 import { useSetupOptions } from '@/lib/setupOptions';
 import { cn, formatCurrency, currentYearMonth } from '@/lib/utils';
 import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
+import { TableSkeleton } from '@/components/ui/Skeleton';
 
 interface HeadItem {
   salary_head_item_pkey: number;
@@ -331,7 +332,7 @@ export default function VariableUploadPage() {
       {/* List */}
       <div className="surface-card rounded-xl overflow-hidden">
         {isLoading ? (
-          <div className="px-4 py-6 text-center text-[12.5px] text-slate-400">Loading…</div>
+          <TableSkeleton rows={6} cols={6} framed={false} />
         ) : rows.length === 0 ? (
           <div className="px-4 py-6 text-center text-[12.5px] text-slate-400">No variable entries for this filter</div>
         ) : (

@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import { useQuery } from '@tanstack/react-query';
 import { EmployeeSearch } from '@/components/employees/EmployeeSearch';
 import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
+import { TableSkeleton } from '@/components/ui/Skeleton';
 
 interface MonthCount { month_year: string; days: number }
 
@@ -51,7 +52,7 @@ export default function CompOffPage() {
       </div>
 
       {!empFkey && <p className="text-[12.5px] text-slate-400">Select an employee to view their comp-off report.</p>}
-      {empFkey && isLoading && <p className="text-[12.5px] text-slate-400">Loading…</p>}
+      {empFkey && isLoading && <TableSkeleton rows={6} cols={5} />}
       {empFkey && error && <p className="text-[12.5px] text-[color:var(--color-danger)]">{String((error as Error).message)}</p>}
 
       {data && (

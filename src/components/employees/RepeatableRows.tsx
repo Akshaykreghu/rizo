@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Check, Pencil, Plus, Trash2 } from 'lucide-react';
 import { RequiredMark } from '@/components/ui/RequiredMark';
 import { SearchableSelect } from '@/components/ui/SearchableSelect';
+import { DatePicker } from '@/components/ui/DatePicker';
 
 const SELECT_BUTTON_CLASS = 'w-full px-2.5 py-1.5 border border-gray-300 rounded-lg text-sm';
 
@@ -37,6 +38,14 @@ interface RepeatableRowsProps {
    *  saving then updates that same row in place (by pkey) instead of adding a new one. */
   onUpdate?: (pkey: number, values: Record<string, string>) => void | Promise<void>;
   addLabel?: string;
+}
+
+// Saved rows show dates like the picker does ("02 Feb 1966"), not the raw "1966-02-02T00:00:00.000Z"
+// some routes return. The date part is read as-is, so there's no timezone shift.
+const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+function showDate(v: unknown): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(v ?? ''));
+  return m ? `${m[3]} ${MONTHS_SHORT[Number(m[2]) - 1]} ${m[1]}` : String(v ?? '');
 }
 
 export function RepeatableRows({ fields, rows, pkeyField, onAdd, onRemove, onUpdate, addLabel }: RepeatableRowsProps) {
@@ -133,7 +142,7 @@ export function RepeatableRows({ fields, rows, pkeyField, onAdd, onRemove, onUpd
               {visibleRows.map((row) => (
                 <tr key={String(row[pkeyField])} className="border-t border-gray-100">
                   {fields.map((f) => (
-                    <td key={f.key} className="py-2 pr-4 text-gray-800">{String(row[f.key] ?? '')}</td>
+                    <td key={f.key} className="py-2 pr-4 text-gray-800">{f.type === 'date' ? showDate(row[f.key]) : String(row[f.key] ?? '')}</td>
                   ))}
                   <td className="py-2 whitespace-nowrap">
                     {onUpdate && (
@@ -184,12 +193,19 @@ export function RepeatableRows({ fields, rows, pkeyField, onAdd, onRemove, onUpd
                 placeholder="Select"
                 buttonClassName={SELECT_BUTTON_CLASS}
               />
+            ) : f.type === 'date' ? (
+              <DatePicker
+                value={draft[f.key]}
+                onChange={(v) => setValue(f.key, v)}
+                min={f.minFromKey ? draft[f.minFromKey] || undefined : undefined}
+                required={f.required}
+                buttonClassName={SELECT_BUTTON_CLASS}
+              />
             ) : (
               <input
-                type={f.type === 'number' ? 'number' : f.type === 'date' ? 'date' : 'text'}
+                type={f.type === 'number' ? 'number' : 'text'}
                 maxLength={f.maxLength}
                 inputMode={f.inputMode}
-                min={f.type === 'date' && f.minFromKey ? draft[f.minFromKey] || undefined : undefined}
                 className="w-full px-2.5 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 value={draft[f.key]}
                 onChange={(e) => setValue(f.key, e.target.value)}

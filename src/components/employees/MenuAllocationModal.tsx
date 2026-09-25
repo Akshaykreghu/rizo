@@ -8,6 +8,7 @@ import {
 import { cn } from '@/lib/utils';
 import { useSetupRows } from '@/lib/setupOptions';
 import type { MenuNode } from '@/components/employees/MenuTree';
+import { SkeletonText } from '@/components/ui/Skeleton';
 
 interface FeatureRow { feature_id: number; feature_name: string; description: string | null }
 interface FeatureAccess { mode: 'branch' | 'hierarchy'; branches: string[] }
@@ -342,7 +343,7 @@ export function MenuAllocationModal({ empPkey, onClose }: MenuAllocationModalPro
       {/* Content */}
       <div className="flex-1 overflow-y-auto scroll-fade px-6 py-5">
         {isLoading ? (
-          <p className="text-sm text-slate-500">Loading…</p>
+          <SkeletonText lines={8} />
         ) : tab === 'menus' ? (
           <div>
             <div className="flex items-center gap-2 mb-3">

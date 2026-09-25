@@ -8,6 +8,7 @@ import { Plus, X, Check, Ban, Eye, Pencil } from 'lucide-react';
 import { EmployeeSearch } from '@/components/employees/EmployeeSearch';
 import { cn, formatDate } from '@/lib/utils';
 import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
+import { TableSkeleton } from '@/components/ui/Skeleton';
 
 const INPUT_CLASS =
   'border border-slate-200 bg-white rounded-[9px] px-2.5 py-1.5 text-[12.5px] text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/25 focus:border-[color:var(--color-primary)] transition-colors';
@@ -202,7 +203,7 @@ export default function PromotionApprovalPage({ embeddedEmpPkey, embeddedEmpName
         </div>
       </div>
 
-      {isLoading && <p className="text-[12.5px] text-slate-400">Loading…</p>}
+      {isLoading && <TableSkeleton rows={6} cols={6} />}
       {!isLoading && data.length === 0 && <p className="text-[12.5px] text-slate-400">No requests here.</p>}
 
       <div className="space-y-3">

@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { KeyRound, RotateCcw } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { FormSkeleton } from '@/components/ui/Skeleton';
 
 interface AccessData {
   emp_pkey: number;
@@ -104,7 +105,7 @@ export function AccessManageModal({ empPkey, onSaved, onNotify }: AccessManageMo
   if (isError) {
     return <p className="text-sm text-[color:var(--color-danger)]">Couldn&apos;t load access details for this employee.</p>;
   }
-  if (isLoading || !data) return <p className="text-sm text-slate-500">Loading…</p>;
+  if (isLoading || !data) return <FormSkeleton fields={4} />;
 
   return (
     <div>

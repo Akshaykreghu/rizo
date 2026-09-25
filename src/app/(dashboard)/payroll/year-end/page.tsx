@@ -8,6 +8,7 @@ import { useSetupRows } from '@/lib/setupOptions';
 import { Archive, ArrowRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
+import { TableSkeleton } from '@/components/ui/Skeleton';
 
 interface Branch { id: number; branch_code: string; branch_name: string }
 interface LeaveItem {
@@ -100,7 +101,7 @@ export default function YearEndPage() {
       {!branch ? (
         <p className="text-[13px] text-slate-400">Select a branch to view its year-end checklist.</p>
       ) : isLoading ? (
-        <p className="text-[13px] text-slate-400">Loading...</p>
+        <TableSkeleton rows={6} cols={4} />
       ) : data?.noFinYear ? (
         <div className="glass-card rounded-2xl p-6 text-[13px] text-slate-500">
           No open financial year found for this branch.

@@ -10,6 +10,7 @@ import { DataTable } from '@/components/data-table/DataTable';
 import { cn, formatDate } from '@/lib/utils';
 import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
 import type { ColumnDef } from '@tanstack/react-table';
+import { TableSkeleton } from '@/components/ui/Skeleton';
 
 const INPUT_CLASS =
   'border border-slate-200 bg-white rounded-[9px] px-2.5 py-1.5 text-[12.5px] text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/25 focus:border-[color:var(--color-primary)] transition-colors w-full';
@@ -1148,7 +1149,7 @@ export default function ResignationsPage({ embeddedEmpPkey, embeddedEmpName }: R
 
       {slipFor !== null && (
         <Modal title="Full & Final Settlement Slip" size="lg" onClose={() => setSlipFor(null)}>
-          {slipQuery.isPending && <p className="py-10 text-center text-[13px] text-slate-400">Loading…</p>}
+          {slipQuery.isPending && <div className="py-4"><TableSkeleton rows={8} cols={3} /></div>}
           {slipQuery.isError && (
             <p className="py-10 text-center text-[13px] text-[color:var(--color-danger)]">{String(slipQuery.error)}</p>
           )}

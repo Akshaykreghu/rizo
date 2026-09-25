@@ -5,6 +5,7 @@ import { useSession } from 'next-auth/react';
 import AppTabs from '@/components/ess/AppTabs';
 import { EssPagination } from '@/components/ess/EssPagination';
 import { essPortal } from '@/components/ess/essPortal';
+import { TableSkeleton } from '@/components/ui/Skeleton';
 
 // Port of New Rizo's pages/ESS/ESSApprovals.jsx, backed by the approver-queue mode added to
 // GET /api/leave/requests (?authorizerFkey=/?approverFkey=, forced server-side to the caller's
@@ -291,7 +292,7 @@ function RegularisationApprovalsTab() {
       <div style={{ background: 'var(--bg-card)', border: '1.5px solid var(--border)', borderRadius: 14, overflow: 'hidden' }}>
         {message && <div style={{ padding: '10px 16px', fontSize: 12, color: '#dc2626', borderBottom: '1px solid var(--border)' }}>{message}</div>}
         {loading ? (
-          <div style={{ padding: 48, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>Loading…</div>
+          <TableSkeleton rows={6} cols={6} framed={false} />
         ) : rows.length === 0 ? (
           <div style={{ padding: 60, textAlign: 'center' }}>
             <div style={{ fontSize: 40, marginBottom: 10 }}>✅</div>
@@ -421,7 +422,7 @@ export default function EssApprovalsPage() {
 
       <div style={{ background: 'var(--bg-card)', border: '1.5px solid var(--border)', borderRadius: 14, overflow: 'hidden' }}>
         {loading ? (
-          <div style={{ padding: 48, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>Loading…</div>
+          <TableSkeleton rows={6} cols={6} framed={false} />
         ) : filtered.length === 0 ? (
           <div style={{ padding: 60, textAlign: 'center' }}>
             <div style={{ fontSize: 40, marginBottom: 10 }}>✅</div>

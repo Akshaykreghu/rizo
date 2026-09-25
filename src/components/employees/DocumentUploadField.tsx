@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { UploadCloud, Loader2, FileCheck2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { FilePreviewModal } from '@/components/ui/FilePreviewModal';
+import { FilePreviewModal, uploadedFileName } from '@/components/ui/FilePreviewModal';
 
 interface DocumentUploadFieldProps {
   value: string;
@@ -19,6 +19,7 @@ export function DocumentUploadField({ value, onChange, accept, maxBytes }: Docum
   const [error, setError] = useState('');
   const [dragOver, setDragOver] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const fileName = uploadedFileName(value);
 
   async function uploadFile(file: File) {
     if (accept) {
@@ -91,11 +92,13 @@ export function DocumentUploadField({ value, onChange, accept, maxBytes }: Docum
         <input type="file" accept={accept} onChange={handleFileInput} disabled={uploading} className="hidden" />
       </label>
       {value && !uploading && (
-        <button type="button" onClick={() => setPreviewOpen(true)} className="inline-block mt-1.5 text-xs text-[color:var(--color-primary)] hover:underline">
-          View uploaded file
+        <button type="button" onClick={() => setPreviewOpen(true)} title={fileName ?? undefined} className="inline-flex max-w-full mt-1.5 text-xs text-[color:var(--color-primary)] hover:underline">
+          <span className="truncate">{fileName ? `View ${fileName}` : 'View uploaded file'}</span>
         </button>
       )}
-      <FilePreviewModal url={previewOpen ? value : null} onClose={() => setPreviewOpen(false)} title="Uploaded file" />
+      {/* Heading = the document's own file name (e.g. myadhar.pdf); older random-named uploads
+          have no original name to show. */}
+      <FilePreviewModal url={previewOpen ? value : null} onClose={() => setPreviewOpen(false)} title={fileName ?? 'Uploaded file'} />
       {error && <p className="text-xs text-[color:var(--color-danger)] mt-1.5">{error}</p>}
     </div>
   );

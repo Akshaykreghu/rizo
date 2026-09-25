@@ -9,6 +9,7 @@ import { RequiredMark } from '@/components/ui/RequiredMark';
 import { FilePreviewModal } from '@/components/ui/FilePreviewModal';
 import { AvatarUpload } from '@/components/ui/AvatarUpload';
 import { SearchableSelect } from '@/components/ui/SearchableSelect';
+import { DatePicker } from '@/components/ui/DatePicker';
 import { CollapsibleSection, SectionHeading } from '@/components/ui/CollapsibleSection';
 import { RepeatableRows } from '@/components/employees/RepeatableRows';
 import { DocumentUploadField } from '@/components/employees/DocumentUploadField';
@@ -23,6 +24,7 @@ import {
   dobError, mobileError, aadhaarError, panError, esiError, uanError, lwfError,
   accountNoError, pfNumberError, pincodeError,
 } from '@/lib/validation';
+import { DetailSkeleton } from '@/components/ui/Skeleton';
 
 interface JoinDetailData {
   join: Record<string, string>;
@@ -51,7 +53,9 @@ const PAGE_TURN_MS = 620;
 const EMPTY_FORM: Record<string, string> = {
   first_name: '', last_name: '', date_of_birth: '', email: '', mobile_no: '', address: '',
   id_card: '', pincode: '', district: '', state: '', blood: '', maritual_status: '',
-  guradian: '', relation_guardian: '', classification: '', nationality_id: '', country_origin: '',
+  guradian: '', relation_guardian: '', classification: '',
+  // India by default, as legacy's setup (nationality_id = 75 in countries_nationality).
+  nationality_id: '75', country_origin: '',
   bank: '', bank_branch: '', ifsc_code: '', account_no: '', pf: '', company_pf: '', previous_member_id: '',
   esi_dispensary: '', esi: '', eps: 'N', pan_no: '', international_worker: 'N', locomotive: 'N',
   hearing: 'N', visual: 'N', physical_handicap: 'N', wps_code: '', lwf_code: '', profile_image_url: '',
@@ -599,7 +603,7 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
   // Only block on the fetch when there is nothing to show yet (pure edit, first load).
   // After the create -> edit handoff the form is already populated, so skip the flash.
   if (!isCreate && effectiveId && (isLoading || !data) && Object.keys(form).length === 0) {
-    return <p className="text-sm text-gray-500">Loading…</p>;
+    return <DetailSkeleton fields={10} />;
   }
 
   const isFirst = step === 0;
@@ -628,11 +632,12 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
           </div>
           <div>
             <label className={LABEL_CLASS}>Birth Date <span className="text-[color:var(--color-danger)]">*</span></label>
-            <input
-              type="date"
+            <DatePicker
+              value={form.date_of_birth ?? ''}
+              onChange={(v) => updateField('date_of_birth', v)}
               max={MAX_DOB}
-              className={cn(INPUT_CLASS, fieldErrors.date_of_birth && ERROR_INPUT_CLASS)}
-              {...f('date_of_birth')}
+              required
+              buttonClassName={cn(INPUT_CLASS, fieldErrors.date_of_birth && ERROR_INPUT_CLASS)}
             />
             <FieldError>{fieldErrors.date_of_birth}</FieldError>
           </div>
@@ -1036,12 +1041,11 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
                   </div>
                   <div>
                     <label className={LABEL_CLASS}>Valid From<RequiredMark /></label>
-                    <input
-                      type="date"
-                      className={cn(INPUT_CLASS, docErrors.valid_from && ERROR_INPUT_CLASS)}
+                    <DatePicker
                       value={docDraft.valid_from}
-                      onChange={(e) => {
-                        const v = e.target.value;
+                      required
+                      buttonClassName={cn(INPUT_CLASS, docErrors.valid_from && ERROR_INPUT_CLASS)}
+                      onChange={(v) => {
                         // Moving Valid From past Valid Till clears the now-invalid Valid Till.
                         setDocDraft((p) => ({ ...p, valid_from: v, valid_till: p.valid_till && v && p.valid_till < v ? '' : p.valid_till }));
                       }}
@@ -1050,12 +1054,11 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
                   </div>
                   <div>
                     <label className={LABEL_CLASS}>Valid Till</label>
-                    <input
-                      type="date"
-                      min={docDraft.valid_from || undefined}
-                      className={cn(INPUT_CLASS, docErrors.valid_till && ERROR_INPUT_CLASS)}
+                    <DatePicker
                       value={docDraft.valid_till}
-                      onChange={(e) => setDocDraft((p) => ({ ...p, valid_till: e.target.value }))}
+                      min={docDraft.valid_from || undefined}
+                      buttonClassName={cn(INPUT_CLASS, docErrors.valid_till && ERROR_INPUT_CLASS)}
+                      onChange={(v) => setDocDraft((p) => ({ ...p, valid_till: v }))}
                     />
                     <FieldError>{docErrors.valid_till}</FieldError>
                   </div>
@@ -1125,7 +1128,7 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-6 gap-y-5">
             <div>
               <label className={LABEL_CLASS}>Joining Date</label>
-              <input type="date" className={INPUT_CLASS} {...fOnboard('joining_date')} />
+              <DatePicker value={onboardForm.joining_date} onChange={(v) => updateOnboardField('joining_date', v)} buttonClassName={INPUT_CLASS} />
             </div>
             <div>
               <label className={LABEL_CLASS}>Employment Type</label>
@@ -1175,15 +1178,17 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
               <>
                 <div>
                   <label className={LABEL_CLASS}>Contract Start Date</label>
-                  <input type="date" readOnly className={cn(INPUT_CLASS, 'bg-slate-50 text-slate-500')} value={onboardForm.joining_date} />
+                  {/* Always the joining date — shown for reference only. */}
+                  <DatePicker value={onboardForm.joining_date} onChange={() => {}} disabled buttonClassName={INPUT_CLASS} />
                 </div>
                 <div>
                   <label className={LABEL_CLASS}>Contract End Date <span className="text-[color:var(--color-danger)]">*</span></label>
-                  <input
-                    type="date"
+                  <DatePicker
+                    value={onboardForm.contract_end_date}
+                    onChange={(v) => updateOnboardField('contract_end_date', v)}
                     min={onboardForm.joining_date || undefined}
-                    className={cn(INPUT_CLASS, onboardFieldErrors.contract_end_date && ERROR_INPUT_CLASS)}
-                    {...fOnboard('contract_end_date')}
+                    required
+                    buttonClassName={cn(INPUT_CLASS, onboardFieldErrors.contract_end_date && ERROR_INPUT_CLASS)}
                   />
                   <FieldError>{onboardFieldErrors.contract_end_date}</FieldError>
                 </div>

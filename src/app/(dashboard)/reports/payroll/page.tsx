@@ -13,6 +13,7 @@ import {
 } from '@/lib/reportExport';
 import { cn, formatCurrency } from '@/lib/utils';
 import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
+import { TableSkeleton } from '@/components/ui/Skeleton';
 
 const INPUT_CLASS =
   'h-[42px] border border-[#E5E7EB] bg-white rounded-lg px-2.5 text-[12.5px] text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/25 focus:border-[color:var(--color-primary)] transition-colors';
@@ -1091,7 +1092,7 @@ export default function PayrollReportPage() {
           {ctcCards.length === 0 && (
             <div className="surface-card rounded-xl px-4 py-8 text-center text-[12.5px] text-slate-400">
               {generate.isPending
-                ? 'Loading...'
+                ? <TableSkeleton rows={5} cols={6} framed={false} />
                 : generate.isSuccess
                   ? 'No records found for the selected criteria.'
                   : 'Choose at least one criteria value and click Generate.'}
@@ -1111,7 +1112,7 @@ export default function PayrollReportPage() {
           {slips.length === 0 && (
             <div className="surface-card rounded-xl px-4 py-8 text-center text-[12.5px] text-slate-400">
               {generate.isPending
-                ? 'Loading...'
+                ? <TableSkeleton rows={5} cols={6} framed={false} />
                 : generate.isSuccess
                   ? 'No records found for the selected criteria.'
                   : 'Choose at least one criteria value and click Generate.'}
@@ -1122,7 +1123,7 @@ export default function PayrollReportPage() {
       ) : displayRows.length === 0 ? (
         <div className="surface-card rounded-xl px-4 py-8 text-center text-[12.5px] text-slate-400">
           {generate.isPending
-            ? 'Loading...'
+            ? <TableSkeleton rows={5} cols={6} framed={false} />
             : generate.isSuccess
               ? 'No records found for the selected criteria.'
               : 'Choose at least one criteria value and click Generate.'}

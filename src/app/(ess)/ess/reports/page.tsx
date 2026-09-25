@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useSession } from 'next-auth/react';
 import { EssPagination } from '@/components/ess/EssPagination';
+import { Skeleton, SkeletonText, TableSkeleton } from '@/components/ui/Skeleton';
 
 const PAGE_SIZE = 10;
 
@@ -43,7 +44,8 @@ function useReport<T>(url: string) {
 }
 
 function Status({ loading, error, empty }: { loading: boolean; error: string; empty?: string }) {
-  const msg = loading ? 'Loading…' : error || empty;
+  if (loading) return <TableSkeleton rows={6} cols={5} />;
+  const msg = error || empty;
   if (!msg) return null;
   return <div style={{ ...card, padding: 28, textAlign: 'center', fontSize: 13, color: error ? '#dc2626' : 'var(--text-muted)' }}>{msg}</div>;
 }
@@ -353,7 +355,7 @@ function AttendanceReport() {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: 16, alignItems: 'start' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <MonthCalendar month={month} onMonth={changeMonth} events={events} selected={selected} onDayClick={setSelected} />
-          {(loading || error || refreshMsg) && <div style={{ fontSize: 12, color: error || refreshMsg ? '#dc2626' : 'var(--text-muted)' }}>{loading ? 'Loading…' : error || refreshMsg}</div>}
+          {loading ? <Skeleton width="45%" height={10} /> : (error || refreshMsg) && <div style={{ fontSize: 12, color: '#dc2626' }}>{error || refreshMsg}</div>}
           <LeaveBalanceCard />
         </div>
 
@@ -366,7 +368,7 @@ function AttendanceReport() {
           </div>
           <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
             {details.loading || !d ? (
-              <div style={{ padding: 24, textAlign: 'center', fontSize: 13, ...muted }}>{details.error || 'Loading…'}</div>
+              details.error ? <div style={{ padding: 24, textAlign: 'center', fontSize: 13, ...muted }}>{details.error}</div> : <div style={{ padding: 16 }}><SkeletonText lines={5} /></div>
             ) : (
               <>
                 {d.employee.name && (
@@ -486,7 +488,7 @@ function LeaveBalanceCard() {
           ))}
         </div>
       </div>
-      {loading ? <div style={{ padding: 16, textAlign: 'center', fontSize: 13, ...muted }}>Loading…</div>
+      {loading ? <div style={{ padding: 16 }}><SkeletonText lines={4} /></div>
         : error ? <div style={{ padding: 16, textAlign: 'center', fontSize: 13, ...muted }}>Unable to load</div>
         : !p ? <div style={{ padding: 16, textAlign: 'center', fontSize: 13, ...muted }}>No leave data available</div>
         : (

@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Search } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { SkeletonText } from '@/components/ui/Skeleton';
 
 // Salary Structure tab of "Allocate Policies in Bulk" — the 3-panel allocate / de-allocate
 // workflow from legacy EmployeeConfig/index.ctp tab5. One employee is moved at a time
@@ -37,7 +38,7 @@ function EmpTable({
   selected: number | null;
   onSelect: (id: number) => void;
   showGross: boolean;
-  emptyText: string;
+  emptyText: React.ReactNode;
 }) {
   return (
     <div className="h-[360px] overflow-y-auto border border-slate-100 rounded-xl">
@@ -213,7 +214,7 @@ export function SalaryStructureAllocator() {
               selected={candSelected}
               onSelect={setCandSelected}
               showGross={showGross}
-              emptyText={isLoading ? 'Loading…' : 'No eligible non-allocated employees.'}
+              emptyText={isLoading ? <SkeletonText lines={3} height={10} /> : 'No eligible non-allocated employees.'}
             />
           </div>
 
@@ -243,7 +244,7 @@ export function SalaryStructureAllocator() {
               selected={allocSelected}
               onSelect={setAllocSelected}
               showGross={showGross}
-              emptyText={isLoading ? 'Loading…' : 'No employees in this salary structure yet.'}
+              emptyText={isLoading ? <SkeletonText lines={3} height={10} /> : 'No employees in this salary structure yet.'}
             />
           </div>
         </div>

@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
 import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
+import { TableSkeleton } from '@/components/ui/Skeleton';
 
 const INPUT_CLASS =
   'border border-slate-200 bg-white rounded-[9px] px-2.5 py-1.5 text-[12.5px] text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/25 focus:border-[color:var(--color-primary)] transition-colors';
@@ -76,7 +77,7 @@ export default function StatutoryHeadsPage() {
     },
   });
 
-  if (isLoading) return <div className="text-slate-500 text-[12.5px]">Loading...</div>;
+  if (isLoading) return <TableSkeleton rows={6} cols={5} />;
 
   return (
     <div>

@@ -12,6 +12,7 @@ import { AvatarUpload } from '@/components/ui/AvatarUpload';
 import { RequiredMark } from '@/components/ui/RequiredMark';
 import { FilePreviewModal } from '@/components/ui/FilePreviewModal';
 import { SearchableSelect } from '@/components/ui/SearchableSelect';
+import { DatePicker } from '@/components/ui/DatePicker';
 import { CollapsibleSection, SectionHeading } from '@/components/ui/CollapsibleSection';
 import { EmployeeSearch } from '@/components/employees/EmployeeSearch';
 import { DocumentUploadField } from '@/components/employees/DocumentUploadField';
@@ -26,6 +27,7 @@ import {
   dobError, ageAtDateError, aadhaarError, panError, esiError, uanError, lwfError, accountNoError, pfNumberError,
   mobileError, pincodeError,
 } from '@/lib/validation';
+import { DetailSkeleton } from '@/components/ui/Skeleton';
 
 const DOCUMENT_TYPES = ['Aadhaar', 'PAN', 'Passport', 'Driving License', 'Voter ID', 'Educational Certificate', 'Offer Letter', 'Relieving Letter', 'Other'];
 
@@ -542,7 +544,7 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
     }
   }
 
-  if (isLoading) return <div className="p-10 text-center text-sm text-slate-500">Loading…</div>;
+  if (isLoading) return <DetailSkeleton fields={12} />;
   if (!data?.employee) return <div className="p-10 text-center text-sm text-[color:var(--color-danger)]">Employee not found.</div>;
 
   const emp = data.employee;
@@ -656,7 +658,7 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                   </div>
                   <div>
                     <label className={LABEL_CLASS}>Date of Birth<RequiredMark /></label>
-                    <input type="date" max={MAX_DOB} className={cn(INPUT_CLASS, fieldErrors.date_of_birth && ERROR_INPUT_CLASS)} {...f('date_of_birth')} />
+                    <DatePicker value={form.date_of_birth ?? ''} onChange={(v) => updateField('date_of_birth', v)} max={MAX_DOB} required buttonClassName={cn(INPUT_CLASS, fieldErrors.date_of_birth && ERROR_INPUT_CLASS)} />
                     <FieldError>{fieldErrors.date_of_birth}</FieldError>
                   </div>
 
@@ -846,7 +848,7 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-5 gap-y-5">
                       <div>
                         <label className={LABEL_CLASS}>Joining Date</label>
-                        <input type="date" className={INPUT_CLASS} {...f('joining_date')} />
+                        <DatePicker value={form.joining_date ?? ''} onChange={(v) => updateField('joining_date', v)} buttonClassName={INPUT_CLASS} />
                       </div>
                       <div>
                         <label className={LABEL_CLASS}>Employee ID</label>
@@ -900,15 +902,16 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                         <>
                           <div>
                             <label className={LABEL_CLASS}>Contract Start Date</label>
-                            <input type="date" readOnly className={cn(INPUT_CLASS, 'bg-slate-50 text-slate-500')} value={form.joining_date ?? ''} />
+                            <DatePicker value={form.joining_date ?? ''} onChange={() => {}} disabled buttonClassName={INPUT_CLASS} />
                           </div>
                           <div>
                             <label className={LABEL_CLASS}>Contract End Date<RequiredMark /></label>
-                            <input
-                              type="date"
+                            <DatePicker
+                              value={form.contract_end_date ?? ''}
+                              onChange={(v) => updateField('contract_end_date', v)}
                               min={form.joining_date || undefined}
-                              className={cn(INPUT_CLASS, fieldErrors.contract_end_date && ERROR_INPUT_CLASS)}
-                              {...f('contract_end_date')}
+                              required
+                              buttonClassName={cn(INPUT_CLASS, fieldErrors.contract_end_date && ERROR_INPUT_CLASS)}
                             />
                             <FieldError>{fieldErrors.contract_end_date}</FieldError>
                           </div>
@@ -1092,12 +1095,12 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                           </div>
                           <div>
                             <label className={LABEL_CLASS}>Date of Birth<RequiredMark /></label>
-                            <input
-                              type="date"
-                              max={TODAY}
-                              className={cn(INPUT_CLASS, familyErrors.DOB && ERROR_INPUT_CLASS)}
+                            <DatePicker
                               value={familyDraft.DOB}
-                              onChange={(e) => setFamilyDraft((p) => ({ ...p, DOB: e.target.value }))}
+                              onChange={(v) => setFamilyDraft((p) => ({ ...p, DOB: v }))}
+                              max={TODAY}
+                              required
+                              buttonClassName={cn(INPUT_CLASS, familyErrors.DOB && ERROR_INPUT_CLASS)}
                             />
                             <FieldError>{familyErrors.DOB}</FieldError>
                           </div>
@@ -1317,21 +1320,22 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                           </div>
                           <div>
                             <label className={LABEL_CLASS}>Valid From<RequiredMark /></label>
-                            <input
-                              type="date"
-                              className={cn(INPUT_CLASS, docErrors.valid_from && ERROR_INPUT_CLASS)}
+                            <DatePicker
                               value={docDraft.valid_from}
-                              onChange={(e) => setDocDraft((p) => ({ ...p, valid_from: e.target.value }))}
+                              required
+                              buttonClassName={cn(INPUT_CLASS, docErrors.valid_from && ERROR_INPUT_CLASS)}
+                              // Moving Valid From past Valid Till clears the now-invalid Valid Till.
+                              onChange={(v) => setDocDraft((p) => ({ ...p, valid_from: v, valid_till: p.valid_till && v && p.valid_till < v ? '' : p.valid_till }))}
                             />
                             <FieldError>{docErrors.valid_from}</FieldError>
                           </div>
                           <div>
                             <label className={LABEL_CLASS}>Valid Till</label>
-                            <input
-                              type="date"
-                              className={INPUT_CLASS}
+                            <DatePicker
                               value={docDraft.valid_till}
-                              onChange={(e) => setDocDraft((p) => ({ ...p, valid_till: e.target.value }))}
+                              min={docDraft.valid_from || undefined}
+                              buttonClassName={INPUT_CLASS}
+                              onChange={(v) => setDocDraft((p) => ({ ...p, valid_till: v }))}
                             />
                           </div>
                         </div>

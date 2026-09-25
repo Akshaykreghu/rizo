@@ -25,6 +25,7 @@ import {
   websiteError,
   landlinePhoneError,
 } from '@/lib/validation';
+import { FormSkeleton } from '@/components/ui/Skeleton';
 
 interface CompanyInfo {
   business_name?: string;
@@ -398,7 +399,7 @@ export default function CompanyProfilePage() {
 
       {tab === 'profile' &&
         (isLoading ? (
-          <div className="text-slate-500 text-sm">Loading…</div>
+          <div className="surface-card rounded-2xl p-5"><FormSkeleton fields={10} /></div>
         ) : (
           <form onSubmit={submitProfile} className="glass-card rounded-2xl p-6 sm:p-7 space-y-8 max-w-3xl">
             <Section title="Basic Information">
@@ -474,7 +475,7 @@ export default function CompanyProfilePage() {
 
       {tab === 'compliance' &&
         (complianceLoading ? (
-          <div className="text-slate-500 text-sm">Loading…</div>
+          <div className="surface-card rounded-2xl p-5"><FormSkeleton fields={10} /></div>
         ) : (
           <form onSubmit={submitCompliance} className="glass-card rounded-2xl p-6 sm:p-7 space-y-8 max-w-3xl">
             <Section title="Company Registration">

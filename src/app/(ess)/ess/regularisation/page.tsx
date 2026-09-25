@@ -7,6 +7,7 @@ import { EssDropdown } from '@/components/ess/EssDropdown';
 import { cn } from '@/lib/utils';
 import { EssPagination } from '@/components/ess/EssPagination';
 import { essPortal } from '@/components/ess/essPortal';
+import { TableSkeleton } from '@/components/ui/Skeleton';
 
 const PAGE_SIZE = 10;
 
@@ -113,7 +114,7 @@ export default function EssRegularisationPage() {
 
       <div className="surface-card rounded-xl overflow-hidden">
         {isLoading ? (
-          <div className="px-4 py-6 text-center text-[12.5px] text-slate-400">Loading…</div>
+          <TableSkeleton rows={5} cols={6} framed={false} />
         ) : rows.length === 0 ? (
           <div className="px-4 py-6 text-center text-[12.5px] text-slate-400">No requests for this month</div>
         ) : (

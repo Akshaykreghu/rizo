@@ -20,11 +20,18 @@ interface FilePreviewModalProps {
 // fall back to what the popup shows ("Aadhaar · 812345678901" -> "Aadhaar - 812345678901.pdf").
 const RANDOM_NAME = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(\.[A-Za-z0-9]+)?$/i;
 
-function downloadNameFor(title: string, url: string): string {
-  const last = url.split('?')[0].split('/').pop() ?? '';
+/** The name a file was uploaded with (last segment of its URL), or null for an older upload that
+ *  was stored under a random name only. */
+export function uploadedFileName(url: string | null | undefined): string | null {
+  const last = (url ?? '').split('?')[0].split('/').pop() ?? '';
   let original = last;
   try { original = decodeURIComponent(last); } catch { /* keep as-is */ }
-  if (original && !RANDOM_NAME.test(original)) return original;
+  return original && !RANDOM_NAME.test(original) ? original : null;
+}
+
+function downloadNameFor(title: string, url: string): string {
+  const original = uploadedFileName(url);
+  if (original) return original;
 
   const ext = (url.split('?')[0].match(/\.[A-Za-z0-9]{1,5}$/)?.[0] ?? '').toLowerCase();
   const base = title.replace(/\s*·\s*/g, ' - ').replace(/[\\/:*?"<>|]+/g, '').replace(/\s+/g, ' ').trim() || 'document';
@@ -68,6 +75,7 @@ export function FilePreviewModal({ url, onClose, title = 'Document' }: FilePrevi
   if (!url || typeof document === 'undefined') return null;
 
   const fileName = downloadNameFor(title, url);
+  const originalName = uploadedFileName(url);
   const isImage = IMAGE_EXT.test(url);
   const isPdf = PDF_EXT.test(url);
 
@@ -84,7 +92,13 @@ export function FilePreviewModal({ url, onClose, title = 'Document' }: FilePrevi
       >
         <div className="flex items-center gap-3 px-5 py-3 border-b border-slate-100">
           <FileText className="w-4 h-4 text-[color:var(--color-primary)] flex-shrink-0" />
-          <p className="text-sm font-semibold text-[#0F172A] truncate flex-1">{title}</p>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold text-[#0F172A] truncate">{title}</p>
+            {/* The document's own file name under the heading, when it isn't the heading already. */}
+            {originalName && originalName !== title && (
+              <p className="text-xs text-slate-400 truncate" title={originalName}>{originalName}</p>
+            )}
+          </div>
           <a
             href={url}
             download={fileName}

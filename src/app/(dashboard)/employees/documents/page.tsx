@@ -63,7 +63,7 @@ export default function DocumentLibraryPage() {
   const [deleteError, setDeleteError] = useState('');
   const [uploadOpen, setUploadOpen] = useState(false);
 
-  const { data: documents = [] } = useQuery<DocumentRow[]>({
+  const { data: documents = [], isLoading: documentsLoading } = useQuery<DocumentRow[]>({
     queryKey: ['employees/documents', search],
     queryFn: () => fetch(`/api/employees/documents?q=${encodeURIComponent(search)}`).then((r) => r.json()),
   });
@@ -228,7 +228,7 @@ export default function DocumentLibraryPage() {
         <p className="text-[12.5px] text-[color:var(--color-danger)] mb-3">{deleteError}</p>
       )}
 
-      <DataTable data={documents} columns={columns} pageSize={10} pageSizeOptions={[10, 20, 30, 50]} />
+      <DataTable data={documents} columns={columns} isLoading={documentsLoading} pageSize={10} pageSizeOptions={[10, 20, 30, 50]} />
 
       {uploadOpen && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setUploadOpen(false)}>
