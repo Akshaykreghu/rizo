@@ -1,21 +1,37 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useSetupOptions } from '@/lib/setupOptions';
 import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
 import { AttendanceGrid, type AttendanceDay, type AttendanceRow } from '@/components/attendance/AttendanceGrid';
+import { EmployeeSearch } from '@/components/employees/EmployeeSearch';
+import { SearchableSelect } from '@/components/ui/SearchableSelect';
 import { TimePicker, nowAsHHMMSS } from '@/components/ui/TimePicker';
 import { ATTENDANCE_LEGEND, getCellColor, formatStatusDisplay } from '@/lib/attendance';
 import { cn } from '@/lib/utils';
-import { ShieldCheck, ShieldOff, X, Clock, Timer, LogIn, LogOut, Lock, Plus, Layers, Eye, EyeOff, BadgeCheck, Power } from 'lucide-react';
+import { ShieldCheck, ShieldOff, X, Clock, Timer, LogIn, LogOut, Lock, Plus, Layers, Eye, EyeOff, BadgeCheck, Power, Pencil, Check } from 'lucide-react';
 
 const useLookup = useSetupOptions;
 
 function currentMonth() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+// Matches legacy AttendanceRegisterNew's month filter: a dropdown of the last 38 calendar months
+// (not a native calendar month-picker), newest first.
+function recentMonthOptions(count = 38): { value: string; label: string }[] {
+  const list: { value: string; label: string }[] = [];
+  const d = new Date();
+  d.setDate(1);
+  for (let i = 0; i < count; i++) {
+    const value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    list.push({ value, label: d.toLocaleDateString(undefined, { month: 'short', year: 'numeric' }) });
+    d.setMonth(d.getMonth() - 1);
+  }
+  return list;
 }
 
 interface LeaveOption {
@@ -39,6 +55,10 @@ interface DayExtras {
   otEligible: boolean;
   ot: { otDurationMin: number | null; setDurationMin: number | null; remarks: string | null; isManual: boolean } | null;
   computedAttendance: { inTime: string | null; outTime: string | null; durationMin: number | null; present: string | null } | null;
+  /** Per-session leave conflict, ported from AttendanceRegisterNewController::isLeaveAlreadyApplied()
+   * — an Applied/Authorized/Approved leave on session 1 (first half) blocks editing session 1 and
+   * "full day", but not session 2, and vice versa; any session blocks "full day". */
+  leaveExists: { first: boolean; second: boolean; full: boolean };
 }
 
 function formatDurationMin(min: number): string {
@@ -49,28 +69,42 @@ function formatDurationMin(min: number): string {
   return `${h}h ${m}m`;
 }
 
-// Renders a 24h "HH:MM:SS" (the TimePicker's own value format) as a 12h "hh:mm AM/PM" display string,
-// matching how already-saved punches are displayed elsewhere in this modal.
-function formatHHMMSS12(hhmmss: string): string {
-  const [h, m] = hhmmss.split(':').map(Number);
-  const d = new Date();
-  d.setHours(h, m, 0, 0);
-  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+// Renders a 24h "HH:MM:SS" as "HH:MM" — matches legacy's own punch-entry widget (confirmed live at
+// e.g. 18:00:15, not a 12-hour clock with AM/PM) and how already-saved punches are displayed
+// elsewhere in this modal.
+function formatHHMM24(hhmmss: string): string {
+  const [h, m] = hhmmss.split(':');
+  return `${h.padStart(2, '0')}:${m.padStart(2, '0')}`;
 }
 
 export default function AttendanceRegisterPage() {
   const [month, setMonth] = useState(currentMonth());
   const [branch, setBranch] = useState('');
+  const [empFkey, setEmpFkey] = useState('');
   const [tab, setTab] = useState<'unverified' | 'verified'>('unverified');
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [expandedRow, setExpandedRow] = useState<number | null>(null);
   const [editCell, setEditCell] = useState<{ row: AttendanceRow; dayIndex: number; day: AttendanceDay } | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  // Auto-dismiss the bottom-right toast after a few seconds instead of leaving it up until the next
+  // action happens to call setMessage again.
+  useEffect(() => {
+    if (!message) return;
+    const t = setTimeout(() => setMessage(null), 5000);
+    return () => clearTimeout(t);
+  }, [message]);
   const [showBulkUpdate, setShowBulkUpdate] = useState(false);
   const [showSummaryCols, setShowSummaryCols] = useState(true);
   const { slotEl } = useHeaderSlot();
+  const monthOptions = useMemo(() => recentMonthOptions(), []);
 
   const { data: branches = [] } = useLookup('setup/branches', 'branch_code', (r) => String(r.branch_name));
+
+  // Default to the first branch once the list loads, so the page opens with a populated view
+  // instead of an empty "Select branch" state.
+  useEffect(() => {
+    if (!branch && branches.length > 0) setBranch(branches[0].value);
+  }, [branch, branches]);
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['attendance-register', month, branch, tab],
@@ -79,7 +113,12 @@ export default function AttendanceRegisterPage() {
     enabled: !!branch,
   });
 
-  const rows: AttendanceRow[] = data?.data ?? [];
+  // Employee is optional — legacy's default is "ALL" (id 0), i.e. every employee in the selected
+  // branch/month. When one is picked, scope the already-fetched branch/month rows down to it
+  // client-side rather than adding a server round-trip, since /api/attendance/register already
+  // returns the full branch for that month.
+  const allRows: AttendanceRow[] = data?.data ?? [];
+  const rows: AttendanceRow[] = empFkey ? allRows.filter((r) => String(r.empFkey) === empFkey) : allRows;
   const monthlyOtVerifiedCount = rows.filter((r) => r.monthlyOt?.isVerified).length;
   const monthlyOtPendingCount = rows.length - monthlyOtVerifiedCount;
 
@@ -195,6 +234,18 @@ export default function AttendanceRegisterPage() {
     });
   };
 
+  // Select/deselect only the current page's rows — never the full filtered set across pagination.
+  const toggleSelectPage = (registerIds: number[], checked: boolean) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const id of registerIds) {
+        if (checked) next.add(id);
+        else next.delete(id);
+      }
+      return next;
+    });
+  };
+
   return (
     <div>
       {/* Page title sits in the global Header row, left-aligned with this content, alongside the account controls. */}
@@ -215,66 +266,45 @@ export default function AttendanceRegisterPage() {
       <div className="surface-card rounded-xl px-4 py-2.5 mb-4 flex flex-wrap items-center gap-3">
         <div className="flex items-center gap-1.5">
           <label className="text-[11.5px] font-medium text-slate-500">Month</label>
-          <input
-            type="month"
+          <SearchableSelect
             value={month}
-            onChange={(e) => setMonth(e.target.value)}
-            className="border border-slate-200 bg-white rounded-[9px] px-2.5 py-1.5 text-[12.5px] text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/25 focus:border-[color:var(--color-primary)] transition-colors"
+            onChange={setMonth}
+            options={monthOptions}
+            placeholder="Select month"
+            className="min-w-[150px]"
+            buttonClassName="!py-1.5 !text-[12.5px] !rounded-[9px]"
           />
         </div>
         <div className="flex items-center gap-1.5">
           <label className="text-[11.5px] font-medium text-slate-500">Branch</label>
-          <select
+          <SearchableSelect
             value={branch}
-            onChange={(e) => setBranch(e.target.value)}
-            className="border border-slate-200 bg-white rounded-[9px] px-2.5 py-1.5 text-[12.5px] text-[#0F172A] min-w-[160px] focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/25 focus:border-[color:var(--color-primary)] transition-colors"
-          >
-            <option value="">Select branch</option>
-            {branches.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
+            onChange={(v) => { setBranch(v); setEmpFkey(''); }}
+            options={branches}
+            placeholder="Select branch"
+            className="min-w-[170px]"
+            buttonClassName="!py-1.5 !text-[12.5px] !rounded-[9px]"
+          />
         </div>
-        <button
-          onClick={() => process.mutate()}
-          disabled={!branch || process.isPending}
-          className="flex items-center bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)] disabled:opacity-50 text-white px-3 py-1.5 rounded-[9px] text-[12.5px] font-semibold shadow-sm transition-colors"
-        >
-          {process.isPending ? 'Processing…' : 'Process'}
-        </button>
-        {tab === 'unverified' ? (
+        <div className="flex items-center gap-1.5">
+          <label className="text-[11.5px] font-medium text-slate-500">Employee</label>
+          <EmployeeSearch
+            value={empFkey}
+            onChange={setEmpFkey}
+            branch={branch}
+            emptyLabel="All employees"
+            className="!h-auto !py-1.5 !rounded-[9px] !border-slate-200 !text-[12.5px] min-w-[200px]"
+          />
+        </div>
+        <div className="flex items-center gap-2 pl-1 border-l border-slate-200">
           <button
-            onClick={() => verify.mutate()}
-            disabled={selected.size === 0 || verify.isPending}
-            className="flex items-center gap-1.5 bg-[color:var(--color-success)] hover:bg-[color:var(--color-success-dark)] disabled:opacity-50 text-white px-3 py-1.5 rounded-[9px] text-[12.5px] font-semibold shadow-sm transition-colors"
+            onClick={() => process.mutate()}
+            disabled={!branch || process.isPending}
+            className="flex items-center bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)] disabled:opacity-50 text-white px-3 py-1.5 rounded-[9px] text-[12.5px] font-semibold shadow-sm transition-colors"
           >
-            <ShieldCheck className="w-3.5 h-3.5" /> {verify.isPending ? 'Verifying…' : 'Verify'}
+            {process.isPending ? 'Processing…' : 'Process'}
           </button>
-        ) : (
-          <button
-            onClick={() => unverify.mutate()}
-            disabled={selected.size === 0 || unverify.isPending}
-            className="flex items-center gap-1.5 bg-white border border-slate-200 hover:bg-[color:var(--color-danger-light)] hover:border-[color:var(--color-danger)]/30 hover:text-[color:var(--color-danger-dark)] disabled:opacity-50 text-slate-600 px-3 py-1.5 rounded-[9px] text-[12.5px] font-semibold transition-colors"
-          >
-            <ShieldOff className="w-3.5 h-3.5" /> {unverify.isPending ? 'Un-verifying…' : 'Un-verify'}
-          </button>
-        )}
-        {tab === 'unverified' && (
-          <button
-            onClick={() => setShowBulkUpdate(true)}
-            disabled={selected.size === 0}
-            className="flex items-center gap-1.5 bg-white border border-slate-200 hover:bg-[color:var(--color-primary-light)] hover:border-[color:var(--color-primary)]/30 hover:text-[color:var(--color-primary)] disabled:opacity-50 text-slate-600 px-3 py-1.5 rounded-[9px] text-[12.5px] font-semibold transition-colors"
-          >
-            <Layers className="w-3.5 h-3.5" /> Bulk Update{selected.size > 0 ? ` (${selected.size})` : ''}
-          </button>
-        )}
-        {tab === 'verified' && (
-          <button
-            onClick={() => verifyMonthlyOt.mutate()}
-            disabled={selected.size === 0 || verifyMonthlyOt.isPending}
-            className="flex items-center gap-1.5 bg-white border border-slate-200 hover:bg-[color:var(--color-accent-light)] hover:border-[color:var(--color-accent)]/30 hover:text-[color:var(--color-accent-dark)] disabled:opacity-50 text-slate-600 px-3 py-1.5 rounded-[9px] text-[12.5px] font-semibold transition-colors"
-          >
-            <BadgeCheck className="w-3.5 h-3.5" /> {verifyMonthlyOt.isPending ? 'Verifying…' : 'Verify Monthly OT'}{selected.size > 0 ? ` (${selected.size})` : ''}
-          </button>
-        )}
+        </div>
 
         {/* Legend */}
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 ml-auto pl-3 border-l border-slate-200 self-center">
@@ -289,18 +319,21 @@ export default function AttendanceRegisterPage() {
       </div>
 
       {message && (
-        <div className="mb-3 text-[12.5px] font-medium bg-[color:var(--color-primary-light)] text-[color:var(--color-primary-dark)] px-3.5 py-2 rounded-lg">
+        <div
+          className="fixed bottom-5 right-5 z-[60] max-w-sm text-[12.5px] font-medium bg-[color:var(--color-primary-light)] text-[color:var(--color-primary-dark)] px-3.5 py-2.5 rounded-lg shadow-lg animate-fade-in"
+          role="status"
+        >
           {message}
         </div>
       )}
 
       {/* Table toolbar: status tabs + column visibility + Monthly OT status, tightly attached to the grid below */}
       <div className="flex flex-wrap items-center gap-2 pb-2 mb-2 border-b border-slate-200">
-        <div className="inline-flex items-center bg-slate-100 rounded-lg p-0.5">
+        <div className="inline-flex items-center bg-slate-100 rounded-[10px] p-1">
           <button
             onClick={() => { setTab('unverified'); setSelected(new Set()); }}
             className={cn(
-              'px-3 py-1 rounded-md text-[12.5px] font-medium transition-colors',
+              'px-4 py-2 rounded-[8px] text-[13.5px] font-semibold transition-colors',
               tab === 'unverified' ? 'bg-white text-[color:var(--color-primary)] shadow-sm' : 'text-slate-500 hover:text-slate-700'
             )}
           >
@@ -309,7 +342,7 @@ export default function AttendanceRegisterPage() {
           <button
             onClick={() => { setTab('verified'); setSelected(new Set()); }}
             className={cn(
-              'px-3 py-1 rounded-md text-[12.5px] font-medium transition-colors',
+              'px-4 py-2 rounded-[8px] text-[13.5px] font-semibold transition-colors',
               tab === 'verified' ? 'bg-white text-[color:var(--color-primary)] shadow-sm' : 'text-slate-500 hover:text-slate-700'
             )}
           >
@@ -318,7 +351,7 @@ export default function AttendanceRegisterPage() {
         </div>
         <button
           onClick={() => setShowSummaryCols((v) => !v)}
-          className="flex items-center gap-1.5 border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 px-3 py-1 rounded-lg text-[12.5px] font-medium transition-colors"
+          className="flex items-center gap-1.5 border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 px-3 py-1.5 rounded-[9px] text-[12.5px] font-medium transition-colors"
         >
           {showSummaryCols ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
           {showSummaryCols ? 'Hide Summary Columns' : 'Show Summary Columns'}
@@ -342,6 +375,47 @@ export default function AttendanceRegisterPage() {
         )}
       </div>
 
+      {/* Verify / Bulk Update live only inside the Not Verified tab's own content, not the shared
+          tabs/toolbar row above. */}
+      {tab === 'unverified' && (
+        <div className="flex items-center gap-2 mb-3">
+          <button
+            onClick={() => verify.mutate()}
+            disabled={selected.size === 0 || verify.isPending}
+            className="flex items-center gap-1.5 bg-[color:var(--color-success)] hover:bg-[color:var(--color-success-dark)] disabled:opacity-50 text-white px-3 py-1.5 rounded-[9px] text-[12.5px] font-semibold shadow-sm transition-colors"
+          >
+            <ShieldCheck className="w-3.5 h-3.5" /> {verify.isPending ? 'Verifying…' : 'Verify'}
+          </button>
+          <button
+            onClick={() => setShowBulkUpdate(true)}
+            disabled={selected.size === 0}
+            className="flex items-center gap-1.5 bg-white border border-slate-200 hover:bg-[color:var(--color-primary-light)] hover:border-[color:var(--color-primary)]/30 hover:text-[color:var(--color-primary)] disabled:opacity-50 text-slate-600 px-3 py-1.5 rounded-[9px] text-[12.5px] font-semibold transition-colors"
+          >
+            <Layers className="w-3.5 h-3.5" /> Bulk Update{selected.size > 0 ? ` (${selected.size})` : ''}
+          </button>
+        </div>
+      )}
+
+      {/* Un-verify / Verify Monthly OT live only inside the Verified tab's own content. */}
+      {tab === 'verified' && (
+        <div className="flex items-center gap-2 mb-3">
+          <button
+            onClick={() => unverify.mutate()}
+            disabled={selected.size === 0 || unverify.isPending}
+            className="flex items-center gap-1.5 bg-white border border-slate-200 hover:bg-[color:var(--color-danger-light)] hover:border-[color:var(--color-danger)]/30 hover:text-[color:var(--color-danger-dark)] disabled:opacity-50 text-slate-600 px-3 py-1.5 rounded-[9px] text-[12.5px] font-semibold transition-colors"
+          >
+            <ShieldOff className="w-3.5 h-3.5" /> {unverify.isPending ? 'Un-verifying…' : 'Un-verify'}
+          </button>
+          <button
+            onClick={() => verifyMonthlyOt.mutate()}
+            disabled={selected.size === 0 || verifyMonthlyOt.isPending}
+            className="flex items-center gap-1.5 bg-white border border-slate-200 hover:bg-[color:var(--color-accent-light)] hover:border-[color:var(--color-accent)]/30 hover:text-[color:var(--color-accent-dark)] disabled:opacity-50 text-slate-600 px-3 py-1.5 rounded-[9px] text-[12.5px] font-semibold transition-colors"
+          >
+            <BadgeCheck className="w-3.5 h-3.5" /> {verifyMonthlyOt.isPending ? 'Verifying…' : 'Verify Monthly OT'}{selected.size > 0 ? ` (${selected.size})` : ''}
+          </button>
+        </div>
+      )}
+
       {!branch && <p className="text-sm text-slate-400">Select a branch to view attendance.</p>}
       {branch && isLoading && <p className="text-sm text-slate-400">Loading…</p>}
       {branch && !isLoading && rows.length === 0 && <p className="text-sm text-slate-400">No records for this month/branch. Try Process first.</p>}
@@ -351,6 +425,7 @@ export default function AttendanceRegisterPage() {
           rows={rows}
           selected={selected}
           onToggleSelect={toggleSelect}
+          onToggleSelectPage={toggleSelectPage}
           onCellClick={tab === 'unverified' ? (row, dayIndex, day) => setEditCell({ row, dayIndex, day }) : undefined}
           expandedRow={expandedRow}
           onToggleExpand={(id) => setExpandedRow((prev) => (prev === id ? null : id))}
@@ -457,6 +532,17 @@ function DayEditor({
     queryFn: () => fetch(`/api/attendance/register/${registerId}/day/${dayIndex}/extras`).then((r) => r.json()),
   });
 
+  // Whether the currently-selected half/full-day tab conflicts with an existing leave — "full day"
+  // conflicts if EITHER half has one (matches isLeaveAlreadyApplied's session=3 OR-across-sessions
+  // check server-side).
+  const leaveConflict = extras
+    ? half === 'full'
+      ? extras.leaveExists.first || extras.leaveExists.second || extras.leaveExists.full
+      : half === 'first'
+        ? extras.leaveExists.first || extras.leaveExists.full
+        : extras.leaveExists.second || extras.leaveExists.full
+    : false;
+
   const [punchTime, setPunchTime] = useState(nowAsHHMMSS);
   const [punchDirection, setPunchDirection] = useState<'in' | 'out'>('in');
   // Punches the user has entered but not yet saved — collected here (rather than posted one at a
@@ -509,6 +595,28 @@ function DayEditor({
         return body;
       }),
     onSuccess: () => { refetchExtras(); onSaved(); },
+    onError: (err: Error) => onMessage(err.message),
+  });
+
+  // Which existing punch (by device_attandance_seq) is currently open for inline time/direction
+  // editing — ports EditPunchesController::savepunch()'s in-place edit (an UPDATE keyed on the same
+  // PK, not deactivate-old+insert-new).
+  const [editingPunchSeq, setEditingPunchSeq] = useState<number | null>(null);
+  const [editPunchTime, setEditPunchTime] = useState('');
+  const [editPunchDirection, setEditPunchDirection] = useState<'in' | 'out'>('in');
+
+  const editPunchMutation = useMutation({
+    mutationFn: (vars: { deviceAttandanceSeq: number; logTime: string; direction: 'in' | 'out' }) =>
+      fetch(`/api/attendance/register/${registerId}/day/${dayIndex}/punches`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(vars),
+      }).then(async (r) => {
+        const body = await r.json();
+        if (!r.ok) throw new Error(body.error ?? 'Failed to update punch');
+        return body;
+      }),
+    onSuccess: () => { setEditingPunchSeq(null); refetchExtras(); onSaved(); },
     onError: (err: Error) => onMessage(err.message),
   });
 
@@ -569,7 +677,7 @@ function DayEditor({
           anySuccess = true;
         } catch (err) {
           stillPending.push(p);
-          errorParts.push(`${p.direction} punch at ${formatHHMMSS12(p.time)}: ${err instanceof Error ? err.message : 'failed'}`);
+          errorParts.push(`${p.direction} punch at ${formatHHMM24(p.time)}: ${err instanceof Error ? err.message : 'failed'}`);
         }
       }
       if (addedCount > 0) successParts.push(`${addedCount} punch${addedCount === 1 ? '' : 'es'} added`);
@@ -645,6 +753,16 @@ function DayEditor({
         <div className="overflow-y-auto scroll-fade flex-1">
           {/* Status */}
           <section className="px-7 pb-6">
+            {leaveConflict && (
+              <div className="flex items-start gap-2 mb-3.5 px-3.5 py-2.5 rounded-[10px] bg-amber-50 border border-amber-200 text-amber-800 text-[12.5px]">
+                <Lock className="w-3.5 h-3.5 mt-[1px] flex-shrink-0" />
+                <span>
+                  An active leave (Applied/Approved/Authorized) already exists for this{' '}
+                  {half === 'full' ? 'day' : half === 'first' ? "day's first half" : "day's second half"}.
+                  Cancel it in the Leave module before changing this status.
+                </span>
+              </div>
+            )}
             <div className="flex bg-[#F5F5F7] rounded-[10px] p-[3px] mb-4">
               {HALVES.map((h) => (
                 <button
@@ -667,7 +785,7 @@ function DayEditor({
                   <button
                     key={c}
                     onClick={() => setPendingStatus({ half, status: c })}
-                    disabled={saving}
+                    disabled={saving || leaveConflict}
                     className="text-[13px] font-medium px-3.5 py-[7px] rounded-[9px] border disabled:opacity-40 transition-all duration-150"
                     style={{
                       backgroundColor: hexToRgba(color.bg, isSelected ? 0.16 : 0.08),
@@ -685,7 +803,7 @@ function DayEditor({
                   <button
                     key={lo.salary_head_item_fkey}
                     onClick={() => setPendingStatus({ half, status: lo.code, salaryHeadItemFkey: lo.salary_head_item_fkey })}
-                    disabled={saving || (!lo.isIndirect && lo.balance <= 0)}
+                    disabled={saving || leaveConflict || (!lo.isIndirect && lo.balance <= 0)}
                     className="text-[13px] font-medium px-3.5 py-[7px] rounded-[9px] border disabled:opacity-40 transition-all duration-150"
                     style={{
                       backgroundColor: hexToRgba('#8b5cf6', isSelected ? 0.16 : 0.08),
@@ -718,6 +836,47 @@ function DayEditor({
                 {extras!.punches.map((p) => {
                   const isIn = p.direction.toLowerCase() === 'in';
                   const isInactive = p.status === 'N';
+                  const isEditing = editingPunchSeq === p.device_attandance_seq;
+                  // DB connections read datetimes tagged as UTC (lib/db.ts timezone: '+00:00') though
+                  // the schema only ever stores naive local wall-clock time — timeZone: 'UTC' here
+                  // reads back the stored value verbatim instead of re-shifting by the browser's offset.
+                  const currentHHMMSS = new Date(p.LOGDATE).toLocaleTimeString('en-GB', { hour12: false, timeZone: 'UTC' });
+
+                  if (isEditing) {
+                    return (
+                      <div key={p.device_attandance_seq} className="flex items-center gap-2 px-3.5 py-2.5 rounded-[10px] bg-[color:var(--color-primary)]/[0.06] border border-[color:var(--color-primary)]/15">
+                        <TimePicker value={editPunchTime} onChange={setEditPunchTime} disabled={editPunchMutation.isPending} className="flex-1" />
+                        <select
+                          value={editPunchDirection}
+                          onChange={(e) => setEditPunchDirection(e.target.value as 'in' | 'out')}
+                          disabled={editPunchMutation.isPending}
+                          className="h-11 px-3 rounded-[11px] border border-black/[0.08] bg-white text-[13px] text-[#1D1D1F] focus:outline-none focus:ring-[3px] focus:ring-[color:var(--color-primary)]/15 focus:border-[color:var(--color-primary)] disabled:opacity-50 transition-all duration-150"
+                        >
+                          <option value="in">In</option>
+                          <option value="out">Out</option>
+                        </select>
+                        <button
+                          onClick={() => editPunchMutation.mutate({ deviceAttandanceSeq: p.device_attandance_seq, logTime: editPunchTime, direction: editPunchDirection })}
+                          disabled={editPunchMutation.isPending}
+                          aria-label="Save punch edit"
+                          title="Save"
+                          className="w-9 h-9 rounded-full flex items-center justify-center text-[color:var(--color-success-dark)] hover:bg-[color:var(--color-success-soft)] disabled:opacity-40 transition-colors duration-150 flex-shrink-0"
+                        >
+                          <Check className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => setEditingPunchSeq(null)}
+                          disabled={editPunchMutation.isPending}
+                          aria-label="Cancel punch edit"
+                          title="Cancel"
+                          className="w-9 h-9 rounded-full flex items-center justify-center text-[#86868B] hover:bg-black/[0.05] disabled:opacity-40 transition-colors duration-150 flex-shrink-0"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    );
+                  }
+
                   return (
                     <div
                       key={p.device_attandance_seq}
@@ -747,31 +906,41 @@ function DayEditor({
                         )}
                       </span>
                       <span className="flex items-center gap-2.5">
-                        {/* DB connections read datetimes tagged as UTC (lib/db.ts timezone: '+00:00')
-                            though the schema only ever stores naive local wall-clock time — timeZone:
-                            'UTC' here reads back the stored value verbatim instead of re-shifting by
-                            the browser's offset. */}
                         <span className={cn('text-[13px] tabular-nums', isInactive ? 'text-amber-700' : 'text-[#6E6E73]')}>
-                          {new Date(p.LOGDATE).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' })}
+                          {new Date(p.LOGDATE).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC' })}
                         </span>
                         {!locked && (
-                          <button
-                            onClick={() => {
-                              if (!isInactive && !confirm('Deactivate this punch? It will stop counting toward duration/OT but can be reactivated later.')) return;
-                              togglePunchActiveMutation.mutate({ deviceAttandanceSeq: p.device_attandance_seq, active: isInactive });
-                            }}
-                            disabled={togglePunchActiveMutation.isPending}
-                            aria-label={isInactive ? 'Reactivate punch' : 'Deactivate punch'}
-                            title={isInactive ? 'Reactivate punch' : 'Deactivate punch'}
-                            className={cn(
-                              'w-6 h-6 rounded-full flex items-center justify-center disabled:opacity-40 transition-colors duration-150',
-                              isInactive
-                                ? 'text-amber-600 hover:text-[color:var(--color-success-dark)] hover:bg-[color:var(--color-success-soft)]'
-                                : 'text-[#86868B] hover:text-amber-700 hover:bg-amber-100'
-                            )}
-                          >
-                            <Power className="w-3.5 h-3.5" />
-                          </button>
+                          <>
+                            <button
+                              onClick={() => {
+                                setEditingPunchSeq(p.device_attandance_seq);
+                                setEditPunchTime(currentHHMMSS);
+                                setEditPunchDirection(isIn ? 'in' : 'out');
+                              }}
+                              aria-label="Edit punch"
+                              title="Edit time/direction"
+                              className="w-6 h-6 rounded-full flex items-center justify-center text-[#86868B] hover:text-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-light)] transition-colors duration-150"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => {
+                                if (!isInactive && !confirm('Deactivate this punch? It will stop counting toward duration/OT but can be reactivated later.')) return;
+                                togglePunchActiveMutation.mutate({ deviceAttandanceSeq: p.device_attandance_seq, active: isInactive });
+                              }}
+                              disabled={togglePunchActiveMutation.isPending}
+                              aria-label={isInactive ? 'Reactivate punch' : 'Deactivate punch'}
+                              title={isInactive ? 'Reactivate punch' : 'Deactivate punch'}
+                              className={cn(
+                                'w-6 h-6 rounded-full flex items-center justify-center disabled:opacity-40 transition-colors duration-150',
+                                isInactive
+                                  ? 'text-amber-600 hover:text-[color:var(--color-success-dark)] hover:bg-[color:var(--color-success-soft)]'
+                                  : 'text-[#86868B] hover:text-amber-700 hover:bg-amber-100'
+                              )}
+                            >
+                              <Power className="w-3.5 h-3.5" />
+                            </button>
+                          </>
                         )}
                       </span>
                     </div>
@@ -802,7 +971,7 @@ function DayEditor({
                         <span className="text-[10.5px] font-semibold text-[color:var(--color-primary)] bg-white px-1.5 py-[1px] rounded-[4px]">Pending</span>
                       </span>
                       <span className="flex items-center gap-2.5">
-                        <span className="text-[13px] text-[#6E6E73] tabular-nums">{formatHHMMSS12(p.time)}</span>
+                        <span className="text-[13px] text-[#6E6E73] tabular-nums">{formatHHMM24(p.time)}</span>
                         <button
                           onClick={() => setStagedPunches((prev) => prev.filter((_, idx) => idx !== i))}
                           disabled={isSaving}
@@ -919,9 +1088,18 @@ function DayEditor({
   );
 }
 
-// Bare codes — see the matching comment on HALVES' 'full' entry above; the day route's
-// mergeHalfDayStatus does the "X/X" doubling itself for statusType: 'full'.
-const BULK_STATUS_CODES = ['P', 'HO', 'WO', 'LOP'];
+// Matches legacy's own Bulk Update "Status" dropdown (EditAttendanceController), which offers
+// composite half-day codes directly rather than a bare code + separate half selector: Select,
+// P/P, P/LOP, LOP/P, LOP/LOP.
+const BULK_COMPOSITE_STATUS_CODES = ['P/P', 'P/LOP', 'LOP/P', 'LOP/LOP'];
+
+// Matches legacy's "Option" dropdown next to Status: "All Dates" applies the chosen status to
+// every non-NA day cell; "LOP Dates" narrows that to only cells that currently contain LOP
+// (either half), leaving Present/Week Off/Holiday days untouched.
+const BULK_OPTIONS = [
+  { value: 'all', label: 'All Dates' },
+  { value: 'lop', label: 'LOP Dates' },
+] as const;
 
 // Ports EditAttendanceController::bulkipdatestatus()'s intent (bulk-apply one status across many
 // selected date rows for an employee) onto our multi-employee grid instead: select employee ROWS,
@@ -939,6 +1117,7 @@ function BulkUpdateModal({
   onDone: (message: string) => void;
 }) {
   const [status, setStatus] = useState<string | null>(null);
+  const [option, setOption] = useState<'all' | 'lop'>('all');
   const [otValue, setOtValue] = useState('');
   const [otRemark, setOtRemark] = useState('');
   const [running, setRunning] = useState(false);
@@ -949,23 +1128,52 @@ function BulkUpdateModal({
   const handleApply = async () => {
     setRunning(true);
     let skippedNA = 0;
+    let skippedOption = 0;
     const tasks: Promise<boolean>[] = [];
 
     for (const row of rows) {
       row.days.forEach((day, i) => {
-        if ((day.value ?? '').trim().toUpperCase() === 'NA') {
+        const value = (day.value ?? '').trim().toUpperCase();
+        if (value === 'NA') {
           skippedNA++;
+          return;
+        }
+        // "LOP Dates" narrows the Status write to cells that currently contain LOP in either
+        // half, leaving Present/Week Off/Holiday days untouched — matches legacy's Option filter.
+        if (status && option === 'lop' && !value.includes('LOP')) {
+          skippedOption++;
           return;
         }
         const dayIndex = i + 1;
         if (status) {
-          tasks.push(
-            fetch(`/api/attendance/register/${row.registerId}/day/${dayIndex}`, {
-              method: 'PUT',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ statusType: 'full', status }),
-            }).then((r) => r.ok).catch(() => false)
-          );
+          // Composite codes (e.g. "P/LOP") are written as two half-day PUTs so mergeHalfDayStatus
+          // can compose them the same way the single-day editor does; bare codes (P/HO/WO/LOP)
+          // still go through statusType: 'full' as before.
+          if (status.includes('/')) {
+            const [firstCode, secondCode] = status.split('/');
+            tasks.push(
+              fetch(`/api/attendance/register/${row.registerId}/day/${dayIndex}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ statusType: 'first', status: firstCode }),
+              }).then((r) => r.ok).catch(() => false)
+            );
+            tasks.push(
+              fetch(`/api/attendance/register/${row.registerId}/day/${dayIndex}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ statusType: 'second', status: secondCode }),
+              }).then((r) => r.ok).catch(() => false)
+            );
+          } else {
+            tasks.push(
+              fetch(`/api/attendance/register/${row.registerId}/day/${dayIndex}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ statusType: 'full', status }),
+              }).then((r) => r.ok).catch(() => false)
+            );
+          }
         }
         if (otValue !== '') {
           tasks.push(
@@ -987,6 +1195,7 @@ function BulkUpdateModal({
     onDone(
       `Bulk update applied: ${succeeded} write(s) succeeded across ${rows.length} employee(s)` +
       `${skippedNA ? `, ${skippedNA} NA day(s) skipped` : ''}` +
+      `${skippedOption ? `, ${skippedOption} day(s) skipped (not LOP)` : ''}` +
       `${failed ? `, ${failed} failed (verified/locked month or leave conflict)` : ''}.`
     );
   };
@@ -1015,9 +1224,22 @@ function BulkUpdateModal({
         </div>
 
         <div className="px-7 pb-6">
-          <label className="block text-[12px] font-medium text-[#6E6E73] mb-1.5">Status (applies to every non-NA day)</label>
+          <div className="flex items-center justify-between mb-1.5">
+            <label className="block text-[12px] font-medium text-[#6E6E73]">Status (applies to every non-NA day)</label>
+            <div className="flex items-center gap-1.5">
+              <span className="text-[12px] font-medium text-[#6E6E73]">Option</span>
+              <select
+                value={option}
+                onChange={(e) => setOption(e.target.value as 'all' | 'lop')}
+                disabled={running}
+                className="text-[12.5px] border border-black/10 rounded-[8px] px-2 py-1 disabled:opacity-40"
+              >
+                {BULK_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+            </div>
+          </div>
           <div className="flex flex-wrap gap-2 mb-1">
-            {BULK_STATUS_CODES.map((c) => {
+            {BULK_COMPOSITE_STATUS_CODES.map((c) => {
               const color = getCellColor(c, false);
               const isSelected = status === c;
               return (
@@ -1037,7 +1259,6 @@ function BulkUpdateModal({
               );
             })}
           </div>
-          <p className="text-[12px] text-[#86868B]">Leave codes aren&apos;t offered here, balances/policy vary per employee -- use the day-cell editor for those.</p>
         </div>
 
         <div className="px-7 pb-6 border-t border-black/[0.06] pt-6">

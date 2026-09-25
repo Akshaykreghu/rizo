@@ -21,8 +21,9 @@ import { FilePreviewModal } from '@/components/ui/FilePreviewModal';
 //   /api/advances (emp_advance) — it's a real Pending/Approved/Rejected request that an admin must
 //   approve (new "Requests" tab on /advances) before it becomes a live emp_advance row. This tab
 //   shows the employee's full request history, not just current-month pending.
-// - Loan Application status is Active/Completed (is_completed), not an approval-workflow badge —
-//   lib/loans.ts's own comment confirms loans have no approval workflow ("creation == approval").
+// - Loan Application submits to /api/loans/requests (emp_loan_request), not directly to
+//   /api/loans (emp_loan) — same Pending/Approved/Rejected request pattern as Salary Advance.
+//   Approving generates the real EMI schedule via the existing createLoan(); rejecting doesn't.
 
 const BRAND = '#1E516E';
 const PAGE_SIZE = 10;
@@ -639,8 +640,8 @@ function AdvanceTab() {
 
 // ── LOAN APPLICATION ──────────────────────────────────────────────────────────
 interface LoanRow {
-  emp_loan_pkey: number; loan_amount: number; tenure: number; intrest_rate: number; emi_amount: number;
-  emi_start_month: string; emi_end_month: string; remarks: string | null; is_completed: 'Y' | 'N'; loan_paid: string | null;
+  emp_loan_request_pkey: number; loan_amount: number; tenure: number; intrest_rate: number;
+  emi_start_month: string; remarks: string | null; request_status: 'Pending' | 'Approved' | 'Rejected';
 }
 
 function LoanTab() {
@@ -653,7 +654,7 @@ function LoanTab() {
   const [page, setPage] = useState(1);
 
   const load = useCallback(() => {
-    fetch('/api/loans').then((r) => (r.ok ? r.json() : { rows: [] })).then((d) => { setRows(d.rows || []); setPage(1); }).finally(() => setLoading(false));
+    fetch('/api/loans/requests').then((r) => (r.ok ? r.json() : { rows: [] })).then((d) => { setRows(d.rows || []); setPage(1); }).finally(() => setLoading(false));
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -667,7 +668,7 @@ function LoanTab() {
     setSaving(true);
     setError(null);
     try {
-      const res = await fetch('/api/loans', {
+      const res = await fetch('/api/loans/requests', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           loanAmount: parseFloat(form.loan_amount), tenure: parseInt(form.tenure),
@@ -689,7 +690,7 @@ function LoanTab() {
 
   async function withdraw(row: LoanRow) {
     if (!confirm('Withdraw this loan application?')) return;
-    const res = await fetch(`/api/loans/${row.emp_loan_pkey}`, { method: 'DELETE' });
+    const res = await fetch(`/api/loans/requests/${row.emp_loan_request_pkey}`, { method: 'DELETE' });
     if (res.ok) load(); else setError((await res.json()).error || 'Failed to withdraw');
   }
 
@@ -697,7 +698,7 @@ function LoanTab() {
     <div>
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 10 }}>
         <div style={tabHeaderText}>
-          Loan applications are effective immediately — EMI is auto-calculated as loan amount ÷ tenure.
+          Loan applications require admin approval before the EMI schedule is generated.
         </div>
         <button style={btnP} onClick={() => setShowForm(true)}>+ Apply for Loan</button>
       </div>
@@ -741,23 +742,22 @@ function LoanTab() {
       <div style={{ ...card, overflow: 'hidden' }}>
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr>{['Sl.No', 'Loan Amount', 'Tenure', 'EMI', 'EMI Start', 'Paid', 'Status', ''].map((h) => <th key={h} style={thS}>{h}</th>)}</tr></thead>
+            <thead><tr>{['Sl.No', 'Loan Amount', 'Tenure', 'Interest Rate', 'EMI Start', 'Status', ''].map((h) => <th key={h} style={thS}>{h}</th>)}</tr></thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={8} style={{ ...tdS, textAlign: 'center', color: 'var(--text-muted)' }}>Loading…</td></tr>
+                <tr><td colSpan={7} style={{ ...tdS, textAlign: 'center', color: 'var(--text-muted)' }}>Loading…</td></tr>
               ) : rows.length === 0 ? (
-                <tr><td colSpan={8} style={{ ...tdS, textAlign: 'center', color: 'var(--text-muted)' }}>No loan applications found</td></tr>
+                <tr><td colSpan={7} style={{ ...tdS, textAlign: 'center', color: 'var(--text-muted)' }}>No loan applications found</td></tr>
               ) : rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map((r, i) => (
-                <tr key={r.emp_loan_pkey}>
+                <tr key={r.emp_loan_request_pkey}>
                   <td style={tdS}>{(page - 1) * PAGE_SIZE + i + 1}</td>
                   <td style={{ ...tdS, fontWeight: 700 }}>{fmtAmt(r.loan_amount)}</td>
                   <td style={tdS}>{r.tenure} mo</td>
-                  <td style={tdS}>{fmtAmt(r.emi_amount)}</td>
+                  <td style={tdS}>{r.intrest_rate}%</td>
                   <td style={tdS}>{r.emi_start_month}</td>
-                  <td style={tdS}>{fmtAmt(r.loan_paid)}</td>
-                  <td style={tdS}><span style={badge(r.is_completed === 'Y' ? 'Approved' : 'Authorized')}>{r.is_completed === 'Y' ? 'Completed' : 'Active'}</span></td>
+                  <td style={tdS}><span style={badge(r.request_status)}>{r.request_status}</span></td>
                   <td style={tdS}>
-                    {r.is_completed === 'N' && (!r.loan_paid || Number(r.loan_paid) === 0) && (
+                    {r.request_status === 'Pending' && (
                       <button onClick={() => withdraw(r)} style={{ ...btnD, padding: '4px 12px', fontSize: 11 }}>Withdraw</button>
                     )}
                   </td>

@@ -47,6 +47,10 @@ interface Props {
   rows: AttendanceRow[];
   selected: Set<number>;
   onToggleSelect: (registerId: number) => void;
+  /** Select/deselect every row on the CURRENT page only (not all rows across pagination) —
+   * receives that page's registerIds and whether the header checkbox is being checked or
+   * unchecked. Omit to hide the header checkbox entirely. */
+  onToggleSelectPage?: (registerIds: number[], checked: boolean) => void;
   onCellClick?: (row: AttendanceRow, dayIndex: number, day: AttendanceDay) => void;
   expandedRow: number | null;
   onToggleExpand: (registerId: number) => void;
@@ -151,7 +155,7 @@ function getPageNumbers(current: number, total: number): (number | '…')[] {
 // directly below the table's own scroll box, instead of risking becoming a separate sibling element
 // elsewhere on the page. Callers should remount this component (e.g. via a `key` tied to
 // month/branch/tab) whenever the underlying row set changes context, so page/size state resets.
-export function AttendanceGrid({ rows, selected, onToggleSelect, onCellClick, expandedRow, onToggleExpand, readOnly, showSummaryCols, showMonthlyOt, onMonthlyOtSave }: Props) {
+export function AttendanceGrid({ rows, selected, onToggleSelect, onToggleSelectPage, onCellClick, expandedRow, onToggleExpand, readOnly, showSummaryCols, showMonthlyOt, onMonthlyOtSave }: Props) {
   const [pageIndex, setPageIndex] = useState(0);
   const [pageSize, setPageSize] = useState(10);
   const today = todayISO();
@@ -159,6 +163,9 @@ export function AttendanceGrid({ rows, selected, onToggleSelect, onCellClick, ex
   const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
   const clampedPageIndex = Math.min(pageIndex, pageCount - 1);
   const pagedRows = rows.slice(clampedPageIndex * pageSize, clampedPageIndex * pageSize + pageSize);
+  const pagedRegisterIds = pagedRows.map((r) => r.registerId);
+  const allPagedSelected = pagedRegisterIds.length > 0 && pagedRegisterIds.every((id) => selected.has(id));
+  const somePagedSelected = pagedRegisterIds.some((id) => selected.has(id));
 
   // table-layout:fixed only reliably locks column widths to what's declared on the first row when
   // the <table> itself also has an explicit width (per spec, a table left at width:auto is allowed
@@ -173,7 +180,19 @@ export function AttendanceGrid({ rows, selected, onToggleSelect, onCellClick, ex
         <table className="text-sm border-separate border-spacing-0 table-fixed" style={{ width: rem(totalTableWidthRem) }}>
           <thead>
             <tr className="[&>th]:sticky [&>th]:top-0 [&>th]:z-10">
-              <th className={cn(CHECKBOX_COL, GRID_LINE, '!z-20 bg-slate-50 p-1.5')} />
+              <th className={cn(CHECKBOX_COL, GRID_LINE, '!z-20 bg-slate-50 p-1.5')}>
+                {onToggleSelectPage && (
+                  <input
+                    type="checkbox"
+                    checked={allPagedSelected}
+                    ref={(el) => { if (el) el.indeterminate = !allPagedSelected && somePagedSelected; }}
+                    onChange={() => onToggleSelectPage(pagedRegisterIds, !allPagedSelected)}
+                    aria-label={allPagedSelected ? 'Deselect all on this page' : 'Select all on this page'}
+                    title={allPagedSelected ? 'Deselect all on this page' : 'Select all on this page'}
+                    className="w-3.5 h-3.5 rounded-full accent-[color:var(--color-primary)] cursor-pointer"
+                  />
+                )}
+              </th>
               <th className={cn(NAME_COL, GRID_LINE, '!z-20 bg-slate-50 px-2 py-1.5 text-left', !showSummaryCols && STICKY_EDGE)}>
                 <span className="text-[10.5px] font-semibold text-slate-500 uppercase tracking-wide">Employee</span>
               </th>
@@ -227,7 +246,7 @@ export function AttendanceGrid({ rows, selected, onToggleSelect, onCellClick, ex
               return (
                 <Fragment key={row.registerId}>
                   <tr className={cn('group/row transition-colors duration-150', isSelected ? 'bg-[color:var(--color-primary)]/[0.06]' : 'hover:bg-[color:var(--color-primary)]/[0.03]')}>
-                    <td className={cn(CHECKBOX_COL, GRID_LINE, 'bg-white group-hover/row:bg-inherit', isSelected && 'bg-[color:var(--color-primary-light)]', 'p-1.5')}>
+                    <td className={cn(CHECKBOX_COL, GRID_LINE, 'bg-white', isSelected && 'bg-[color:var(--color-primary-light)]', 'p-1.5')}>
                       <input
                         type="checkbox"
                         checked={isSelected}
@@ -288,16 +307,12 @@ export function AttendanceGrid({ rows, selected, onToggleSelect, onCellClick, ex
                       return (
                         <td
                           key={d.date}
-                          className={cn(GRID_LINE, 'py-0.5 px-1 text-center align-middle', !readOnly && !isNa && 'cursor-pointer', isToday && TODAY_COL_BG)}
+                          className={cn(GRID_LINE, 'p-2 text-center align-middle text-[10.5px] font-semibold leading-none', !readOnly && !isNa && 'cursor-pointer', isToday && !d.value.trim() && TODAY_COL_BG)}
                           onClick={() => !readOnly && !isNa && onCellClick?.(row, i + 1, d)}
                           title={d.value}
+                          style={d.value.trim() ? { backgroundColor: bg, color: fg } : undefined}
                         >
-                          <span
-                            className="inline-flex min-w-[26px] items-center justify-center rounded-md px-1 py-0.5 text-[10.5px] font-semibold leading-none"
-                            style={{ backgroundColor: bg, color: fg }}
-                          >
-                            {formatStatusDisplay(d.value) || '—'}
-                          </span>
+                          {formatStatusDisplay(d.value) || '—'}
                         </td>
                       );
                     })}
@@ -374,12 +389,14 @@ export function AttendanceGrid({ rows, selected, onToggleSelect, onCellClick, ex
 function ExpandRow({ index, label, values, last, showSummaryCols, showMonthlyOt }: { index: number; label: string; values: string[]; last?: boolean; showSummaryCols: boolean; showMonthlyOt: boolean }) {
   // Alternating shade across the IN/OUT/Duration/OT detail rows within one expanded employee —
   // purely a readability aid for scanning across a wide row, independent of (and much lighter than)
-  // any attendance status color.
-  const rowBg = index % 2 === 0 ? 'bg-slate-50/60' : 'bg-white';
+  // any attendance status color. Must be fully opaque (not e.g. bg-slate-50/60): these are sticky
+  // columns, and a translucent background lets the horizontally-scrolled day columns show through
+  // underneath once the user scrolls right.
+  const rowBg = index % 2 === 0 ? 'bg-slate-50' : 'bg-white';
   return (
     <tr className={cn('animate-fade-in text-[10.5px] text-slate-500', rowBg, last && 'border-b border-slate-200')}>
       <td className={cn(CHECKBOX_COL, 'border-r border-slate-200', rowBg)} />
-      <td className={cn(NAME_COL, 'border-r border-slate-200 py-0.5 pl-4 font-medium text-slate-400', rowBg, !showSummaryCols && STICKY_EDGE)}>{label}</td>
+      <td className={cn(NAME_COL, 'border-r border-slate-200 py-2 pl-4 pr-2 font-medium text-slate-400', rowBg, !showSummaryCols && STICKY_EDGE)}>{label}</td>
       {showSummaryCols && SUMMARY_COLUMNS.map((c, i) => (
         <td
           key={c.key}
@@ -399,7 +416,7 @@ function ExpandRow({ index, label, values, last, showSummaryCols, showMonthlyOt 
         />
       )}
       {values.map((v, i) => (
-        <td key={i} className={cn('border-r border-slate-200 py-0.5 text-center tabular-nums', rowBg)}>
+        <td key={i} className={cn('border-r border-slate-200 py-2 px-2 text-center tabular-nums', rowBg)}>
           {v}
         </td>
       ))}

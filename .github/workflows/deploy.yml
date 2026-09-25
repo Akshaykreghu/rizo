@@ -41,5 +41,7 @@ jobs:
             # running" even though nothing is actually running anymore. Clear it defensively before
             # building so a stuck lock can't block deploys indefinitely.
             rm -f .next/lock
+            node scripts/migrate.mjs
             npm run build
             pm2 restart rizo
+

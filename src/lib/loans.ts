@@ -1,5 +1,9 @@
-import type { Pool, RowDataPacket, ResultSetHeader } from 'mysql2/promise';
+import type { Pool, PoolConnection, RowDataPacket, ResultSetHeader } from 'mysql2/promise';
 import { isPayrollAlreadyProcessed } from './payroll';
+
+// Accepted by any helper that must also be callable inside a caller-managed transaction (both
+// Pool and PoolConnection expose the same .execute() surface used throughout this file).
+type Queryable = Pool | PoolConnection;
 
 // Thrown for the business-rule guards legacy enforces before a write (over-balance payment,
 // payroll-already-processed, month-out-of-range). Routes map this to HTTP 400 with `.message`.
@@ -48,7 +52,7 @@ function addMonths(monthStr: string, n: number): string {
 
 // Mirrors EmployeeLoanController::employeeloansave() exactly, including its rounding-remainder
 // handling (the last month absorbs whatever `round(emi) * tenure` under/over-shoots loan_amount by).
-export async function createLoan(pool: Pool, input: LoanInput, userId: string): Promise<number> {
+export async function createLoan(pool: Queryable, input: LoanInput, userId: string): Promise<number> {
   const emi = computeEmi(input.loanAmount, input.tenure, input.interestRate);
   const emiEndMonth = addMonths(input.emiStartMonth, input.tenure - 1);
 
@@ -388,5 +392,115 @@ export async function markLoanCompleted(pool: Pool, loanPkey: number) {
   await pool.execute(
     `UPDATE emp_loan_info SET amount_paid = loan_emi, paid_status = 'P' WHERE loan_pkey = ? AND status = 1`,
     [loanPkey]
+  );
+}
+
+// ── Loan Requests (employee "My Request" + admin approval) ─────────────────────────────────────
+// A new, separate table from `emp_loan`/`emp_loan_info` — both are live tables read by payroll
+// deduction and the Loan Report, so an unapproved employee request must never land there. An
+// `emp_loan` row (plus its full EMI schedule) is only created, via createLoan() above, once a
+// request is approved. Mirrors emp_advance_request's design 1:1.
+
+export interface LoanRequestInput {
+  empFkey: number;
+  loanAmount: number;
+  tenure: number;
+  interestRate: number;
+  emiStartMonth: string; // 'YYYY-MM'
+  remarks?: string;
+}
+
+export async function createLoanRequest(pool: Pool, input: LoanRequestInput, userId: string): Promise<number> {
+  const [result] = await pool.execute<ResultSetHeader>(
+    `INSERT INTO emp_loan_request
+       (emp_fkey, loan_amount, tenure, intrest_rate, emi_start_month, remarks, request_status, created_by, modified_by, modified_date, status)
+     VALUES (?, ?, ?, ?, ?, ?, 'Pending', ?, ?, NOW(), 1)`,
+    [input.empFkey, input.loanAmount, input.tenure, input.interestRate, input.emiStartMonth, input.remarks ?? '', userId, userId]
+  );
+  return result.insertId;
+}
+
+export interface LoanRequestListParams {
+  empFkey?: number;
+  requestStatus?: 'Pending' | 'Approved' | 'Rejected';
+  month?: string; // 'YYYY-MM'
+}
+
+export async function listLoanRequests(pool: Pool, params: LoanRequestListParams) {
+  const conditions: string[] = ['lr.status = 1'];
+  const args: (string | number)[] = [];
+  if (params.empFkey) { conditions.push('lr.emp_fkey = ?'); args.push(params.empFkey); }
+  if (params.requestStatus) { conditions.push('lr.request_status = ?'); args.push(params.requestStatus); }
+  if (params.month) { conditions.push('lr.emi_start_month = ?'); args.push(params.month); }
+
+  const [rows] = await pool.execute<RowDataPacket[]>(
+    `SELECT lr.emp_loan_request_pkey, lr.emp_fkey, lr.loan_amount, lr.tenure, lr.intrest_rate,
+            lr.emi_start_month, lr.remarks, lr.request_status, lr.admin_remarks, lr.linked_loan_pkey,
+            lr.reviewed_by, lr.reviewed_date, lr.created_date,
+            CONCAT(COALESCE(ed.first_name,''),' ',COALESCE(ed.last_name,'')) AS emp_name
+     FROM emp_loan_request lr
+     JOIN emp_details ed ON ed.emp_pkey = lr.emp_fkey
+     WHERE ${conditions.join(' AND ')}
+     ORDER BY lr.created_date DESC`,
+    args
+  );
+  return rows;
+}
+
+// Approving a request runs the exact same EMI-generation sequence as the admin's direct "New Loan"
+// flow (createLoan), then marks the request Approved and links it to the new emp_loan row — all in
+// one transaction (createLoan() itself issues multiple inserts) so a request is never left
+// half-approved with a partial EMI schedule.
+export async function approveLoanRequest(pool: Pool, requestId: number, userId: string): Promise<{ loanId: number }> {
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    const [[reqRow]] = await conn.execute<RowDataPacket[]>(
+      'SELECT emp_loan_request_pkey, emp_fkey, loan_amount, tenure, intrest_rate, emi_start_month, remarks, request_status FROM emp_loan_request WHERE emp_loan_request_pkey = ? AND status = 1 FOR UPDATE',
+      [requestId]
+    );
+    if (!reqRow) throw new Error('NOT_FOUND');
+    if (reqRow.request_status !== 'Pending') throw new Error('NOT_PENDING');
+
+    const loanId = await createLoan(conn, {
+      empFkey: reqRow.emp_fkey,
+      loanAmount: Number(reqRow.loan_amount),
+      tenure: Number(reqRow.tenure),
+      interestRate: Number(reqRow.intrest_rate),
+      emiStartMonth: reqRow.emi_start_month,
+      remarks: reqRow.remarks ?? undefined,
+    }, userId);
+
+    await conn.execute(
+      `UPDATE emp_loan_request
+       SET request_status = 'Approved', linked_loan_pkey = ?, reviewed_by = ?, reviewed_date = NOW(), modified_by = ?, modified_date = NOW()
+       WHERE emp_loan_request_pkey = ?`,
+      [loanId, userId, userId, requestId]
+    );
+
+    await conn.commit();
+    return { loanId };
+  } catch (err) {
+    await conn.rollback();
+    throw err;
+  } finally {
+    conn.release();
+  }
+}
+
+export async function rejectLoanRequest(pool: Pool, requestId: number, userId: string, adminRemarks?: string): Promise<void> {
+  const [[reqRow]] = await pool.execute<RowDataPacket[]>(
+    'SELECT emp_loan_request_pkey, request_status FROM emp_loan_request WHERE emp_loan_request_pkey = ? AND status = 1',
+    [requestId]
+  );
+  if (!reqRow) throw new Error('NOT_FOUND');
+  if (reqRow.request_status !== 'Pending') throw new Error('NOT_PENDING');
+
+  await pool.execute(
+    `UPDATE emp_loan_request
+     SET request_status = 'Rejected', admin_remarks = ?, reviewed_by = ?, reviewed_date = NOW(), modified_by = ?, modified_date = NOW()
+     WHERE emp_loan_request_pkey = ?`,
+    [adminRemarks ?? null, userId, userId, requestId]
   );
 }

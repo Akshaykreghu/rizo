@@ -1,6 +1,15 @@
 import type { Pool, RowDataPacket } from 'mysql2/promise';
 import { requireCriteria, buildCriteriaConditions, type CriteriaSelections } from './reports';
 
+// mysql2 returns DATE columns as JS Date objects (not strings) depending on driver config, so any
+// date value read back from a query must be normalized before being concatenated into a `new
+// Date(...)` string constructor — otherwise it stringifies to "[object Date]T00:00:00" and throws
+// "Invalid time value" downstream (established pattern — see settlement.ts's toISODate).
+function toISODate(value: unknown): string {
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  return String(value).slice(0, 10);
+}
+
 // Ports MiscellaniousReportsController::generateleavebalancereportnew() — the "Leave Balance
 // Report" under Miscellaneous Reports. Legacy's real function is ~1400 lines with a separate query
 // branch per criteria dimension (LeaveType / Departments / EmployeeDetails / Units-implicit-else),
@@ -43,13 +52,15 @@ function getLeaveCycle(
 
   let start: Date;
   let end: Date;
-  if (!cycleStart || !cycleEnd || cycleStart === '0000-00-00' || cycleEnd === '0000-00-00') {
+  const cycleStartISO = cycleStart ? toISODate(cycleStart) : null;
+  const cycleEndISO = cycleEnd ? toISODate(cycleEnd) : null;
+  if (!cycleStartISO || !cycleEndISO || cycleStartISO === '0000-00-00' || cycleEndISO === '0000-00-00') {
     const y = new Date().getFullYear();
     start = new Date(`${y}-04-01T00:00:00`);
     end = new Date(`${y + 1}-03-31T00:00:00`);
   } else {
-    start = new Date(cycleStart + 'T00:00:00');
-    end = new Date(cycleEnd + 'T00:00:00');
+    start = new Date(cycleStartISO + 'T00:00:00');
+    end = new Date(cycleEndISO + 'T00:00:00');
   }
 
   const toISO = (d: Date) => d.toISOString().slice(0, 10);
@@ -122,7 +133,6 @@ export interface LeaveBalanceReportRow extends RowDataPacket {
   carryforwarded: number;
   leavebalance: number;
   leavetaken: number;
-  yearlybalance: number;
   encashed_leave: number;
 }
 
@@ -161,12 +171,6 @@ export async function generateLeaveBalanceReport(pool: Pool, params: LeaveBalanc
         params.asOfDate,
         policy.dynamic_period
       );
-
-      const [[yearlyRow]] = await pool.execute<RowDataPacket[]>(
-        `SELECT leave_balance_inthe_year_fn(?, ?, ?) AS yearlybalance`,
-        [emp.emp_pkey, policy.salary_head_item_fkey, cycle.end]
-      );
-      const yearlybalance = Number(yearlyRow?.yearlybalance ?? 0);
 
       const [[detail]] = await pool.execute<RowDataPacket[]>(
         `SELECT ed.emp_pkey, CONCAT(ed.first_name, ' ', IFNULL(ed.last_name, '')) AS emp_name,
@@ -213,7 +217,6 @@ export async function generateLeaveBalanceReport(pool: Pool, params: LeaveBalanc
         carryforwarded: carryLimit != null ? Math.min(carryforwarded, carryLimit) : carryforwarded,
         leavebalance: Math.round(leavebalance * 10) / 10,
         leavetaken: Number(detail.leavetaken ?? 0),
-        yearlybalance: Math.round(yearlybalance * 10) / 10,
         encashed_leave: Number(detail.encashed_leave ?? 0),
       } as LeaveBalanceReportRow);
     }

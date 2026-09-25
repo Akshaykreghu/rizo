@@ -69,7 +69,15 @@ function deriveLeaveSummary(rows: Record<string, unknown>[]): Record<string, unk
 }
 
 function deriveLeaveBalance(rows: Record<string, unknown>[]): Record<string, unknown>[] {
-  return rows.map((r) => ({ ...r, leave_policy_label: POLICY_TYPE_LABEL[String(r.leave_policy_type)] ?? 'Present Days' }));
+  return rows.map((r) => ({
+    ...r,
+    leave_policy_label: POLICY_TYPE_LABEL[String(r.leave_policy_type)] ?? 'Present Days',
+    // Legacy's screen view (reportleavebalancenew.ctp) renders the same `leavebalance` value under
+    // two separate headers — "Eligibility For Selected Date" (a misleading label; it's not a date,
+    // just the balance already zeroed out for an employee not yet eligible as of the selected date)
+    // and "Leave Balance (End Of Period)" — so both columns read the identical number.
+    eligibility_balance: r.leavebalance,
+  }));
 }
 
 function deriveMonthlyLeave(rows: Record<string, unknown>[]): Record<string, unknown>[] {
@@ -88,6 +96,20 @@ function toDMY(value: unknown): string {
   const d = new Date(String(value));
   if (Number.isNaN(d.getTime())) return String(value);
   return `${String(d.getDate()).padStart(2, '0')}-${String(d.getMonth() + 1).padStart(2, '0')}-${d.getFullYear()}`;
+}
+
+// Table-cell display: several columns across these reports (joining_date, leave_applied_on,
+// Autherized_date, APPROVED_date, Rejected_date, transaction_date, etc.) come back from the API as
+// raw ISO datetime strings (e.g. mysql2 serializing a DATE/DATETIME column via JSON.stringify) --
+// format any such value as DD-MM-YYYY instead of showing the full "2021-01-01T00:00:00.000Z".
+// Values that already went through a *_display/*_label derive step, or aren't date-shaped at all
+// (names, remarks, statuses), pass through untouched.
+const ISO_DATETIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/;
+function formatCellValue(value: unknown): string {
+  if (value == null || value === '') return '';
+  const s = String(value);
+  if (ISO_DATETIME_RE.test(s)) return toDMY(s);
+  return s;
 }
 
 function deriveCompOff(rows: Record<string, unknown>[]): Record<string, unknown>[] {
@@ -133,7 +155,7 @@ const SUBTYPE_META: Record<Subtype, SubtypeMeta> = {
     groupBy: unitsGroupBy,
     deriveRows: deriveLeaveBalance,
     slNo: true,
-    currencyKeys: new Set(['alloted_leave_forthe_year', 'carryforwarded', 'leavetaken', 'encashed_leave', 'leavebalance', 'yearlybalance']),
+    currencyKeys: new Set(['alloted_leave_forthe_year', 'carryforwarded', 'leavetaken', 'encashed_leave', 'eligibility_balance', 'leavebalance']),
     columns: [
       { key: 'emp_name', label: 'Employee Name' }, { key: 'employee_id', label: 'Employee ID' },
       { key: 'joining_date', label: 'Date Of Joining' }, { key: 'branch', label: 'Branch' },
@@ -141,8 +163,8 @@ const SUBTYPE_META: Record<Subtype, SubtypeMeta> = {
       { key: 'leave_type', label: 'Leave Type' }, { key: 'leave_policy_label', label: 'Leave Policy' },
       { key: 'alloted_leave_forthe_year', label: 'Allotted Leave For The Year' }, { key: 'carryforwarded', label: 'Carry Forwarded' },
       { key: 'leavetaken', label: 'Leave Taken' }, { key: 'encashed_leave', label: 'Encashed Leaves' },
+      { key: 'eligibility_balance', label: 'Eligibility For Selected Date' },
       { key: 'leavebalance', label: 'Leave Balance (End Of Period)' },
-      { key: 'yearlybalance', label: 'Yearly Balance' },
     ],
   },
   MonthlyLeave: {
@@ -426,7 +448,7 @@ export default function LeaveReportPage() {
                       {meta.slNo && <td className="px-4 py-2 text-[#0F172A] whitespace-nowrap">{i + 1}</td>}
                       {meta.columns.map((c) => (
                         <td key={c.key} className="px-4 py-2 text-[#0F172A] whitespace-nowrap">
-                          {currencyKeys.has(c.key) ? String(row[c.key] ?? 0) : String(row[c.key] ?? '')}
+                          {currencyKeys.has(c.key) ? String(row[c.key] ?? 0) : formatCellValue(row[c.key])}
                         </td>
                       ))}
                     </tr>
@@ -463,7 +485,7 @@ export default function LeaveReportPage() {
                   {meta.slNo && <td className="px-4 py-2 text-[#0F172A] whitespace-nowrap">{i + 1}</td>}
                   {meta.columns.map((c) => (
                     <td key={c.key} className="px-4 py-2 text-[#0F172A] whitespace-nowrap">
-                      {currencyKeys.has(c.key) ? String(row[c.key] ?? 0) : String(row[c.key] ?? '')}
+                      {currencyKeys.has(c.key) ? String(row[c.key] ?? 0) : formatCellValue(row[c.key])}
                     </td>
                   ))}
                 </tr>
