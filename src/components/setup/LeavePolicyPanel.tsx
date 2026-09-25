@@ -290,6 +290,17 @@ export function LeavePolicyPanel() {
   }
 
   const showModal = isNew || editing !== null;
+  const selectedTypeOccurance =
+    availableTypes.find((t) => String(t.salary_head_item_pkey) === String(form.salary_head_item_fkey))?.occurance
+    ?? (!isNew && String(editing?.salary_head_item_fkey) === String(form.salary_head_item_fkey) ? editing?.occurance : undefined);
+  // Comp Off is earned via approved overtime/attendance, not a fixed allotment/limit an admin sets
+  // here — matches legacy, which never shows a Limit field for this leave type.
+  const isCompOff = (selectedTypeOccurance ?? '').trim().toUpperCase() === 'COFF';
+  useEffect(() => {
+    if (isCompOff && form.alloted_leave_forthe_year !== '0') {
+      setForm((f) => ({ ...f, alloted_leave_forthe_year: '0', ALLOW_NEGETIVE: 'N' }));
+    }
+  }, [isCompOff, form.alloted_leave_forthe_year]);
   const isPresentDays = form.leave_policy_type === 'P';
   const durationType = form.leave_policy_type ?? 'M';
   const isMonthly = durationType === 'M';
@@ -559,27 +570,29 @@ export function LeavePolicyPanel() {
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 read-only:bg-gray-100"
                   />
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    {isPresentDays ? 'Present days for one leave' : 'Limit'}
-                  </label>
-                  <input
-                    type="number"
-                    step="any"
-                    min={0}
-                    value={isPresentDays ? form.alloted_leave_forthe_month ?? '' : form.alloted_leave_forthe_year ?? ''}
-                    onChange={(e) => {
-                      const raw = e.target.value;
-                      const val = raw === '' ? '' : String(Math.max(0, Number(raw)));
-                      setForm((f) => ({
-                        ...f,
-                        [isPresentDays ? 'alloted_leave_forthe_month' : 'alloted_leave_forthe_year']: val,
-                      }));
-                    }}
-                    onKeyDown={(e) => { if (e.key === '-') e.preventDefault(); }}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  />
-                </div>
+                {!isCompOff && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      {isPresentDays ? 'Present days for one leave' : 'Limit'}
+                    </label>
+                    <input
+                      type="number"
+                      step="any"
+                      min={0}
+                      value={isPresentDays ? form.alloted_leave_forthe_month ?? '' : form.alloted_leave_forthe_year ?? ''}
+                      onChange={(e) => {
+                        const raw = e.target.value;
+                        const val = raw === '' ? '' : String(Math.max(0, Number(raw)));
+                        setForm((f) => ({
+                          ...f,
+                          [isPresentDays ? 'alloted_leave_forthe_month' : 'alloted_leave_forthe_year']: val,
+                        }));
+                      }}
+                      onKeyDown={(e) => { if (e.key === '-') e.preventDefault(); }}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                  </div>
+                )}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Carry Forward Limit</label>
                   <input
@@ -623,7 +636,10 @@ export function LeavePolicyPanel() {
                 {[
                   { key: 'IS_SANDWICH', label: 'Sandwich Leave' },
                   { key: 'is_leave_encash', label: 'Allow Encashment' },
-                  { key: 'ALLOW_NEGETIVE', label: 'Allow Negative Balance' },
+                  // Comp Off hides Allow Negative Balance too (policyform.ctp's handleCOFFLimit()
+                  // hides #NEGETIVEContainer alongside the Limit field) — a Comp Off balance is
+                  // earned, not allotted, so "going negative" isn't a meaningful concept for it.
+                  ...(isCompOff ? [] : [{ key: 'ALLOW_NEGETIVE', label: 'Allow Negative Balance' }]),
                   { key: 'exceptions', label: 'Exceptions' },
                   { key: 'document_mandatory', label: 'Document Mandatory' },
                   { key: 'allow_all_leaves', label: 'Allow all leaves' },

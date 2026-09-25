@@ -1,12 +1,14 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useSetupOptions } from '@/lib/setupOptions';
 import { Download, Upload, Trash2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
+import { SearchableSelect } from '@/components/ui/SearchableSelect';
+import { recentMonthOptions } from '@/lib/attendance';
 
 // Ports EmployeeAttendanceUploadController's upload/list/delete screen. See
 // api/attendance/upload/route.ts for the full behavior notes (trigger-driven promotion into
@@ -36,14 +38,29 @@ export default function AttendanceUploadPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [month, setMonth] = useState(currentMonth());
   const [branch, setBranch] = useState('');
+  const [empFkey, setEmpFkey] = useState('');
   const [result, setResult] = useState<UploadResult | null>(null);
   const [checked, setChecked] = useState<Set<number>>(new Set());
 
   const { data: branches = [] } = useLookup('setup/branches', 'branch_code', (r) => String(r.branch_name));
+  const monthOptions = useMemo(() => recentMonthOptions(), []);
+
+  // "(Shift Allocated Employees Only)" — matches legacy's employeefilter()/listattendance(), which
+  // only offers employees with an assigned shift/working-time policy (emp_proff.day_time_seq).
+  const { data: employeeOptions = [] } = useQuery<{ value: string; label: string }[]>({
+    queryKey: ['attendance-upload-employees', branch],
+    queryFn: () =>
+      fetch(`/api/employees?branch=${encodeURIComponent(branch)}&shiftAllocated=1&pageSize=1000`)
+        .then((r) => r.json())
+        .then((body) => (body.data ?? []).map((e: { emp_pkey: number; first_name: string; last_name: string; emp_id: string }) => ({
+          value: String(e.emp_pkey),
+          label: `${e.first_name} ${e.last_name ?? ''}`.trim() + (e.emp_id ? ` (${e.emp_id})` : ''),
+        }))),
+  });
 
   const { data, isLoading, refetch } = useQuery<{ data: LogRow[] }>({
-    queryKey: ['attendance-upload-log', month, branch],
-    queryFn: () => fetch(`/api/attendance/upload?month=${month}&branch=${branch}`).then((r) => r.json()),
+    queryKey: ['attendance-upload-log', month, branch, empFkey],
+    queryFn: () => fetch(`/api/attendance/upload?month=${month}&branch=${branch}&empFkey=${empFkey}`).then((r) => r.json()),
   });
   const rows = data?.data ?? [];
 
@@ -99,17 +116,41 @@ export default function AttendanceUploadPage() {
       <div className="surface-card rounded-xl px-4 py-2.5 mb-4 flex flex-wrap items-end gap-3">
         <div>
           <label className="block text-[11.5px] font-medium text-slate-500 mb-1">Month</label>
-          <input type="month" value={month} onChange={(e) => { setMonth(e.target.value); setChecked(new Set()); }} className={INPUT_CLASS} />
+          <SearchableSelect
+            value={month}
+            onChange={(v) => { setMonth(v); setChecked(new Set()); }}
+            options={monthOptions}
+            placeholder="Select month"
+            className="min-w-[150px]"
+            buttonClassName="!py-1.5 !text-[12.5px] !rounded-[9px]"
+          />
         </div>
         <div>
           <label className="block text-[11.5px] font-medium text-slate-500 mb-1">Branch</label>
-          <select value={branch} onChange={(e) => { setBranch(e.target.value); setChecked(new Set()); }} className={cn(INPUT_CLASS, 'min-w-[160px]')}>
-            <option value="">All branches</option>
-            {branches.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
+          <SearchableSelect
+            value={branch}
+            onChange={(v) => { setBranch(v); setEmpFkey(''); setChecked(new Set()); }}
+            options={branches}
+            placeholder="Select branch"
+            className="min-w-[170px]"
+            buttonClassName="!py-1.5 !text-[12.5px] !rounded-[9px]"
+          />
+        </div>
+        <div>
+          <label className="block text-[11.5px] font-medium text-slate-500 mb-1">
+            Employee <span className="text-slate-400 font-normal normal-case">(Shift Allocated Employees Only)</span>
+          </label>
+          <SearchableSelect
+            value={empFkey}
+            onChange={(v) => { setEmpFkey(v); setChecked(new Set()); }}
+            options={employeeOptions}
+            placeholder="All employees"
+            className="min-w-[200px]"
+            buttonClassName="!py-1.5 !text-[12.5px] !rounded-[9px]"
+          />
         </div>
         <a
-          href={`/api/attendance/upload/template?month=${month}&branch=${branch}`}
+          href={`/api/attendance/upload/template?month=${month}&branch=${branch}&empFkey=${empFkey}`}
           className={cn(BTN_BASE, 'bg-white border border-slate-200 hover:bg-slate-50 text-slate-600')}
         >
           <Download className="w-3.5 h-3.5" /> Download Template

@@ -30,6 +30,8 @@ function excelCellToDateString(headerKey: string): string | null {
   return /^\d{4}-\d{2}-\d{2}$/.test(headerKey) ? headerKey : null;
 }
 
+const TIME_RE = /^\d{1,2}:\d{2}(:\d{2})?$/;
+
 function excelTimeToString(value: unknown): string | null {
   if (value == null || value === '') return null;
   if (typeof value === 'number') {
@@ -41,7 +43,11 @@ function excelTimeToString(value: unknown): string | null {
     return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
   }
   const s = String(value).trim();
-  return s || null;
+  // The template pre-fills date cells with the existing attendance_register status code (P, WO,
+  // LOP, HO, NA, leave codes) rather than leaving them blank, so a cell left untouched by the admin
+  // must be recognized as "no punch entered" rather than parsed as a literal time string.
+  if (!TIME_RE.test(s)) return null;
+  return s;
 }
 
 export async function GET(request: NextRequest) {
@@ -53,6 +59,7 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const month = searchParams.get('month');
   const branch = searchParams.get('branch') ?? '';
+  const empFkey = searchParams.get('empFkey') ?? '';
   if (!month) return NextResponse.json({ error: 'month is required' }, { status: 400 });
 
   const pool = await getCompanyPool(session.user.companyCode);
@@ -61,6 +68,10 @@ export async function GET(request: NextRequest) {
   if (branch) {
     conditions.push('ed.branch_code = ?');
     args.push(branch);
+  }
+  if (empFkey) {
+    conditions.push('au.emp_fkey = ?');
+    args.push(empFkey);
   }
 
   const [rows] = await pool.execute<RowDataPacket[]>(
