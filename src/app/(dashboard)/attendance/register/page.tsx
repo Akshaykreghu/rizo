@@ -6,10 +6,9 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { useSetupOptions } from '@/lib/setupOptions';
 import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
 import { AttendanceGrid, type AttendanceDay, type AttendanceRow } from '@/components/attendance/AttendanceGrid';
-import { EmployeeSearch } from '@/components/employees/EmployeeSearch';
 import { SearchableSelect } from '@/components/ui/SearchableSelect';
 import { TimePicker, nowAsHHMMSS } from '@/components/ui/TimePicker';
-import { ATTENDANCE_LEGEND, getCellColor, formatStatusDisplay } from '@/lib/attendance';
+import { ATTENDANCE_LEGEND, getCellColor, formatStatusDisplay, recentMonthOptions } from '@/lib/attendance';
 import { cn } from '@/lib/utils';
 import { ShieldCheck, ShieldOff, X, Clock, Timer, LogIn, LogOut, Lock, Plus, Layers, Eye, EyeOff, BadgeCheck, Power, Pencil, Check } from 'lucide-react';
 import { TableSkeleton } from '@/components/ui/Skeleton';
@@ -19,20 +18,6 @@ const useLookup = useSetupOptions;
 function currentMonth() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-}
-
-// Matches legacy AttendanceRegisterNew's month filter: a dropdown of the last 38 calendar months
-// (not a native calendar month-picker), newest first.
-function recentMonthOptions(count = 38): { value: string; label: string }[] {
-  const list: { value: string; label: string }[] = [];
-  const d = new Date();
-  d.setDate(1);
-  for (let i = 0; i < count; i++) {
-    const value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-    list.push({ value, label: d.toLocaleDateString(undefined, { month: 'short', year: 'numeric' }) });
-    d.setMonth(d.getMonth() - 1);
-  }
-  return list;
 }
 
 interface LeaveOption {
@@ -86,14 +71,16 @@ export default function AttendanceRegisterPage() {
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [expandedRow, setExpandedRow] = useState<number | null>(null);
   const [editCell, setEditCell] = useState<{ row: AttendanceRow; dayIndex: number; day: AttendanceDay } | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
+  // Mirrors leave/requests page's toast shape/styling — green for success, red for error.
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   // Auto-dismiss the bottom-right toast after a few seconds instead of leaving it up until the next
-  // action happens to call setMessage again.
+  // action happens to call setToast again.
   useEffect(() => {
-    if (!message) return;
-    const t = setTimeout(() => setMessage(null), 5000);
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 4000);
     return () => clearTimeout(t);
-  }, [message]);
+  }, [toast]);
+  const setMessage = (message: string, type: 'success' | 'error' = 'success') => setToast({ message, type });
   const [showBulkUpdate, setShowBulkUpdate] = useState(false);
   const [showSummaryCols, setShowSummaryCols] = useState(true);
   const { slotEl } = useHeaderSlot();
@@ -101,17 +88,38 @@ export default function AttendanceRegisterPage() {
 
   const { data: branches = [] } = useLookup('setup/branches', 'branch_code', (r) => String(r.branch_name));
 
+  // Static option list for the Employee filter, matching Branch's own SearchableSelect widget
+  // instead of EmployeeSearch's live-search-as-you-type text input — scoped to the selected branch,
+  // large enough pageSize to cover any single branch's headcount in one call.
+  const { data: employeeOptions = [] } = useQuery<{ value: string; label: string }[]>({
+    queryKey: ['attendance-register-employees', branch],
+    queryFn: () =>
+      fetch(`/api/employees?branch=${encodeURIComponent(branch)}&pageSize=1000`)
+        .then((r) => r.json())
+        .then((body) => (body.data ?? []).map((e: { emp_pkey: number; first_name: string; last_name: string; emp_id: string }) => ({
+          value: String(e.emp_pkey),
+          label: `${e.first_name} ${e.last_name ?? ''}`.trim() + (e.emp_id ? ` (${e.emp_id})` : ''),
+        }))),
+    enabled: !!branch,
+  });
+
   // Default to the first branch once the list loads, so the page opens with a populated view
   // instead of an empty "Select branch" state.
   useEffect(() => {
     if (!branch && branches.length > 0) setBranch(branches[0].value);
   }, [branch, branches]);
 
+  // Data/tabs/grid stay hidden until Process is explicitly clicked — only the filter row + legend
+  // show on load or after changing Month/Branch, matching the requested "nothing loads until you
+  // click Process" flow instead of auto-fetching whenever a filter changes.
+  const [hasProcessed, setHasProcessed] = useState(false);
+  useEffect(() => { setHasProcessed(false); }, [month, branch]);
+
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['attendance-register', month, branch, tab],
     queryFn: () =>
       fetch(`/api/attendance/register?month=${month}&branch=${branch}&status=${tab}`).then((r) => r.json()),
-    enabled: !!branch,
+    enabled: !!branch && hasProcessed,
   });
 
   // Employee is optional — legacy's default is "ALL" (id 0), i.e. every employee in the selected
@@ -131,7 +139,8 @@ export default function AttendanceRegisterPage() {
         body: JSON.stringify({ branch, month }),
       }).then((r) => r.json()),
     onSuccess: (result) => {
-      setMessage(result.message ?? 'Processed');
+      setMessage(result.message ?? 'Attendance processed');
+      setHasProcessed(true);
       refetch();
     },
   });
@@ -146,7 +155,10 @@ export default function AttendanceRegisterPage() {
     onSuccess: (result) => {
       setSelected(new Set());
       if (result.skipped?.length) {
-        setMessage(`Verified ${result.verified.length}, skipped ${result.skipped.length}: ${result.skipped.map((s: { reason: string }) => s.reason).join('; ')}`);
+        setToast({
+          message: `Verified ${result.verified.length}, skipped ${result.skipped.length}: ${result.skipped.map((s: { reason: string }) => s.reason).join('; ')}`,
+          type: 'error',
+        });
       } else {
         setMessage(`Verified ${result.verified.length} employee(s)`);
       }
@@ -164,7 +176,10 @@ export default function AttendanceRegisterPage() {
     onSuccess: (result) => {
       setSelected(new Set());
       if (result.skipped?.length) {
-        setMessage(`Un-verified ${result.removed.length}, skipped ${result.skipped.length}: ${result.skipped.map((s: { reason: string }) => s.reason).join('; ')}`);
+        setToast({
+          message: `Un-verified ${result.removed.length}, skipped ${result.skipped.length}: ${result.skipped.map((s: { reason: string }) => s.reason).join('; ')}`,
+          type: 'error',
+        });
       } else {
         setMessage(`Un-verified ${result.removed.length} employee(s)`);
       }
@@ -187,7 +202,7 @@ export default function AttendanceRegisterPage() {
       setMessage('Monthly OT saved');
       refetch();
     },
-    onError: (err: Error) => setMessage(err.message),
+    onError: (err: Error) => setToast({ message: err.message, type: 'error' }),
   });
 
   const verifyMonthlyOt = useMutation({
@@ -289,12 +304,13 @@ export default function AttendanceRegisterPage() {
         </div>
         <div className="flex items-center gap-1.5">
           <label className="text-[11.5px] font-medium text-slate-500">Employee</label>
-          <EmployeeSearch
+          <SearchableSelect
             value={empFkey}
             onChange={setEmpFkey}
-            branch={branch}
-            emptyLabel="All employees"
-            className="!h-auto !py-1.5 !rounded-[9px] !border-slate-200 !text-[12.5px] min-w-[200px]"
+            options={employeeOptions}
+            placeholder="All employees"
+            className="min-w-[200px]"
+            buttonClassName="!py-1.5 !text-[12.5px] !rounded-[9px]"
           />
         </div>
         <div className="flex items-center gap-2 pl-1 border-l border-slate-200">
@@ -319,15 +335,24 @@ export default function AttendanceRegisterPage() {
         </div>
       </div>
 
-      {message && (
+      {toast && (
         <div
-          className="fixed bottom-5 right-5 z-[60] max-w-sm text-[12.5px] font-medium bg-[color:var(--color-primary-light)] text-[color:var(--color-primary-dark)] px-3.5 py-2.5 rounded-lg shadow-lg animate-fade-in"
+          className={cn(
+            'fixed bottom-10 right-4 z-[60] min-w-[20rem] max-w-md px-5 py-3.5 rounded-xl shadow-lg text-sm font-medium text-white',
+            toast.type === 'success' ? 'bg-[color:var(--color-success)]' : 'bg-[color:var(--color-danger)]'
+          )}
           role="status"
         >
-          {message}
+          {toast.message}
         </div>
       )}
 
+      {!hasProcessed && (
+        <p className="text-sm text-slate-400">Click Process to load attendance for this month/branch.</p>
+      )}
+
+      {hasProcessed && (
+      <>
       {/* Table toolbar: status tabs + column visibility + Monthly OT status, tightly attached to the grid below */}
       <div className="flex flex-wrap items-center gap-2 pb-2 mb-2 border-b border-slate-200">
         <div className="inline-flex items-center bg-slate-100 rounded-[10px] p-1">
@@ -417,10 +442,9 @@ export default function AttendanceRegisterPage() {
         </div>
       )}
 
-      {!branch && <p className="text-sm text-slate-400">Select a branch to view attendance.</p>}
-      {branch && isLoading && <TableSkeleton rows={8} cols={8} />}
-      {branch && !isLoading && rows.length === 0 && <p className="text-sm text-slate-400">No records for this month/branch. Try Process first.</p>}
-      {branch && rows.length > 0 && (
+      {isLoading && <TableSkeleton rows={8} cols={8} />}
+      {!isLoading && rows.length === 0 && <p className="text-sm text-slate-400">No records for this month/branch.</p>}
+      {rows.length > 0 && (
         <AttendanceGrid
           key={`${month}-${branch}-${tab}`}
           rows={rows}
@@ -439,6 +463,8 @@ export default function AttendanceRegisterPage() {
               : undefined
           }
         />
+      )}
+      </>
       )}
 
       {editCell && (
@@ -459,10 +485,10 @@ export default function AttendanceRegisterPage() {
         <BulkUpdateModal
           rows={rows.filter((r) => selected.has(r.registerId))}
           onClose={() => setShowBulkUpdate(false)}
-          onDone={(msg) => {
+          onDone={(msg, type) => {
             setShowBulkUpdate(false);
             setSelected(new Set());
-            setMessage(msg);
+            setMessage(msg, type);
             refetch();
           }}
         />
@@ -512,7 +538,7 @@ function DayEditor({
   onClose: () => void;
   saveStatus: (statusType: HalfKey, status: string, salaryHeadItemFkey?: number) => Promise<unknown>;
   statusSaving: boolean;
-  onMessage: (msg: string) => void;
+  onMessage: (msg: string, type?: 'success' | 'error') => void;
   /** Called once after handleSave commits anything (Status/Punches/Overtime) so the parent grid
    * (which this modal never talks to directly) can refetch. */
   onSaved: () => void;
@@ -596,7 +622,7 @@ function DayEditor({
         return body;
       }),
     onSuccess: () => { refetchExtras(); onSaved(); },
-    onError: (err: Error) => onMessage(err.message),
+    onError: (err: Error) => onMessage(err.message, 'error'),
   });
 
   // Which existing punch (by device_attandance_seq) is currently open for inline time/direction
@@ -618,7 +644,7 @@ function DayEditor({
         return body;
       }),
     onSuccess: () => { setEditingPunchSeq(null); refetchExtras(); onSaved(); },
-    onError: (err: Error) => onMessage(err.message),
+    onError: (err: Error) => onMessage(err.message, 'error'),
   });
 
   // mutateAsync's own rejection is what handleSave below reacts to, so this only needs to handle the
@@ -706,7 +732,8 @@ function DayEditor({
       onClose();
     } else {
       onMessage(
-        `${successParts.length ? `Saved — ${successParts.join(', ')}. ` : ''}Failed — ${errorParts.join('; ')}.`
+        `${successParts.length ? `Saved — ${successParts.join(', ')}. ` : ''}Failed — ${errorParts.join('; ')}.`,
+        'error'
       );
     }
   };
@@ -1115,7 +1142,7 @@ function BulkUpdateModal({
 }: {
   rows: AttendanceRow[];
   onClose: () => void;
-  onDone: (message: string) => void;
+  onDone: (message: string, type?: 'success' | 'error') => void;
 }) {
   const [status, setStatus] = useState<string | null>(null);
   const [option, setOption] = useState<'all' | 'lop'>('all');
@@ -1197,7 +1224,8 @@ function BulkUpdateModal({
       `Bulk update applied: ${succeeded} write(s) succeeded across ${rows.length} employee(s)` +
       `${skippedNA ? `, ${skippedNA} NA day(s) skipped` : ''}` +
       `${skippedOption ? `, ${skippedOption} day(s) skipped (not LOP)` : ''}` +
-      `${failed ? `, ${failed} failed (verified/locked month or leave conflict)` : ''}.`
+      `${failed ? `, ${failed} failed (verified/locked month or leave conflict)` : ''}.`,
+      failed ? 'error' : 'success'
     );
   };
 

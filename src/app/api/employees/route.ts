@@ -66,6 +66,11 @@ export async function GET(request: NextRequest) {
     conditions.push('p.emp_branch = ?');
     params.push(branch);
   }
+  // Matches EmployeeAttendanceUploadController's employeefilter()/listattendance() condition — only
+  // employees with an assigned shift/working-time policy ("Shift Allocated Employees Only").
+  if (searchParams.get('shiftAllocated') === '1') {
+    conditions.push('p.day_time_seq IS NOT NULL');
+  }
 
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 

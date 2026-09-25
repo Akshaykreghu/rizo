@@ -2,15 +2,16 @@
 
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useRouter } from 'next/navigation';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Trash2, Check, X } from 'lucide-react';
+import { Plus, Trash2, Eye, Check, X } from 'lucide-react';
 import type { ColumnDef } from '@tanstack/react-table';
 import { EmployeeSearch } from '@/components/employees/EmployeeSearch';
 import { cn, formatCurrency } from '@/lib/utils';
 import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
 import { DataTable } from '@/components/data-table/DataTable';
 import { useSetupOptions } from '@/lib/setupOptions';
+import { Modal } from '@/components/ui/Modal';
+import { LoanDetailContent } from '@/components/loans/LoanDetailContent';
 
 interface LoanRow {
   emp_loan_pkey: number;
@@ -94,7 +95,6 @@ export default function LoansPage() {
 }
 
 function LoansTab() {
-  const router = useRouter();
   const queryClient = useQueryClient();
   const [showForm, setShowForm] = useState(false);
   const [empId, setEmpId] = useState('');
@@ -104,6 +104,7 @@ function LoansTab() {
   const [emiStartMonth, setEmiStartMonth] = useState('');
   const [remarks, setRemarks] = useState('');
   const [message, setMessage] = useState<string | null>(null);
+  const [viewLoanId, setViewLoanId] = useState<number | null>(null);
 
   // Filters — mirror EmployeeLoanController::employeeloanlist()'s employee / branch / month toolbar.
   const [filterEmpId, setFilterEmpId] = useState('');
@@ -165,9 +166,16 @@ function LoansTab() {
     {
       id: 'actions',
       header: '',
-      meta: { className: 'w-12' },
+      meta: { className: 'w-20' },
       cell: ({ row }) => (
-        <div className="flex items-center justify-end" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
+          <button
+            onClick={() => setViewLoanId(row.original.emp_loan_pkey)}
+            title="View"
+            className="p-1.5 rounded-lg text-slate-400 hover:text-[#0F172A] hover:bg-slate-100 transition-colors duration-150"
+          >
+            <Eye className="w-3.5 h-3.5" />
+          </button>
           <button
             onClick={() => {
               if (confirm('Remove this loan?')) remove.mutate(row.original.emp_loan_pkey);
@@ -263,8 +271,11 @@ function LoansTab() {
         pageSize={10}
         pageSizeOptions={[10, 20, 30, 50]}
         isLoading={isLoading}
-        onRowClick={(row) => router.push(`/loans/${row.emp_loan_pkey}`)}
       />
+
+      <Modal open={viewLoanId !== null} onClose={() => setViewLoanId(null)}>
+        {viewLoanId !== null && <LoanDetailContent loanId={viewLoanId} />}
+      </Modal>
     </div>
   );
 }

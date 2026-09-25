@@ -3,6 +3,21 @@ import { toISODate } from './settlement';
 
 export { toISODate };
 
+// Matches legacy AttendanceRegisterNew's month filter: a dropdown of the last `count` calendar
+// months (not a native calendar month-picker), newest first. Shared by every page whose Month
+// filter should look/behave like the Attendance Register's (Attendance Upload, etc.).
+export function recentMonthOptions(count = 38): { value: string; label: string }[] {
+  const list: { value: string; label: string }[] = [];
+  const d = new Date();
+  d.setDate(1);
+  for (let i = 0; i < count; i++) {
+    const value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    list.push({ value, label: d.toLocaleDateString(undefined, { month: 'short', year: 'numeric' }) });
+    d.setMonth(d.getMonth() - 1);
+  }
+  return list;
+}
+
 // Mirrors legacy AttendanceRegisterNew's cell color palette (registerbook.ctp/verifiedregisterbook.ctp
 // applyCellColor() JS, duplicated 3x in legacy — centralized here instead). `isPolicyLeave` distinguishes
 // a leave-policy-backed LOP (approved leave that happens to render as LOP) from a genuine unexplained LOP.
