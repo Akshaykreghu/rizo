@@ -22,6 +22,7 @@ export function SearchableSelect({
   className,
   buttonClassName,
   disabled,
+  wrap = false,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -33,6 +34,9 @@ export function SearchableSelect({
   // Tailwind utilities, so pass e.g. the same INPUT_CLASS used by that form's text inputs).
   buttonClassName?: string;
   disabled?: boolean;
+  // Wrap long labels onto multiple lines (trigger and options) instead of truncating with "…".
+  // Opt-in so existing pickers keep their single-line look.
+  wrap?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -70,18 +74,19 @@ export function SearchableSelect({
         disabled={disabled}
         onClick={() => setOpen((o) => !o)}
         className={cn(
-          'w-full flex items-center justify-between gap-2 px-3 py-2 border border-gray-300 rounded-lg text-sm text-left bg-white',
+          'w-full flex justify-between gap-2 px-3 py-2 border border-gray-300 rounded-lg text-sm text-left bg-white',
           'focus:outline-none focus:ring-2 focus:ring-indigo-500',
+          wrap ? 'items-start' : 'items-center',
           buttonClassName,
           // Always wins over buttonClassName (e.g. a form's own bg-white input styling) so a
           // disabled trigger never silently loses its greyed-out look.
           disabled && 'bg-gray-100 cursor-not-allowed'
         )}
       >
-        <span className={cn('truncate', !selected && 'text-gray-400')}>
+        <span className={cn(wrap ? 'min-w-0 break-words [overflow-wrap:anywhere]' : 'truncate', !selected && 'text-gray-400')}>
           {selected ? selected.label : placeholder}
         </span>
-        <ChevronDown className="w-4 h-4 text-gray-400 shrink-0" />
+        <ChevronDown className={cn('w-4 h-4 text-gray-400 shrink-0', wrap && 'mt-px')} />
       </button>
 
       {open && (
@@ -116,7 +121,8 @@ export function SearchableSelect({
                   type="button"
                   onClick={() => { onChange(o.value); setOpen(false); setQuery(''); }}
                   className={cn(
-                    'w-full text-left px-3 py-1.5 text-sm hover:bg-indigo-50 truncate',
+                    'w-full text-left px-3 py-1.5 text-sm hover:bg-indigo-50',
+                    wrap ? 'break-words [overflow-wrap:anywhere]' : 'truncate',
                     o.value === value ? 'bg-indigo-50 text-indigo-700' : 'text-gray-700'
                   )}
                   title={o.label}

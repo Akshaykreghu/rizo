@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Camera, Loader2, Trash2 } from 'lucide-react';
+import { Camera, Loader2, Pencil, Trash2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Avatar } from '@/components/ui/Avatar';
 
@@ -46,7 +46,7 @@ export function AvatarUpload({ name, imageUrl, onUploaded, className, avatarClas
     <div className={cn('relative flex-shrink-0', className)}>
       <label
         className="relative group/avatar block w-full h-full rounded-full cursor-pointer"
-        title="Change photo"
+        title={imageUrl ? 'Change photo' : 'Add photo'}
       >
         <Avatar name={name} imageUrl={imageUrl} className={cn('w-full h-full', avatarClassName)} />
         <span className="absolute inset-0 rounded-full flex items-center justify-center bg-black/0 group-hover/avatar:bg-black/40 transition-colors duration-[180ms]">
@@ -57,6 +57,13 @@ export function AvatarUpload({ name, imageUrl, onUploaded, className, avatarClas
           )}
         </span>
         <input type="file" accept="image/*" onChange={handleFile} disabled={uploading} className="hidden" />
+        {/* No photo yet: an always-visible pencil badge shows the avatar can be clicked to add one
+            (the camera overlay only appears on hover). */}
+        {!imageUrl && !uploading && (
+          <span className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-white border border-slate-200 text-[color:var(--color-primary)] flex items-center justify-center shadow-sm pointer-events-none">
+            <Pencil className="w-2.5 h-2.5" />
+          </span>
+        )}
       </label>
       {imageUrl && !uploading && (
         <button

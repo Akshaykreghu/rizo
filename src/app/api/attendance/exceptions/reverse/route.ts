@@ -9,13 +9,13 @@ export async function POST(request: NextRequest) {
   if (!session || session.user.userGroup !== 1) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
-  const { exceptionAppliedPkey, branchCode, ruleId, monthYear } = (await request.json()) as {
-    exceptionAppliedPkey: number; branchCode: string; ruleId: number; monthYear: string;
-  };
-  if (!exceptionAppliedPkey || !branchCode || !ruleId || !monthYear) {
-    return NextResponse.json({ error: 'exceptionAppliedPkey, branchCode, ruleId and monthYear are required' }, { status: 400 });
+  const body = (await request.json().catch(() => null)) as { exceptionAppliedPkey?: unknown } | null;
+  const exceptionAppliedPkey = Number(body?.exceptionAppliedPkey);
+  if (!Number.isInteger(exceptionAppliedPkey) || exceptionAppliedPkey < 1) {
+    return NextResponse.json({ error: 'exceptionAppliedPkey is required' }, { status: 400 });
   }
   const pool = await getCompanyPool(session.user.companyCode);
-  const message = await reverseAppliedRule(pool, exceptionAppliedPkey, branchCode, ruleId, monthYear);
+  const message = await reverseAppliedRule(pool, exceptionAppliedPkey);
+  if (message === null) return NextResponse.json({ error: 'Applied rule not found — it may already have been reversed' }, { status: 404 });
   return NextResponse.json({ success: true, message });
 }

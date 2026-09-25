@@ -14,9 +14,18 @@ interface FilePreviewModalProps {
   title?: string;
 }
 
-// Files are stored under random names (e.g. 3f2a…c91.pdf), so a download is named after what the
-// popup shows instead — "Aadhaar · 812345678901" downloads as "Aadhaar - 812345678901.pdf".
+// A download keeps the name the file was uploaded with: /api/upload stores files as
+// <company>/<uuid>/<original name>, so the URL's last segment is that name. Files uploaded before
+// that were stored under a bare random name (e.g. 3f2a…c91.pdf) with the original lost — those
+// fall back to what the popup shows ("Aadhaar · 812345678901" -> "Aadhaar - 812345678901.pdf").
+const RANDOM_NAME = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(\.[A-Za-z0-9]+)?$/i;
+
 function downloadNameFor(title: string, url: string): string {
+  const last = url.split('?')[0].split('/').pop() ?? '';
+  let original = last;
+  try { original = decodeURIComponent(last); } catch { /* keep as-is */ }
+  if (original && !RANDOM_NAME.test(original)) return original;
+
   const ext = (url.split('?')[0].match(/\.[A-Za-z0-9]{1,5}$/)?.[0] ?? '').toLowerCase();
   const base = title.replace(/\s*·\s*/g, ' - ').replace(/[\\/:*?"<>|]+/g, '').replace(/\s+/g, ' ').trim() || 'document';
   return `${base}${ext}`;

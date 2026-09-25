@@ -82,6 +82,41 @@ function customRound(value: number): number {
   return decimal < 0.5 ? intPart : intPart + 0.5;
 }
 
+// Server-side mirror of newform.ctp's client checks (legacy only validated in the browser):
+// rule type is a Daily/Monthly radio — Daily takes an exception count (exception_days), Monthly an
+// exception time limit in minutes (exception_time); only the one matching the type is kept.
+// Count of Deduction accepts only 0.5 or 1, and Leave Type is required for Leave Deduction.
+export const LEAVE_TYPE_IDS = [87, 86, 88, 114, 89];
+
+// Trims and collapses inner whitespace so "Late  In " and "Late In" are the same name.
+export function normalizeRuleName(name: string): string {
+  return name.replace(/\s+/g, ' ').trim();
+}
+
+export function validateRuleInput(input: RuleInput): string | null {
+  if (!input || typeof input !== 'object') return 'Invalid request body';
+  if (typeof input.ruleName !== 'string' || typeof input.ruleType !== 'string') return 'Rule name and rule type are required';
+  const name = normalizeRuleName(input.ruleName);
+  if (!name) return 'Rule name is required';
+  if (name.length > 50) return 'Rule name cannot exceed 50 characters';
+  if (!/^[A-Za-z0-9 ]+$/.test(name)) return 'Rule name may only contain letters, numbers and spaces';
+  if (input.ruleType !== 'daily' && input.ruleType !== 'monthly') return 'Rule type must be Daily or Monthly';
+  if (![0, 1, 2].includes(input.dataType)) return 'Data type is required';
+  if (![0, 1].includes(input.actionAfterException)) return 'Action for exception is required';
+  const limit = input.ruleType === 'daily' ? input.exceptionDays : input.exceptionTime;
+  if (limit == null || !Number.isInteger(limit) || limit < 1 || limit > 999) {
+    return input.ruleType === 'daily' ? 'Exception count must be between 1 and 999' : 'Exception time limit must be between 1 and 999 minutes';
+  }
+  if (input.detectCount !== 0.5 && input.detectCount !== 1) return 'Count of deduction must be 0.5 or 1';
+  if (input.actionAfterException === 0 && !LEAVE_TYPE_IDS.includes(input.leaveType as number)) return 'Leave type is required for Leave Deduction';
+  return null;
+}
+
+// Keeps only the tolerance field that matches the rule type (legacy's form only ever renders one).
+function exceptionLimits(input: RuleInput): [number | null, number | null] {
+  return input.ruleType === 'daily' ? [input.exceptionDays ?? null, null] : [null, input.exceptionTime ?? null];
+}
+
 export class RuleNameExistsError extends Error {
   constructor() { super('This rule name already exists'); }
 }
@@ -89,7 +124,7 @@ export class RuleNameExistsError extends Error {
 export async function createRule(pool: Pool, input: RuleInput, createdBy: string): Promise<number> {
   const [[existing]] = await pool.execute<RowDataPacket[]>(
     'SELECT exception_id FROM exception_rule WHERE LOWER(rule_name) = LOWER(?) AND status = 0',
-    [input.ruleName]
+    [normalizeRuleName(input.ruleName)]
   );
   if (existing) throw new RuleNameExistsError();
 
@@ -99,8 +134,8 @@ export async function createRule(pool: Pool, input: RuleInput, createdBy: string
         detect_count, leave_detect_type, reset_status, activate_status, status, creation_time, created_by)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NOW(), ?)`,
     [
-      input.ruleName.trim(), input.ruleType.trim(), input.dataType,
-      input.exceptionDays ?? null, input.exceptionTime ?? null, input.actionAfterException,
+      normalizeRuleName(input.ruleName), input.ruleType, input.dataType,
+      ...exceptionLimits(input), input.actionAfterException,
       customRound(input.detectCount), resolveLeaveDetectType(input),
       input.resetStatus ? 1 : 0, input.activateStatus ? 1 : 0, createdBy,
     ]
@@ -111,7 +146,7 @@ export async function createRule(pool: Pool, input: RuleInput, createdBy: string
 export async function updateRule(pool: Pool, exceptionId: number, input: RuleInput, modifiedBy: string): Promise<void> {
   const [[existing]] = await pool.execute<RowDataPacket[]>(
     'SELECT exception_id FROM exception_rule WHERE LOWER(rule_name) = LOWER(?) AND status = 0 AND exception_id != ?',
-    [input.ruleName, exceptionId]
+    [normalizeRuleName(input.ruleName), exceptionId]
   );
   if (existing) throw new RuleNameExistsError();
 
@@ -122,12 +157,20 @@ export async function updateRule(pool: Pool, exceptionId: number, input: RuleInp
        reset_status = ?, activate_status = ?, modification_time = NOW(), modified_by = ?
      WHERE exception_id = ?`,
     [
-      input.ruleName.trim(), input.ruleType.trim(), input.dataType, input.actionAfterException,
-      input.exceptionDays ?? null, input.exceptionTime ?? null, customRound(input.detectCount),
+      normalizeRuleName(input.ruleName), input.ruleType, input.dataType, input.actionAfterException,
+      ...exceptionLimits(input), customRound(input.detectCount),
       resolveLeaveDetectType(input), input.resetStatus ? 1 : 0, input.activateStatus ? 1 : 0,
       modifiedBy, exceptionId,
     ]
   );
+}
+
+export async function ruleExists(pool: Pool, exceptionId: number): Promise<boolean> {
+  const [[row]] = await pool.execute<RowDataPacket[]>(
+    'SELECT exception_id FROM exception_rule WHERE exception_id = ? AND status = 0',
+    [exceptionId]
+  );
+  return Boolean(row);
 }
 
 export async function softDeleteRule(pool: Pool, exceptionId: number): Promise<void> {
@@ -150,7 +193,9 @@ export interface AppliedRuleRow {
 
 export async function listAppliedRules(pool: Pool, limit: number, offset: number): Promise<{ rows: AppliedRuleRow[]; total: number }> {
   const [[countRow]] = await pool.execute<RowDataPacket[]>('SELECT COUNT(*) AS total FROM exception_applied');
-  const [rows] = await pool.execute<RowDataPacket[]>(
+  // pool.query, not execute: MySQL 8 prepared statements reject numeric LIMIT/OFFSET params
+  // ("Incorrect arguments to mysqld_stmt_execute").
+  const [rows] = await pool.query<RowDataPacket[]>(
     `SELECT ea.exception_applied_pkey, ea.rule_id, er.rule_name, ea.branch_code, b.branch_name,
             ea.applied_date, ea.month_year, ea.created_by
      FROM exception_applied ea
@@ -190,11 +235,25 @@ export async function applyRule(
   month: string, // 'YYYY-MM'
   userLogin: string
 ): Promise<string> {
+  const [[rule]] = await pool.execute<RowDataPacket[]>(
+    'SELECT exception_id FROM exception_rule WHERE exception_id = ? AND status = 0 AND activate_status = 1',
+    [ruleId]
+  );
+  if (!rule) throw new ApplyRuleError('Selected rule is not active or no longer exists.');
+  const [[branch]] = await pool.execute<RowDataPacket[]>('SELECT branch_code FROM branches WHERE branch_code = ?', [branchCode]);
+  if (!branch) throw new ApplyRuleError('Selected branch does not exist.');
+
   const [[verified]] = await pool.execute<RowDataPacket[]>(
     `SELECT registerid FROM attendance_register WHERE branch_code = ? AND month_year = ? AND isdelete = 'N' LIMIT 1`,
     [branchCode, month]
   );
   if (verified) throw new ApplyRuleError('Attendance already verified for this month. Rule cannot be applied.');
+
+  const [[sameRule]] = await pool.execute<RowDataPacket[]>(
+    `SELECT exception_applied_pkey FROM exception_applied WHERE branch_code = ? AND rule_id = ? AND month_year = ? LIMIT 1`,
+    [branchCode, ruleId, month]
+  );
+  if (sameRule) throw new ApplyRuleError('This rule is already applied for this branch and month.');
 
   const [[already]] = await pool.execute<RowDataPacket[]>(
     `SELECT ea.exception_applied_pkey, er.rule_name FROM exception_applied ea
@@ -218,15 +277,55 @@ export async function applyRule(
   return procMessage;
 }
 
-export async function reverseAppliedRule(
-  pool: Pool,
-  exceptionAppliedPkey: number,
-  branchCode: string,
-  ruleId: number,
-  monthYear: string
-): Promise<string> {
-  const monthStart = `${monthYear}-01`;
-  await pool.query('CALL exception_rule_reversal_proc(?, ?, ?, @p_output)', [ruleId, branchCode, monthStart]);
+export async function getAppliedRule(pool: Pool, exceptionAppliedPkey: number) {
+  const [[row]] = await pool.execute<RowDataPacket[]>(
+    `SELECT exception_applied_pkey, rule_id, branch_code, applied_date, month_year FROM exception_applied WHERE exception_applied_pkey = ?`,
+    [exceptionAppliedPkey]
+  );
+  return row ?? null;
+}
+
+export interface ChangeLogRow {
+  empId: string; attDate: string; empName: string; branch: string;
+  oldIn: string; oldOut: string; newIn: string; newOut: string;
+  reason: string; changedBy: string; timestamp: string;
+}
+
+// Mirrors downloadExceptionExcel(): the per-employee punch changes the apply proc logged for a
+// rule/month, with name and branch from the employee_info view. Legacy filters by rule + month
+// only; branch is added here because the export is launched from one branch's applied row and the
+// same rule can be applied to several branches in the same month.
+export async function getChangeLog(pool: Pool, ruleId: number, branchCode: string, monthYear: string): Promise<ChangeLogRow[]> {
+  const [rows] = await pool.execute<RowDataPacket[]>(
+    `SELECT l.emp_id,
+            DATE_FORMAT(l.att_date, '%Y-%m-%d') AS att_date,
+            DATE_FORMAT(l.old_in_time, '%Y-%m-%d %H:%i:%s') AS old_in,
+            DATE_FORMAT(l.old_out_time, '%Y-%m-%d %H:%i:%s') AS old_out,
+            DATE_FORMAT(l.new_in_time, '%Y-%m-%d %H:%i:%s') AS new_in,
+            DATE_FORMAT(l.new_out_time, '%Y-%m-%d %H:%i:%s') AS new_out,
+            l.change_reason, l.changed_by,
+            DATE_FORMAT(l.change_timestamp, '%Y-%m-%d %H:%i:%s') AS ts,
+            ei.EmpName, ei.branch
+     FROM exception_attendance_change_log l
+     LEFT JOIN employee_info ei ON ei.emp_pkey = l.emp_pkey
+     WHERE l.rule_id = ? AND l.branch_code = ? AND l.applied_month = ?
+     ORDER BY l.change_id DESC`,
+    [ruleId, branchCode, `${monthYear}-01`]
+  );
+  return rows.map((r) => ({
+    empId: r.emp_id ?? '', attDate: r.att_date ?? '', empName: (r.EmpName ?? '').replace(/\s+/g, ' ').trim(),
+    branch: r.branch ?? '', oldIn: r.old_in ?? '', oldOut: r.old_out ?? '', newIn: r.new_in ?? '',
+    newOut: r.new_out ?? '', reason: r.change_reason ?? '', changedBy: r.changed_by ?? '', timestamp: r.ts ?? '',
+  }));
+}
+
+// Branch/rule/month come from the stored applied row, not the request, so a reversal can only
+// ever undo exactly what that row applied (legacy trusted the posted values).
+export async function reverseAppliedRule(pool: Pool, exceptionAppliedPkey: number): Promise<string | null> {
+  const applied = await getAppliedRule(pool, exceptionAppliedPkey);
+  if (!applied) return null;
+  const monthStart = `${applied.month_year}-01`;
+  await pool.query('CALL exception_rule_reversal_proc(?, ?, ?, @p_output)', [applied.rule_id, applied.branch_code, monthStart]);
   const [[output]] = await pool.query<RowDataPacket[]>('SELECT @p_output AS message');
   const procMessage = output?.message || 'Rule reversed successfully';
 

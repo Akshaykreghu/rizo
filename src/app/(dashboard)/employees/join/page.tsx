@@ -7,6 +7,7 @@ import { useSetupRows } from '@/lib/setupOptions';
 import { Plus, Trash2, ArrowRightCircle, Search, Download, UploadCloud, Users, UserCheck, UserPlus, UserX, FileSpreadsheet, X, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { cn, formatDate } from '@/lib/utils';
 import { DataTable } from '@/components/data-table/DataTable';
+import { CellText } from '@/components/data-table/CellText';
 import { Avatar } from '@/components/ui/Avatar';
 import { Modal } from '@/components/ui/Modal';
 import { FloatingActionPanel, type FloatingAction } from '@/components/ui/FloatingActionPanel';
@@ -217,21 +218,31 @@ export default function EmployeeJoinPage() {
       header: 'Name',
       accessorFn: (row) => `${row.first_name} ${row.last_name ?? ''}`,
       cell: ({ row }) => (
-        <div className="flex items-center gap-2.5">
+        <div className="flex items-center gap-2.5 min-w-0 max-w-[260px]">
           <Avatar
             name={`${row.original.first_name} ${row.original.last_name ?? ''}`}
             imageUrl={row.original.profile_image_url}
+            className="flex-shrink-0"
           />
-          <span className="font-medium text-slate-800">{row.original.first_name} {row.original.last_name ?? ''}</span>
+          {/* One line, cut with "…" — a long name must not wrap and push the row out of line. */}
+          <CellText value={`${row.original.first_name} ${row.original.last_name ?? ''}`} className="font-medium text-slate-800" maxWidth="max-w-[210px]" />
         </div>
       ),
     },
-    { accessorKey: 'email', header: 'Email' },
-    { accessorKey: 'mobile_no', header: 'Mobile' },
+    {
+      accessorKey: 'email',
+      header: 'Email',
+      cell: ({ getValue }) => <CellText value={getValue()} className="text-slate-600" maxWidth="max-w-[220px]" />,
+    },
+    {
+      accessorKey: 'mobile_no',
+      header: 'Mobile',
+      cell: ({ getValue }) => <span className="whitespace-nowrap tabular-nums">{String(getValue() ?? '') || '—'}</span>,
+    },
     {
       accessorKey: 'date_of_birth',
       header: 'Date of Birth',
-      cell: ({ getValue }) => formatDate(String(getValue() ?? '')),
+      cell: ({ getValue }) => <span className="whitespace-nowrap">{formatDate(String(getValue() ?? ''))}</span>,
     },
     {
       accessorKey: 'completion_pct',
@@ -263,7 +274,7 @@ export default function EmployeeJoinPage() {
               setJoinIncludeOnboarding(true);
               setModalOpen(true);
             }}
-            className="flex items-center gap-1.5 text-xs font-medium text-[color:var(--color-success)] hover:bg-[color:var(--color-success)]/10 px-2.5 py-1.5 rounded-lg transition-colors duration-[180ms]"
+            className="flex items-center gap-1.5 whitespace-nowrap text-xs font-medium text-[color:var(--color-success)] hover:bg-[color:var(--color-success)]/10 px-2.5 py-1.5 rounded-lg transition-colors duration-[180ms]"
           >
             <ArrowRightCircle className="w-3.5 h-3.5" />
             Continue Onboarding

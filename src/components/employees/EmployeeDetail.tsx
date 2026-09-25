@@ -575,6 +575,8 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
               onUploaded={(path) => setForm((prev) => ({ ...prev, profile_pic: path }))}
               className="w-12 h-12 flex-shrink-0"
               avatarClassName="text-sm"
+              // Locked with the rest of the form while "Editable" is off.
+              disabled={!editable}
             />
             <div className="min-w-0">
               <div className="flex items-center gap-2.5">

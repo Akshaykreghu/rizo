@@ -7,6 +7,7 @@ import { useSetupRows } from '@/lib/setupOptions';
 import { useRouter } from 'next/navigation';
 import { Plus, Search, Eye, KeyRound, ListTree, Package, Receipt, TrendingUp, UserMinus, History, FileText, UserCheck, Loader2 } from 'lucide-react';
 import { DataTable } from '@/components/data-table/DataTable';
+import { CellText } from '@/components/data-table/CellText';
 import { Avatar } from '@/components/ui/Avatar';
 import { Modal } from '@/components/ui/Modal';
 import { FloatingActionPanel, type FloatingAction } from '@/components/ui/FloatingActionPanel';
@@ -173,15 +174,19 @@ export default function EmployeesPage({
       accessorFn: (row) => `${row.first_name} ${row.last_name}`,
       meta: { className: 'w-[24%]' },
       cell: ({ row }) => (
-        <div className="flex items-center gap-2.5">
-          <Avatar name={`${row.original.first_name} ${row.original.last_name}`} imageUrl={row.original.profile_pic} />
-          <div className="leading-tight">
-            <p className={cn('font-semibold text-sm', row.original.status === 2 ? 'text-[color:var(--color-danger)] italic' : 'text-[#0F172A]')}>
+        <div className="flex items-center gap-2.5 min-w-0 max-w-[260px]">
+          <Avatar name={`${row.original.first_name} ${row.original.last_name}`} imageUrl={row.original.profile_pic} className="flex-shrink-0" />
+          <div className="leading-tight min-w-0">
+            {/* One line, cut with "…" — a long name must not wrap and push the row out of line. */}
+            <p
+              title={`${row.original.first_name} ${row.original.last_name ?? ''}`.trim()}
+              className={cn('font-semibold text-sm truncate', row.original.status === 2 ? 'text-[color:var(--color-danger)] italic' : 'text-[#0F172A]')}
+            >
               {row.original.first_name} {row.original.last_name}
             </p>
             {/* Employee ID (emp_proff.emp_company_id) — legacy's list column; defaults to the login
                 user ID (e.g. GRTL100016) when none was entered at onboarding. */}
-            <p className="text-xs text-slate-400 mt-0.5">{row.original.emp_company_id || row.original.emp_id}</p>
+            <p className="text-xs text-slate-400 mt-0.5 truncate">{row.original.emp_company_id || row.original.emp_id}</p>
           </div>
         </div>
       ),
@@ -190,25 +195,25 @@ export default function EmployeesPage({
       accessorKey: 'desig_name',
       header: 'Designation',
       meta: { className: 'w-[14%]' },
-      cell: ({ getValue }) => <span className="text-[#64748B]">{String(getValue() ?? '')}</span>,
+      cell: ({ getValue }) => <CellText value={getValue()} className="text-[#64748B]" maxWidth="max-w-[170px]" />,
     },
     {
       accessorKey: 'dept_name',
       header: 'Department',
       meta: { className: 'w-[13%]' },
-      cell: ({ getValue }) => <span className="text-slate-600">{String(getValue() ?? '')}</span>,
+      cell: ({ getValue }) => <CellText value={getValue()} className="text-slate-600" maxWidth="max-w-[160px]" />,
     },
     {
       accessorKey: 'joining_date',
       header: 'Joined Date',
       meta: { className: 'w-[11%]' },
-      cell: ({ getValue }) => <span className="text-slate-600">{formatDate(String(getValue() ?? ''))}</span>,
+      cell: ({ getValue }) => <span className="text-slate-600 whitespace-nowrap">{formatDate(String(getValue() ?? ''))}</span>,
     },
     {
       accessorKey: 'branch_name',
       header: 'Branch',
       meta: { className: 'w-[12%]' },
-      cell: ({ getValue }) => <span className="text-slate-600">{String(getValue() ?? '')}</span>,
+      cell: ({ getValue }) => <CellText value={getValue()} className="text-slate-600" maxWidth="max-w-[150px]" />,
     },
     {
       accessorKey: 'profile_completion',

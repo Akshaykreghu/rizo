@@ -418,9 +418,9 @@ export default function EssHomePage() {
         .home-grid-week { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 10px; }
         .home-grid-month { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; }
         .home-hero { display: flex; align-items: center; gap: 30px; flex-wrap: wrap; }
-        .home-punch { flex: 1 1 340px; max-width: 420px; }
+        .home-punch { flex: 0 0 auto; width: auto; margin-left: auto; }
         @media (max-width: 1280px) { .home-grid-week { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
-        @media (max-width: 1180px) { .home-grid-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } .home-grid-main { grid-template-columns: minmax(0, 1fr); } .home-punch { max-width: none; } }
+        @media (max-width: 1180px) { .home-grid-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } .home-grid-main { grid-template-columns: minmax(0, 1fr); } }
         @media (max-width: 860px) { .home-grid-week { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
         @media (max-width: 640px) {
           .home-grid-stats { grid-template-columns: minmax(0, 1fr); }
@@ -432,7 +432,7 @@ export default function EssHomePage() {
           .home-hero { padding: 20px !important; gap: 16px !important; border-radius: 20px !important; }
           .home-hero h1 { font-size: 24px !important; }
           .home-avatar { width: 68px !important; height: 68px !important; border-radius: 20px !important; font-size: 26px !important; }
-          .home-punch { padding: 16px !important; gap: 14px !important; }
+          .home-punch { margin-left: 0; max-width: 100%; padding: 14px !important; gap: 12px !important; }
           .home-card-pad { padding: 16px !important; }
           .home-cal-head { gap: 8px !important; }
         }
@@ -444,7 +444,7 @@ export default function EssHomePage() {
       <div className="home-wrap" style={{ padding: '24px 28px 40px', display: 'flex', flexDirection: 'column', gap: 18 }}>
 
         {/* ── Hero ─────────────────────────────────────────────────────────────────────── */}
-        <section className="home-hero" style={{ position: 'relative', background: HERO_GRADIENT, borderRadius: 26, padding: '28px 32px', color: '#fff', overflow: 'hidden', boxShadow: '0 18px 40px -22px rgba(7,21,32,0.75)' }}>
+        <section className="home-hero" style={{ position: 'relative', background: HERO_GRADIENT, borderRadius: 26, padding: '16px 32px', color: '#fff', overflow: 'hidden', boxShadow: '0 18px 40px -22px rgba(7,21,32,0.75)' }}>
           <svg width="520" height="520" viewBox="0 0 520 520" fill="none" style={{ position: 'absolute', right: -110, top: -150, opacity: 0.35, pointerEvents: 'none' }} aria-hidden="true">
             <circle cx="260" cy="260" r="120" stroke="rgba(255,255,255,0.25)" strokeWidth="1.5" />
             <circle cx="260" cy="260" r="180" stroke="rgba(255,255,255,0.25)" strokeWidth="1.5" />
@@ -481,18 +481,18 @@ export default function EssHomePage() {
 
           {/* punch card */}
           {punchStatus && (
-            <div className="home-punch" style={{ position: 'relative', zIndex: 1, minWidth: 0, background: 'var(--bg-card)', borderRadius: 20, padding: 20, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 18, boxShadow: '0 16px 34px -20px rgba(7,21,32,0.6)' }}>
-              <Ring size={104} stroke={10} pct={shiftPct} color={AMBER}>
-                <span style={{ fontSize: 22, fontWeight: 800, letterSpacing: '-0.02em' }}>{now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }).split(' ')[0]}</span>
-                <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.06em', ...muted }}>{now.getHours() >= 12 ? 'PM' : 'AM'}</span>
+            <div className="home-punch" style={{ position: 'relative', zIndex: 1, minWidth: 0, background: 'var(--bg-card)', borderRadius: 16, padding: '14px 16px', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 14, boxShadow: '0 16px 34px -20px rgba(7,21,32,0.6)' }}>
+              <Ring size={76} stroke={7} pct={shiftPct} color={AMBER}>
+                <span style={{ fontSize: 17, fontWeight: 800, letterSpacing: '-0.02em' }}>{now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }).split(' ')[0]}</span>
+                <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.06em', ...muted }}>{now.getHours() >= 12 ? 'PM' : 'AM'}</span>
               </Ring>
-              <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 9 }}>
-                <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase', whiteSpace: 'nowrap', color: punchPill.color, background: punchPill.bg, padding: '4px 10px', borderRadius: 999, alignSelf: 'flex-start' }}>{punchPill.label}</span>
+              <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 7 }}>
+                <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase', whiteSpace: 'nowrap', color: punchPill.color, background: punchPill.bg, padding: '3px 9px', borderRadius: 999, alignSelf: 'flex-start' }}>{punchPill.label}</span>
                 <button type="button" onClick={() => handlePunch(punchStatus.checkedIn ? 'out' : 'in')} disabled={punching}
-                  style={{ width: '100%', height: 48, border: 'none', borderRadius: 14, background: punchStatus.checkedIn ? RED : BRAND, color: '#fff', fontSize: 15, fontWeight: 800, cursor: punching ? 'not-allowed' : 'pointer', opacity: punching ? 0.6 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 9, boxShadow: '0 8px 18px -10px rgba(30,81,110,0.9)' }}>
+                  style={{ minWidth: 140, padding: '0 20px', height: 38, border: 'none', borderRadius: 11, background: punchStatus.checkedIn ? RED : BRAND, color: '#fff', fontSize: 13.5, fontWeight: 800, cursor: punching ? 'not-allowed' : 'pointer', opacity: punching ? 0.6 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 9, boxShadow: '0 8px 18px -10px rgba(30,81,110,0.9)' }}>
                   {punching ? 'Please wait…' : punchStatus.checkedIn ? '⇥ Punch out' : '⇤ Punch in'}
                 </button>
-                <p style={{ fontSize: 12, ...muted }}>
+                <p style={{ fontSize: 11, lineHeight: 1.35, ...muted }}>
                   {punchStatus.checkedIn
                     ? <>Working time <b style={{ color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>{fmtElapsed(displaySecs)}</b></>
                     : punchStatus.lastPunch && punchedOutToday

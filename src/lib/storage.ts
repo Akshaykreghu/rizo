@@ -55,7 +55,13 @@ export function keyFromSpacesUrl(url: string): string | null {
   const bucket = process.env.SPACES_BUCKET!;
   const cdnBase = process.env.SPACES_CDN_URL || `https://${bucket}.${process.env.SPACES_REGION}.digitaloceanspaces.com`;
   if (!url.startsWith(`${cdnBase}/`)) return null;
-  return url.slice(cdnBase.length + 1);
+  // /api/upload returns URLs with the original file name percent-encoded; the key itself is plain.
+  const key = url.slice(cdnBase.length + 1);
+  try {
+    return decodeURIComponent(key);
+  } catch {
+    return key;
+  }
 }
 
 // Higher-level helpers for routes that store a bare filename in the DB (rather than a full
