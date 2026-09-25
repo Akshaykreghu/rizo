@@ -645,13 +645,13 @@ function DayEditor({
         <div className="overflow-y-auto scroll-fade flex-1">
           {/* Status */}
           <section className="px-7 pb-6">
-            <div className="flex bg-[#F5F5F7] rounded-[10px] p-[3px] mb-4">
+            <div className="flex bg-[#F5F5F7] rounded-[12px] p-1 mb-5 gap-1">
               {HALVES.map((h) => (
                 <button
                   key={h.key}
                   onClick={() => setHalf(h.key)}
                   className={cn(
-                    'flex-1 text-[13px] font-medium py-[7px] rounded-[8px] transition-all duration-200',
+                    'flex-1 text-[13px] font-semibold py-2 rounded-[9px] transition-all duration-200',
                     half === h.key ? 'bg-white text-[#1D1D1F] shadow-[0_1px_3px_rgba(0,0,0,0.1)]' : 'text-[#6E6E73] hover:text-[#1D1D1F]'
                   )}
                 >
@@ -659,7 +659,9 @@ function DayEditor({
                 </button>
               ))}
             </div>
-            <div className="flex flex-wrap gap-2">
+
+            <h3 className="text-[11px] font-semibold text-[#86868B] uppercase tracking-wider mb-2.5">Attendance Status</h3>
+            <div className="grid grid-cols-4 gap-2 mb-5">
               {activeHalf.codes.map((c) => {
                 const color = getCellColor(c, false);
                 const isSelected = pendingStatus?.half === half && pendingStatus?.status === c;
@@ -668,7 +670,7 @@ function DayEditor({
                     key={c}
                     onClick={() => setPendingStatus({ half, status: c })}
                     disabled={saving}
-                    className="text-[13px] font-medium px-3.5 py-[7px] rounded-[9px] border disabled:opacity-40 transition-all duration-150"
+                    className="text-[13px] font-semibold px-2 py-2.5 rounded-[10px] border-2 disabled:opacity-40 transition-all duration-150"
                     style={{
                       backgroundColor: hexToRgba(color.bg, isSelected ? 0.16 : 0.08),
                       color: color.bg,
@@ -679,25 +681,36 @@ function DayEditor({
                   </button>
                 );
               })}
-              {leaveOptions.map((lo) => {
-                const isSelected = pendingStatus?.half === half && pendingStatus?.status === lo.code;
-                return (
-                  <button
-                    key={lo.salary_head_item_fkey}
-                    onClick={() => setPendingStatus({ half, status: lo.code, salaryHeadItemFkey: lo.salary_head_item_fkey })}
-                    disabled={saving || (!lo.isIndirect && lo.balance <= 0)}
-                    className="text-[13px] font-medium px-3.5 py-[7px] rounded-[9px] border disabled:opacity-40 transition-all duration-150"
-                    style={{
-                      backgroundColor: hexToRgba('#8b5cf6', isSelected ? 0.16 : 0.08),
-                      color: '#7041d8',
-                      borderColor: isSelected ? 'rgba(139, 92, 246, 0.5)' : 'transparent',
-                    }}
-                  >
-                    {lo.code} <span className="opacity-60 font-normal">({lo.balance})</span>
-                  </button>
-                );
-              })}
             </div>
+
+            {leaveOptions.length > 0 && (
+              <>
+                <h3 className="flex items-center gap-1.5 text-[11px] font-semibold text-[#86868B] uppercase tracking-wider mb-2.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#f97316]" />
+                  Leave
+                </h3>
+                <div className="grid grid-cols-4 gap-2">
+                  {leaveOptions.map((lo) => {
+                    const isSelected = pendingStatus?.half === half && pendingStatus?.status === lo.code;
+                    return (
+                      <button
+                        key={lo.salary_head_item_fkey}
+                        onClick={() => setPendingStatus({ half, status: lo.code, salaryHeadItemFkey: lo.salary_head_item_fkey })}
+                        disabled={saving || (!lo.isIndirect && lo.balance <= 0)}
+                        className="text-[13px] font-semibold px-2 py-2.5 rounded-[10px] border-2 disabled:opacity-40 transition-all duration-150"
+                        style={{
+                          backgroundColor: hexToRgba('#f97316', isSelected ? 0.16 : 0.08),
+                          color: '#c2570a',
+                          borderColor: isSelected ? 'rgba(249, 115, 22, 0.5)' : 'transparent',
+                        }}
+                      >
+                        {lo.code} <span className="block opacity-60 font-normal text-[11px]">({lo.balance})</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </>
+            )}
           </section>
 
           {/* Punches */}
