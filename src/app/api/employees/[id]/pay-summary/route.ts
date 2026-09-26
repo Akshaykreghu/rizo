@@ -49,6 +49,61 @@ export async function GET(
   );
   const monthlyCtc = Math.round(Number(ctc?.emp_anual_ctc ?? 0) / 12);
 
+  // Total earned at this company — every approved month ever processed for this employee here,
+  // not scoped to any one financial year (so it doesn't reset when switching FY below) and, since
+  // getCompanyPool already scopes every query in this route to the employee's own company DB,
+  // naturally excludes any other employer's payroll history too.
+  const [[lifetimeRow]] = await pool.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS months_count, MIN(month_year) AS first_month,
+            SUM(gross_salary) AS gross_total, SUM(net_salary) AS net_total, SUM(total_deduction) AS deductions_total
+     FROM payroll_master WHERE emp_fkey = ? AND action = 'Approved'`,
+    [empPkey]
+  );
+  const lifetime = {
+    monthsProcessed: Number(lifetimeRow?.months_count ?? 0),
+    firstMonth: lifetimeRow?.first_month ?? null,
+    grossTotal: Number(lifetimeRow?.gross_total ?? 0),
+    netTotal: Number(lifetimeRow?.net_total ?? 0),
+    deductionsTotal: Number(lifetimeRow?.deductions_total ?? 0),
+  };
+
+  // PF (EPF) contribution history, month by month — a passbook-style ledger, like the EPFO member
+  // portal, with the employee's own contribution and the employer's kept separate (they're
+  // different pots — the employer side isn't part of the employee's take-home or their own
+  // deduction, so folding them into one figure would misrepresent both). tax_salary_components maps
+  // each fixed component name ("Employee EPF" / "Employer EPF") to whichever salary_head_item_fkey
+  // a company's own salary structure actually uses for it (this isn't hardcoded to a specific id,
+  // since that varies per company/structure) — same lookup pattern the user's own reference query
+  // used. end_date_effective IS NULL picks only the current (non-superseded) line per month — a
+  // corrected payslip leaves its old line behind with that column set instead of deleting it — and
+  // the payroll_master join restricts this to the same 'Approved' months every other total on this
+  // page is scoped to.
+  const [pfRows] = await pool.execute<RowDataPacket[]>(
+    `SELECT ess.month_year, tsc.tax_salary_components_name AS component, SUM(ABS(ess.salary_amount)) AS amount
+     FROM emp_salary_slip ess
+     JOIN payroll_master pm ON pm.payroll_master_pkey = ess.payroll_master_fkey
+     JOIN tax_salary_components tsc ON tsc.salary_head_item_Fkey = ess.salary_head_item_fkey AND tsc.status = 1
+     WHERE ess.emp_fkey = ? AND ess.end_date_effective IS NULL AND pm.action = 'Approved'
+       AND tsc.tax_salary_components_name IN ('Employee EPF', 'Employer EPF')
+     GROUP BY ess.month_year, tsc.tax_salary_components_name
+     ORDER BY ess.month_year DESC`,
+    [empPkey]
+  );
+  const pfByMonth = new Map<string, { month: string; employee: number; employer: number }>();
+  for (const r of pfRows) {
+    const row = pfByMonth.get(r.month_year) ?? { month: r.month_year as string, employee: 0, employer: 0 };
+    if (r.component === 'Employee EPF') row.employee = Number(r.amount ?? 0);
+    else row.employer = Number(r.amount ?? 0);
+    pfByMonth.set(r.month_year, row);
+  }
+  const pfMonths = [...pfByMonth.values()].sort((a, b) => (a.month < b.month ? 1 : -1));
+  const pf = {
+    months: pfMonths,
+    employeeTotal: pfMonths.reduce((s, m) => s + m.employee, 0),
+    employerTotal: pfMonths.reduce((s, m) => s + m.employer, 0),
+    firstMonth: pfMonths.length ? pfMonths[pfMonths.length - 1].month : null,
+  };
+
   const [finYearRows] = await pool.execute<RowDataPacket[]>(
     `SELECT DISTINCT Fin_year_seq AS id, fin_year, start_month, end_month
      FROM fin_year WHERE branch_code = ? AND status = 1
@@ -67,7 +122,7 @@ export async function GET(
         { id: open.finYearSeq, fin_year: open.finYear, start_month: String(open.startMonth), end_month: String(open.endMonth) }
       : (finYearRows[0] as FinYearRow | undefined);
   }
-  if (!finYear) return NextResponse.json({ employee: emp, finYear: null, allFinYears: [], months: [], allFYMonths: [] });
+  if (!finYear) return NextResponse.json({ employee: emp, finYear: null, allFinYears: [], months: [], allFYMonths: [], lifetime, pf });
 
   const allFYMonths: string[] = [];
   const cur = new Date(finYear.start_month);
@@ -116,5 +171,7 @@ export async function GET(
     months,
     allFYMonths,
     latestLines,
+    lifetime,
+    pf,
   });
 }

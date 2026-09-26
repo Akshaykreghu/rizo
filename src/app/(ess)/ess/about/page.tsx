@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useSession } from 'next-auth/react';
 import { mobileError, futureDateError, localDateStr } from '@/lib/validation';
 import { DocumentUploadField } from '@/components/employees/DocumentUploadField';
@@ -279,27 +279,33 @@ function Line({ h = 22 }: { h?: number }) {
     <div style={{ display: 'flex', justifyContent: 'center' }}><div style={{ width: 2, height: h, background: 'var(--border)' }} /></div>
   );
 }
-function BracketDown({ count }: { count: number }) {
-  if (!count) return null;
-  if (count === 1) return <Line />;
+// A row of nodes (e.g. both parents, or several children), each carrying its own connector tick
+// joined into one continuous bridge bar — same per-node technique as ess/team/page.tsx's
+// ConnectedRow (the My Team org chart). The bracket this replaced (BracketDown/BracketUp) drew its
+// ticks at fixed percentages (20%/80%, 25%/75%) of ITS OWN element's width — but that element was
+// a plain full-width sibling div, i.e. the width of the whole FamilyTree card, not the (narrower,
+// centered) row of avatars it sat above/below. Whenever the avatar row was narrower than the card
+// — normally true — the ticks landed nowhere near the actual avatars, reading as a stray line
+// floating above/below the people it was meant to connect. Anchoring each tick to its own node's
+// box instead sidesteps that mismatch regardless of node count or how wide the names render.
+function TreeBridge({ nodes, side }: { nodes: ReactNode[]; side: 'top' | 'bottom' }) {
+  const count = nodes.length;
+  if (count === 0) return null;
+  const edge = side === 'top' ? { top: 0 } : { bottom: 0 };
+  const tick: React.CSSProperties = { position: 'absolute', left: '50%', width: 2, height: 20, background: 'var(--border)', ...edge };
+  const bridgeLeft: React.CSSProperties = { position: 'absolute', left: 0, width: '50%', height: 2, background: 'var(--border)', ...edge };
+  const bridgeRight: React.CSSProperties = { position: 'absolute', left: '50%', width: '50%', height: 2, background: 'var(--border)', ...edge };
+  const pad = count > 1 ? (side === 'top' ? '20px 12px 0' : '0 12px 20px') : 0;
   return (
-    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'flex-start', position: 'relative', height: 26 }}>
-      <div style={{ position: 'absolute', top: 0, left: '25%', right: '25%', height: 2, background: 'var(--border)' }} />
-      <div style={{ position: 'absolute', bottom: 0, left: '50%', transform: 'translateX(-50%)', width: 2, height: 14, background: 'var(--border)' }} />
-      <div style={{ position: 'absolute', top: 0, left: '25%', width: 2, height: 12, background: 'var(--border)' }} />
-      <div style={{ position: 'absolute', top: 0, right: '25%', width: 2, height: 12, background: 'var(--border)' }} />
-    </div>
-  );
-}
-function BracketUp({ count }: { count: number }) {
-  if (!count) return null;
-  if (count === 1) return <Line />;
-  return (
-    <div style={{ position: 'relative', height: 26 }}>
-      <div style={{ position: 'absolute', top: 0, left: '50%', transform: 'translateX(-50%)', width: 2, height: 14, background: 'var(--border)' }} />
-      <div style={{ position: 'absolute', bottom: 0, left: '20%', right: '20%', height: 2, background: 'var(--border)' }} />
-      <div style={{ position: 'absolute', bottom: 0, left: '20%', width: 2, height: 12, background: 'var(--border)' }} />
-      <div style={{ position: 'absolute', bottom: 0, right: '20%', width: 2, height: 12, background: 'var(--border)' }} />
+    <div style={{ display: 'flex', justifyContent: 'center', width: 'fit-content', margin: '0 auto' }}>
+      {nodes.map((node, i) => (
+        <div key={i} style={{ position: 'relative', padding: pad, flexShrink: 0 }}>
+          {count > 1 && <div style={tick} />}
+          {count > 1 && i > 0 && <div style={bridgeLeft} />}
+          {count > 1 && i < count - 1 && <div style={bridgeRight} />}
+          {node}
+        </div>
+      ))}
     </div>
   );
 }
@@ -317,10 +323,8 @@ function FamilyTree({ family, emp }: { family: FamilyMember[]; emp: Employee | n
     <div style={{ padding: '8px 0 4px', userSelect: 'none' }}>
       {parents.length > 0 && (
         <>
-          <div style={{ display: 'flex', justifyContent: 'center', gap: 36 }}>
-            {parents.map((p, i) => <TreeNode key={i} name={p.name} relation={p.relation} dob={p.DOB} />)}
-          </div>
-          <BracketDown count={parents.length} />
+          <TreeBridge side="bottom" nodes={parents.map((p, i) => <TreeNode key={i} name={p.name} relation={p.relation} dob={p.DOB} />)} />
+          <Line h={parents.length > 1 ? 14 : 22} />
         </>
       )}
       {/* "You" sits in the middle column so the parents' drop-line (centered on the whole outer
@@ -349,10 +353,8 @@ function FamilyTree({ family, emp }: { family: FamilyMember[]; emp: Employee | n
       </div>
       {children.length > 0 && (
         <>
-          <BracketUp count={children.length} />
-          <div style={{ display: 'flex', justifyContent: 'center', gap: 24 }}>
-            {children.map((c, i) => <TreeNode key={i} name={c.name} relation={c.relation} dob={c.DOB} />)}
-          </div>
+          <Line h={children.length > 1 ? 14 : 22} />
+          <TreeBridge side="top" nodes={children.map((c, i) => <TreeNode key={i} name={c.name} relation={c.relation} dob={c.DOB} />)} />
         </>
       )}
       {others.length > 0 && (
