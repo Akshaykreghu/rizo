@@ -216,8 +216,15 @@ function ConnectedRow({ children }: { children: ReactNode[] }) {
   if (count === 0) return null;
   if (count === 1) return (<><VLine h={28} /><div>{children[0]}</div></>);
   return (
-    <div style={{ overflowX: 'auto', maxWidth: '100%', paddingBottom: 4 }}>
-      <div style={{ display: 'flex', justifyContent: 'center', width: 'max-content', margin: '0 auto' }}>
+    <div className="tree-row-scroll-x" style={{ overflowX: 'auto', maxWidth: '100%', paddingBottom: 14 }}>
+      <style>{`
+        .tree-row-scroll-x { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+        .tree-row-scroll-x::-webkit-scrollbar { height: 8px; }
+        .tree-row-scroll-x::-webkit-scrollbar-track { background: transparent; }
+        .tree-row-scroll-x::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+        .tree-row-scroll-x::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+      `}</style>
+      <div style={{ display: 'flex', justifyContent: 'center', width: 'max-content', margin: '0 auto', paddingRight: 8 }}>
         {children.map((child, i) => (
           <div key={i} style={{ position: 'relative', padding: '20px 8px 0', flexShrink: 0 }}>
             <div style={{ position: 'absolute', top: 0, left: '50%', width: 2, height: 20, background: 'var(--border)' }} />
@@ -426,9 +433,6 @@ function MyTeamTab() {
   const manager = team?.manager ?? null;
   const directReports = team?.directReports ?? [];
   const peers = team?.peers ?? [];
-  const half = Math.ceil(peers.length / 2);
-  const leftPeers = peers.slice(0, half);
-  const rightPeers = peers.slice(half);
 
   const childrenMap = new Map<number, FullTeamMember[]>();
   for (const p of allReports ?? []) {
@@ -474,21 +478,25 @@ function MyTeamTab() {
               </div>
             )}
 
-            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'center', flexWrap: 'wrap', gap: 16, paddingBottom: 2 }}>
-              {showEntireTeam && leftPeers.length > 0 && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                  {leftPeers.map((p) => <EmpNode key={p.emp_pkey} emp={p} size="xs" />)}
-                </div>
-              )}
-              <div style={{ flexShrink: 0 }}>
+            {/* Peers are drawn as siblings in the same branching tree as the manager and direct
+                reports below — the earlier flanking-columns layout (peers stacked in two plain
+                side columns) had no line connecting them to anything, reading as floating cards
+                rather than "reports to the same manager as you." ConnectedRow gives every peer
+                (and "you") its own drop tick, joined into one continuous bridge under the
+                manager, same technique as the direct-reports row and the Entire Team org chart.
+                "You" leads the row rather than sitting centered among peers. */}
+            {showEntireTeam && peers.length > 0 ? (
+              <ConnectedRow>
+                {[
+                  <EmpNode key="me" emp={me} isYou />,
+                  ...peers.map((p) => <EmpNode key={p.emp_pkey} emp={p} size="xs" />),
+                ]}
+              </ConnectedRow>
+            ) : (
+              <div style={{ display: 'flex', justifyContent: 'center' }}>
                 <EmpNode emp={me} isYou />
               </div>
-              {showEntireTeam && rightPeers.length > 0 && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                  {rightPeers.map((p) => <EmpNode key={p.emp_pkey} emp={p} size="xs" />)}
-                </div>
-              )}
-            </div>
+            )}
 
             {/* Direct reports — one straight row, each card connected by its own line; scrolls
                 horizontally instead of wrapping when there are too many to fit. */}

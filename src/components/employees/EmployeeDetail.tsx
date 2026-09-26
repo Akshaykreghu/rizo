@@ -625,12 +625,6 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
             Editable
           </label>
         </div>
-        {formError && (
-          <p className="flex items-center gap-1.5 text-xs text-[color:var(--color-danger)] mt-3">
-            <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" /> {formError}
-          </p>
-        )}
-
         {/* Tabs */}
         <div className="flex items-center gap-1 mt-5 -mb-px overflow-x-auto scroll-fade">
           {TABS.map((tab) => {
@@ -1434,17 +1428,24 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
               </span>
             )}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3 min-w-0">
             <button
               onClick={onBack}
-              className="px-4 py-2.5 rounded-lg text-sm font-medium text-slate-500 hover:bg-slate-100 transition-colors duration-150"
+              className="flex-shrink-0 px-4 py-2.5 rounded-lg text-sm font-medium text-slate-500 hover:bg-slate-100 transition-colors duration-150"
             >
               Cancel
             </button>
+            {/* Sits immediately left of Save Changes, in the same row — not as a banner elsewhere
+                on the form — matching the legacy app's leave-request modal. */}
+            {formError && (
+              <p className="flex items-center gap-1.5 text-xs text-[color:var(--color-danger)] truncate">
+                <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" /> {formError}
+              </p>
+            )}
             <button
               onClick={validateAndSave}
               disabled={!isDirty || update.isPending}
-              className="px-5 py-2.5 rounded-lg text-sm font-semibold bg-[color:var(--color-primary)] hover:opacity-90 disabled:opacity-40 text-white shadow-sm transition-opacity duration-150"
+              className="flex-shrink-0 px-5 py-2.5 rounded-lg text-sm font-semibold bg-[color:var(--color-primary)] hover:opacity-90 disabled:opacity-40 text-white shadow-sm transition-opacity duration-150"
             >
               {update.isPending ? 'Saving…' : 'Save Changes'}
             </button>

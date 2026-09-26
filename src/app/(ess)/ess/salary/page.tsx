@@ -113,6 +113,37 @@ function RegimeCard({ regime, computation, preferred, onClick }: { regime: 'OLD'
 interface TaxLine { tax_heads_details_pkey: number; label: string; tax_value: number | null; locked: boolean }
 interface TaxHead { tax_heads_pkey: number; tax_name: string; tax_type: string; cap: number | null; lines: TaxLine[] }
 
+// Shared by both the Deductions and Other Income sections below — each is just a list of tax
+// heads with the same name/cap/input-grid shape, so the actual field markup only needs writing
+// once.
+function TaxHeadFields({ head, values, onChange }: { head: TaxHead; values: Record<string, string>; onChange: (key: string, value: string) => void }) {
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <div style={{ fontSize: 11, fontWeight: 800, color: BRAND, marginBottom: 6, display: 'flex', gap: 8, alignItems: 'center' }}>
+        {head.tax_name}
+        {head.cap != null && <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--text-muted)' }}>(cap ₹{fmtINR(head.cap)})</span>}
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 10 }}>
+        {head.lines.map((line) => {
+          const key = `${head.tax_heads_pkey}:${line.tax_heads_details_pkey}`;
+          return (
+            <div key={line.tax_heads_details_pkey}>
+              <label style={{ fontSize: 10, color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>{line.label}</label>
+              <input
+                type="number" disabled={line.locked}
+                value={values[key] ?? ''}
+                onChange={(e) => onChange(key, e.target.value)}
+                style={{ width: '100%', padding: '6px 10px', borderRadius: 7, border: '1.5px solid var(--border)', background: line.locked ? 'var(--bg-page)' : 'var(--bg-card)', color: 'var(--text-primary)', fontSize: 12, boxSizing: 'border-box' }}
+              />
+              {line.locked && <div style={{ fontSize: 9, color: '#dc2626', marginTop: 2 }}>Locked by admin</div>}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ── PF Contributions panel ───────────────────────────────────────────────────
 // A small passbook-style ledger next to FY Detail — like the EPFO member portal: most recent
 // month at top, 6 rows visible before scrolling (same capped-list-plus-scrollbar technique as the
@@ -219,8 +250,15 @@ export default function EssSalaryPage() {
   const [selFYId, setSelFYId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const [declData, setDeclData] = useState<{ heads: TaxHead[] } | null>(null);
-  const [declVals, setDeclVals] = useState<Record<number, string>>({});
+  const [declData, setDeclData] = useState<{ heads: TaxHead[]; otherIncomeTotal: number; cappedDeductionTotal: number } | null>(null);
+  // Keyed by "tax_heads_pkey:tax_heads_details_pkey", not just the details pkey alone — a head
+  // with no child lines (e.g. "Business / Profession" under Income, "Equity Investment 80CCG"
+  // under Deductions) gets a details pkey of 0 from the API, and more than one such head exists,
+  // so keying by details pkey alone would let two unrelated heads silently share and overwrite the
+  // same stored value.
+  const [declVals, setDeclVals] = useState<Record<string, string>>({});
+  const declValKey = (head: { tax_heads_pkey: number }, line: { tax_heads_details_pkey: number }) =>
+    `${head.tax_heads_pkey}:${line.tax_heads_details_pkey}`;
   const [computation, setComputation] = useState<{ old: RegimeComputation | null; new: RegimeComputation | null } | null>(null);
   const [regime, setRegime] = useState<'OLD' | 'NEW'>('NEW');
   const [form16Docs, setForm16Docs] = useState<{ form_name: string; fin_year: string; path: string }[]>([]);
@@ -251,9 +289,9 @@ export default function EssSalaryPage() {
       setDeclData(decl);
       setRegime(reg.optionType === 'O' ? 'OLD' : 'NEW');
       setForm16Docs(f16.documents || []);
-      const vals: Record<number, string> = {};
+      const vals: Record<string, string> = {};
       for (const head of decl?.heads || []) {
-        for (const line of head.lines) if (line.tax_value != null) vals[line.tax_heads_details_pkey] = String(line.tax_value);
+        for (const line of head.lines) if (line.tax_value != null) vals[declValKey(head, line)] = String(line.tax_value);
       }
       setDeclVals(vals);
     }).finally(() => setTaxLoading(false));
@@ -280,7 +318,7 @@ export default function EssSalaryPage() {
       for (const head of declData.heads) {
         for (const line of head.lines) {
           if (line.locked) continue;
-          const val = Number(declVals[line.tax_heads_details_pkey] || 0);
+          const val = Number(declVals[declValKey(head, line)] || 0);
           await fetch(`/api/employees/${empId}/tax-declarations`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ tax_heads_fkey: head.tax_heads_pkey, tax_heads_details_fkey: line.tax_heads_details_pkey, tax_value: val, fin_year: new Date().getFullYear() }),
@@ -460,32 +498,34 @@ export default function EssSalaryPage() {
 
             {declData && (
               <div style={{ ...card, padding: '16px 20px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                  <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--text-primary)' }}>Other Income (Additions)</div>
+                  <button onClick={handleSaveDecl} disabled={saving} style={{ padding: '7px 18px', borderRadius: 20, border: 'none', background: BRAND, color: '#fff', fontSize: 11, fontWeight: 800, cursor: 'pointer', opacity: saving ? 0.7 : 1 }}>{saving ? 'Saving…' : 'Save Declarations'}</button>
+                </div>
+                <p style={{ fontSize: 10.5, color: 'var(--text-muted)', marginBottom: 14 }}>
+                  Income beyond salary (rent, other sources, etc.) — added to taxable income, not deducted from it.
+                </p>
+                {declData.heads.filter((h) => h.tax_type === 'Income').map((head) => (
+                  <TaxHeadFields key={head.tax_heads_pkey} head={head} values={declVals} onChange={(key, value) => setDeclVals((v) => ({ ...v, [key]: value }))} />
+                ))}
+                <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: 10, borderTop: `2px solid ${BRAND}`, fontSize: 12, fontWeight: 800, color: BRAND }}>
+                  <span>Total Other Income</span><span>₹{fmtINR(declData.otherIncomeTotal)}</span>
+                </div>
+              </div>
+            )}
+
+            {declData && (
+              <div style={{ ...card, padding: '16px 20px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
                   <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--text-primary)' }}>Investment Declarations</div>
                   <button onClick={handleSaveDecl} disabled={saving} style={{ padding: '7px 18px', borderRadius: 20, border: 'none', background: BRAND, color: '#fff', fontSize: 11, fontWeight: 800, cursor: 'pointer', opacity: saving ? 0.7 : 1 }}>{saving ? 'Saving…' : 'Save Declarations'}</button>
                 </div>
                 {declData.heads.filter((h) => h.tax_type !== 'Income').map((head) => (
-                  <div key={head.tax_heads_pkey} style={{ marginBottom: 16 }}>
-                    <div style={{ fontSize: 11, fontWeight: 800, color: BRAND, marginBottom: 6, display: 'flex', gap: 8, alignItems: 'center' }}>
-                      {head.tax_name}
-                      {head.cap != null && <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--text-muted)' }}>(cap ₹{fmtINR(head.cap)})</span>}
-                    </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 10 }}>
-                      {head.lines.map((line) => (
-                        <div key={line.tax_heads_details_pkey}>
-                          <label style={{ fontSize: 10, color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>{line.label}</label>
-                          <input
-                            type="number" disabled={line.locked}
-                            value={declVals[line.tax_heads_details_pkey] ?? ''}
-                            onChange={(e) => setDeclVals((v) => ({ ...v, [line.tax_heads_details_pkey]: e.target.value }))}
-                            style={{ width: '100%', padding: '6px 10px', borderRadius: 7, border: '1.5px solid var(--border)', background: line.locked ? 'var(--bg-page)' : 'var(--bg-card)', color: 'var(--text-primary)', fontSize: 12, boxSizing: 'border-box' }}
-                          />
-                          {line.locked && <div style={{ fontSize: 9, color: '#dc2626', marginTop: 2 }}>Locked by admin</div>}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
+                  <TaxHeadFields key={head.tax_heads_pkey} head={head} values={declVals} onChange={(key, value) => setDeclVals((v) => ({ ...v, [key]: value }))} />
                 ))}
+                <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: 10, borderTop: `2px solid ${BRAND}`, fontSize: 12, fontWeight: 800, color: BRAND }}>
+                  <span>Total Deductions (capped)</span><span>₹{fmtINR(declData.cappedDeductionTotal)}</span>
+                </div>
               </div>
             )}
 

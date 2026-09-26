@@ -1591,13 +1591,40 @@ function LeaveTab({ empId }: { empId: number }) {
   );
 }
 
+// Salary Advance and Loan Application share one top-level tab, with their own forms/history
+// underneath as sub-tabs — both are just different flavors of "money the company advances you",
+// so they don't need two separate slots in the primary nav.
+const ADVANCE_LOAN_SUB_TABS = [
+  { key: 'advance', label: 'Salary Advance' },
+  { key: 'loan', label: 'Loan Application' },
+] as const;
+type AdvanceLoanSubTab = typeof ADVANCE_LOAN_SUB_TABS[number]['key'];
+
+function AdvanceLoanTab() {
+  const [subTab, setSubTab] = useState<AdvanceLoanSubTab>('advance');
+  return (
+    <div>
+      <div style={{ marginBottom: 14 }}>
+        <AppTabs
+          compact
+          variant="secondary"
+          active={subTab}
+          onChange={(k) => setSubTab(k as AdvanceLoanSubTab)}
+          tabs={ADVANCE_LOAN_SUB_TABS.map((t) => ({ key: t.key, label: t.label }))}
+        />
+      </div>
+      {subTab === 'advance' && <AdvanceTab />}
+      {subTab === 'loan' && <LoanTab />}
+    </div>
+  );
+}
+
 // ── MAIN PAGE ─────────────────────────────────────────────────────────────────
 const TABS = [
   { key: 'leave', label: 'Leave', icon: '🌴' },
   { key: 'expenses', label: 'Expense Claims', icon: '🧾' },
   { key: 'regularization', label: 'Regularization', icon: '✏️' },
-  { key: 'advance', label: 'Salary Advance', icon: '💸' },
-  { key: 'loan', label: 'Loan Application', icon: '🏦' },
+  { key: 'advance-loan', label: 'Advance & Loan', icon: '💰' },
 ] as const;
 type TabId = typeof TABS[number]['key'];
 
@@ -1629,8 +1656,7 @@ function EssRequestsContent() {
       {tab === 'leave' && <LeaveTab empId={empId} />}
       {tab === 'expenses' && <ExpensesTab />}
       {tab === 'regularization' && <RegularizationTab initialDate={/^\d{4}-\d{2}-\d{2}$/.test(searchParams.get('date') ?? '') ? searchParams.get('date')! : undefined} />}
-      {tab === 'advance' && <AdvanceTab />}
-      {tab === 'loan' && <LoanTab />}
+      {tab === 'advance-loan' && <AdvanceLoanTab />}
     </div>
   );
 }

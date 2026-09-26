@@ -1612,8 +1612,7 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
 
       {/* Sticky footer */}
       <div className="flex-shrink-0 px-6 py-4 border-t border-slate-100 bg-white/95 backdrop-blur-sm rounded-b-2xl">
-        {formError && <p className="text-xs text-[color:var(--color-danger)] mb-2">{formError}</p>}
-        <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center justify-between gap-3">
           {isFirst ? (
             <button
               onClick={onBack}
@@ -1630,31 +1629,36 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
             </button>
           )}
 
-          {isLast && includeOnboarding ? (
-            <button
-              onClick={finish}
-              disabled={pending || isCreate}
-              className="px-5 py-2.5 rounded-xl text-sm font-semibold bg-[color:var(--color-primary)] hover:scale-[1.03] disabled:opacity-50 disabled:hover:scale-100 text-white shadow-lg shadow-[color:var(--color-primary)]/20 transition-all duration-[180ms]"
-            >
-              {pending ? 'Onboarding…' : 'Complete Onboarding'}
-            </button>
-          ) : isLast ? (
-            <button
-              onClick={finishWithoutOnboarding}
-              disabled={pending || isCreate}
-              className="px-5 py-2.5 rounded-xl text-sm font-semibold bg-[color:var(--color-primary)] hover:scale-[1.03] disabled:opacity-50 disabled:hover:scale-100 text-white shadow-lg shadow-[color:var(--color-primary)]/20 transition-all duration-[180ms]"
-            >
-              {pending ? 'Saving…' : 'Done'}
-            </button>
-          ) : (
-            <button
-              onClick={saveAndContinue}
-              disabled={pending}
-              className="px-5 py-2.5 rounded-xl text-sm font-semibold bg-[color:var(--color-primary)] hover:scale-[1.03] disabled:opacity-50 disabled:hover:scale-100 text-white shadow-lg shadow-[color:var(--color-primary)]/20 transition-all duration-[180ms]"
-            >
-              {pending ? 'Saving…' : 'Save & Continue →'}
-            </button>
-          )}
+          {/* Validation/save errors sit immediately left of the primary button, in the same row —
+              not stacked above the whole footer — matching the legacy app's leave-request modal. */}
+          <div className="flex items-center gap-3 min-w-0">
+            {formError && <p className="text-xs text-[color:var(--color-danger)] truncate">{formError}</p>}
+            {isLast && includeOnboarding ? (
+              <button
+                onClick={finish}
+                disabled={pending || isCreate}
+                className="flex-shrink-0 px-5 py-2.5 rounded-xl text-sm font-semibold bg-[color:var(--color-primary)] hover:scale-[1.03] disabled:opacity-50 disabled:hover:scale-100 text-white shadow-lg shadow-[color:var(--color-primary)]/20 transition-all duration-[180ms]"
+              >
+                {pending ? 'Onboarding…' : 'Complete Onboarding'}
+              </button>
+            ) : isLast ? (
+              <button
+                onClick={finishWithoutOnboarding}
+                disabled={pending || isCreate}
+                className="flex-shrink-0 px-5 py-2.5 rounded-xl text-sm font-semibold bg-[color:var(--color-primary)] hover:scale-[1.03] disabled:opacity-50 disabled:hover:scale-100 text-white shadow-lg shadow-[color:var(--color-primary)]/20 transition-all duration-[180ms]"
+              >
+                {pending ? 'Saving…' : 'Done'}
+              </button>
+            ) : (
+              <button
+                onClick={saveAndContinue}
+                disabled={pending}
+                className="flex-shrink-0 px-5 py-2.5 rounded-xl text-sm font-semibold bg-[color:var(--color-primary)] hover:scale-[1.03] disabled:opacity-50 disabled:hover:scale-100 text-white shadow-lg shadow-[color:var(--color-primary)]/20 transition-all duration-[180ms]"
+              >
+                {pending ? 'Saving…' : 'Save & Continue →'}
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>
