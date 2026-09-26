@@ -80,13 +80,21 @@ export async function POST(request: NextRequest) {
   const buffer = Buffer.from(await file.arrayBuffer());
   const workbook = XLSX.read(buffer, { type: 'buffer' });
   const sheet = workbook.Sheets[workbook.SheetNames[0]];
-  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
+  const allRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
+  // The template pre-formats a large block of trailing rows (Date/Session number formats) so Excel
+  // doesn't mis-guess column types as the admin types into them — sheet_to_json (with the sheet's own
+  // !ref range) reads all of those as blank data rows too. Drop rows with nothing in ANY column before
+  // the mandatory-field scan below, or that formatting-only padding would fail every upload. Original
+  // sheet row numbers are kept alongside so error messages still point at the real row.
+  const rows = allRows
+    .map((row, idx) => ({ row, sheetRow: idx + 2 }))
+    .filter(({ row }) => Object.values(row).some((v) => str(v) !== ''));
 
   // Legacy pre-scans the whole sheet first (controller.php:1463-1498): if Employee ID or Employee
   // Name is blank on ANY row, the entire import is rejected, nothing is saved. Replicated here
   // rather than the previous per-row skip, per the "full literal parity" decision.
   const hasMissingMandatory = rows.some(
-    (row) => !str(row['Employee ID *']) || !str(row['Employee Name *'])
+    ({ row }) => !str(row['Employee ID *']) || !str(row['Employee Name *'])
   );
   if (hasMissingMandatory) {
     return NextResponse.json({ error: 'Please check all mandatory fields entered' }, { status: 400 });
@@ -106,8 +114,7 @@ export async function POST(request: NextRequest) {
   let imported = 0;
 
   for (let i = 0; i < rows.length; i++) {
-    const row = rows[i];
-    const rowNum = i + 2;
+    const { row, sheetRow: rowNum } = rows[i];
 
     const userId = str(row['Employee ID *']);
     const leaveTypeCode = str(row['Leave Type (code) *']);

@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useSetupOptions } from '@/lib/setupOptions';
@@ -46,6 +46,12 @@ export default function AttendanceUploadPage() {
   const [showAdd, setShowAdd] = useState(false);
   const [addForm, setAddForm] = useState({ empFkey: '', date: '', inTime: '09:00:00', outTime: '18:00:00' });
   const [addError, setAddError] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 4000);
+    return () => clearTimeout(t);
+  }, [toast]);
 
   const { data: branches = [] } = useLookup('setup/branches', 'branch_code', (r) => String(r.branch_name));
   const monthOptions = useMemo(() => recentMonthOptions(), []);
@@ -78,7 +84,15 @@ export default function AttendanceUploadPage() {
         return res.json();
       });
     },
-    onSuccess: (data: UploadResult) => { setResult(data); refetch(); },
+    onSuccess: (data: UploadResult) => {
+      setResult(data);
+      refetch();
+      setToast({
+        message: `${data.imported} punch${data.imported === 1 ? '' : 'es'} uploaded${data.errors.length > 0 ? `, ${data.errors.length} row(s) skipped` : ''}`,
+        type: data.errors.length > 0 ? 'error' : 'success',
+      });
+    },
+    onError: (err: Error) => setToast({ message: err.message, type: 'error' }),
   });
 
   const addSingle = useMutation({
@@ -102,6 +116,7 @@ export default function AttendanceUploadPage() {
       setAddForm({ empFkey: '', date: '', inTime: '09:00:00', outTime: '18:00:00' });
       setAddError(null);
       refetch();
+      setToast({ message: 'Attendance saved', type: 'success' });
     },
     onError: (err: Error) => setAddError(err.message),
   });
@@ -113,7 +128,13 @@ export default function AttendanceUploadPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ids: Array.from(checked) }),
       }).then((r) => r.json()),
-    onSuccess: () => { setChecked(new Set()); refetch(); },
+    onSuccess: () => {
+      const count = checked.size;
+      setChecked(new Set());
+      refetch();
+      setToast({ message: `${count} record${count === 1 ? '' : 's'} deleted`, type: 'success' });
+    },
+    onError: (err: Error) => setToast({ message: err.message, type: 'error' }),
   });
 
   function handleFileSelected(e: React.ChangeEvent<HTMLInputElement>) {
@@ -210,26 +231,17 @@ export default function AttendanceUploadPage() {
         )}
       </div>
 
-      {upload.isError && <p className="text-[12.5px] text-[color:var(--color-danger)] mb-3">{String(upload.error)}</p>}
-
-      {result && (
+      {result && result.errors.length > 0 && (
         <div className="mb-4 surface-card rounded-xl px-4 py-3 text-[12.5px]">
           <div className="flex items-center justify-between">
-            <span>
-              <span className="font-medium text-[color:var(--color-success-dark)]">{result.imported} punch{result.imported === 1 ? '' : 'es'} uploaded</span>
-              {result.errors.length > 0 && (
-                <span className="text-[color:var(--color-danger)] ml-2">{result.errors.length} row(s) skipped</span>
-              )}
-            </span>
+            <span className="font-medium text-[#0F172A]">Skipped rows</span>
             <button onClick={() => setResult(null)} className="text-slate-400 hover:text-slate-600 text-[11.5px]">Dismiss</button>
           </div>
-          {result.errors.length > 0 && (
-            <ul className="mt-2 space-y-0.5 text-[11.5px] text-[color:var(--color-danger)] max-h-40 overflow-y-auto">
-              {result.errors.map((err, i) => (
-                <li key={i}>Row {err.row}: {err.message}</li>
-              ))}
-            </ul>
-          )}
+          <ul className="mt-2 space-y-0.5 text-[11.5px] text-[color:var(--color-danger)] max-h-40 overflow-y-auto">
+            {result.errors.map((err, i) => (
+              <li key={i}>Row {err.row}: {err.message}</li>
+            ))}
+          </ul>
         </div>
       )}
 
@@ -339,6 +351,17 @@ export default function AttendanceUploadPage() {
               {addSingle.isPending ? 'Saving…' : 'Save'}
             </button>
           </div>
+        </div>
+      )}
+
+      {toast && (
+        <div
+          className={cn(
+            'fixed bottom-10 right-4 z-[60] min-w-[20rem] max-w-md px-5 py-3.5 rounded-xl shadow-lg text-sm font-medium text-white',
+            toast.type === 'success' ? 'bg-[color:var(--color-success)]' : 'bg-[color:var(--color-danger)]'
+          )}
+        >
+          {toast.message}
         </div>
       )}
     </div>

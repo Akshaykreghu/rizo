@@ -62,9 +62,14 @@ function ManualGrid({
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [showAdd, setShowAdd] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 4000);
+    return () => clearTimeout(t);
+  }, [toast]);
 
   const templateHref = `/api/leave/bulk-upload/template?branch=${encodeURIComponent(branch)}&employee=${encodeURIComponent(employee)}`;
 
@@ -91,7 +96,12 @@ function ManualGrid({
     onSuccess: (data: UploadResult) => {
       setUploadResult(data);
       queryClient.invalidateQueries({ queryKey: ['leave', 'bulk-upload', 'list'] });
+      setToast({
+        message: `${data.imported} leave request${data.imported === 1 ? '' : 's'} applied & approved${data.errors.length > 0 ? `, ${data.errors.length} row(s) skipped` : ''}`,
+        type: data.errors.length > 0 ? 'error' : 'success',
+      });
     },
+    onError: (err: Error) => setToast({ message: err.message, type: 'error' }),
   });
 
   function handleFileSelected(e: React.ChangeEvent<HTMLInputElement>) {
@@ -152,17 +162,21 @@ function ManualGrid({
         return b;
       }),
     onSuccess: (b) => {
-      setMessage(`Leave saved (${b.leaveDays} day(s))`);
+      setToast({ message: `Leave saved (${b.leaveDays} day(s))`, type: 'success' });
       setShowAdd(false);
       setForm(emptyForm);
       queryClient.invalidateQueries({ queryKey: ['leave', 'bulk-upload', 'list'] });
     },
-    onError: (err: Error) => setMessage(err.message),
+    onError: (err: Error) => setToast({ message: err.message, type: 'error' }),
   });
 
   const del = useMutation({
     mutationFn: (id: number) => fetch(`/api/leave/bulk-upload/${id}`, { method: 'DELETE' }).then((r) => r.json()),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['leave', 'bulk-upload', 'list'] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['leave', 'bulk-upload', 'list'] });
+      setToast({ message: 'Leave upload record deleted', type: 'success' });
+    },
+    onError: (err: Error) => setToast({ message: err.message, type: 'error' }),
   });
 
   const columns: ColumnDef<LeaveUploadRow, unknown>[] = [
@@ -249,29 +263,19 @@ function ManualGrid({
         >
           <Plus className="w-3.5 h-3.5" /> Apply Leave
         </button>
-        {message && <span className="w-full text-[12.5px] text-slate-500">{message}</span>}
       </div>
 
-      {upload.isError && <p className="text-[12.5px] text-[color:var(--color-danger)] mb-3">{String(upload.error)}</p>}
-
-      {uploadResult && (
+      {uploadResult && uploadResult.errors.length > 0 && (
         <div className="surface-card rounded-xl px-4 py-2.5 mb-4 text-[12.5px]">
           <div className="flex items-center justify-between">
-            <span>
-              <span className="font-medium text-[color:var(--color-success-dark)]">{uploadResult.imported} leave request{uploadResult.imported === 1 ? '' : 's'} applied &amp; approved</span>
-              {uploadResult.errors.length > 0 && (
-                <span className="text-[color:var(--color-danger)] ml-2">{uploadResult.errors.length} row(s) skipped</span>
-              )}
-            </span>
+            <span className="font-medium text-[#0F172A]">Skipped rows</span>
             <button onClick={() => setUploadResult(null)} className="text-slate-400 hover:text-slate-600 text-[11.5px]">Dismiss</button>
           </div>
-          {uploadResult.errors.length > 0 && (
-            <ul className="mt-2 space-y-0.5 text-[11.5px] text-[color:var(--color-danger)]">
-              {uploadResult.errors.map((err, i) => (
-                <li key={i}>Row {err.row}: {err.message}</li>
-              ))}
-            </ul>
-          )}
+          <ul className="mt-2 space-y-0.5 text-[11.5px] text-[color:var(--color-danger)]">
+            {uploadResult.errors.map((err, i) => (
+              <li key={i}>Row {err.row}: {err.message}</li>
+            ))}
+          </ul>
         </div>
       )}
 
@@ -380,6 +384,17 @@ function ManualGrid({
               {add.isPending ? 'Saving…' : 'Save'}
             </button>
           </div>
+        </div>
+      )}
+
+      {toast && (
+        <div
+          className={cn(
+            'fixed bottom-10 right-4 z-[60] min-w-[20rem] max-w-md px-5 py-3.5 rounded-xl shadow-lg text-sm font-medium text-white',
+            toast.type === 'success' ? 'bg-[color:var(--color-success)]' : 'bg-[color:var(--color-danger)]'
+          )}
+        >
+          {toast.message}
         </div>
       )}
     </div>
