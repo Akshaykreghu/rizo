@@ -1,6 +1,7 @@
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
+import { checkAttendancePunches, attendancePunchConflictMessage } from '@/lib/leave';
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket } from 'mysql2';
 
@@ -19,9 +20,12 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const leaveType = searchParams.get('leaveType');
   const fromDate = searchParams.get('fromDate');
+  const fromHalf = Number(searchParams.get('fromHalf') ?? 1);
+  const toHalf = Number(searchParams.get('toHalf') ?? 2);
   if (!leaveType || !fromDate) {
     return NextResponse.json({ error: 'leaveType and fromDate are required' }, { status: 400 });
   }
+  const toDate = searchParams.get('toDate') || fromDate;
   // Self-service can only ever preview their own balance — never an arbitrary employee id from
   // the query string, regardless of what a tampered request sends.
   const isAdmin = session.user.userGroup === 1;
@@ -37,6 +41,15 @@ export async function GET(request: NextRequest) {
   const pool = await getCompanyPool(session.user.companyCode);
   const empFkey = Number(employee);
   const salaryHeadItemFkey = Number(leaveType);
+
+  // Ported from criterias()'s checkAttendancePunches() call (added to legacy 2026-05-22) — a hard
+  // block, checked before balance/verified-month, when any half in the requested range already has
+  // a "Present" attendance status: the employee must remove that attendance before applying leave
+  // over it. Matches legacy's own message wording exactly.
+  const conflictMask = await checkAttendancePunches(pool, empFkey, fromDate, toDate, fromHalf, toHalf);
+  if (conflictMask) {
+    return NextResponse.json({ error: attendancePunchConflictMessage(conflictMask, 'preview') }, { status: 409 });
+  }
 
   // Ported from getEmployeeDates() — the Apply Leave form's FROMDATE/TODATE pickers are bounded to
   // [joining_date, termination_date] (termination_date only set for a resigned employee, status=2).

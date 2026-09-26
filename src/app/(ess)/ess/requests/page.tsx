@@ -784,6 +784,7 @@ interface LeaveRow {
   ISAutherizedby: number | null; Autherized_date: string | null; authorized_by_first_name: string | null; authorized_by_last_name: string | null;
   APPROVEDBY: number | null; APPROVED_date: string | null; approved_by_first_name: string | null; approved_by_last_name: string | null;
   REMARKS: string | null;
+  file_name: string | null; file_type: string | null;
 }
 interface LeaveType { salaryHeadItemFkey: number; name: string; occurance: string; allowNegative: boolean; maxLeave: number }
 
@@ -792,8 +793,20 @@ const STATUS_TEXT_LABEL: Record<string, string> = {
   CancellationOfAuthorized: 'Cancellation of Authorized',
   CancellationOfApproved: 'Cancellation of Approved',
   CancelledByAdmin: 'Cancelled by Admin',
-  'Can not Apply 0 days': 'Rejected — No Leave Days Available',
 };
+
+// leave_transaction_prc's own internal rejection statuses all start with "Can not Apply" (seen live
+// as both 'Can not Apply' and 'Can not Apply 0 days') — matched by prefix, same as
+// isLeaveTransactionFailure(), rather than one hardcoded exact string, so any variant the proc
+// returns still gets a real user-facing label instead of leaking the raw internal text.
+function isRejectedByProc(status: string): boolean {
+  return status.toLowerCase().startsWith('can not apply');
+}
+
+function statusDisplayLabel(status: string): string {
+  if (isRejectedByProc(status)) return 'Rejected — No Leave Days Available';
+  return STATUS_TEXT_LABEL[status] ?? status;
+}
 
 function StatusBadge({ status }: { status: string }) {
   const cfg: Record<string, [string, string]> = {
@@ -801,8 +814,8 @@ function StatusBadge({ status }: { status: string }) {
     Rejected: ['#dc2626', '#fef2f2'], Cancelled: ['#94a3b8', '#f1f5f9'], CancelledByAdmin: ['#94a3b8', '#f1f5f9'],
     CancellationOfAuthorized: ['#86198f', '#fdf4ff'], CancellationOfApproved: ['#86198f', '#fdf4ff'],
   };
-  const [color, bg] = cfg[status] || [BRAND, '#e0f2fe'];
-  return <span style={{ padding: '2px 8px', borderRadius: 20, fontSize: 9, fontWeight: 800, textTransform: 'uppercase', color, background: bg }}>{STATUS_TEXT_LABEL[status] ?? status}</span>;
+  const [color, bg] = isRejectedByProc(status) ? ['#dc2626', '#fef2f2'] : cfg[status] || [BRAND, '#e0f2fe'];
+  return <span style={{ padding: '2px 8px', borderRadius: 20, fontSize: 9, fontWeight: 800, textTransform: 'uppercase', color, background: bg }}>{statusDisplayLabel(status)}</span>;
 }
 const STATUS_STRIPE: Record<string, string> = { Applied: BRAND, Authorized: '#7c3aed', Approved: '#16a34a', Rejected: '#dc2626', Cancelled: '#94a3b8' };
 
@@ -899,7 +912,7 @@ function PersonPicker({
   );
 }
 
-function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: number; defaultTypeId?: number | null; onClose: () => void; onSaved: () => void }) {
+function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: number; defaultTypeId?: number | null; onClose: () => void; onSaved: (warningMessage?: string | null) => void }) {
   useLockBodyScroll();
   const [types, setTypes] = useState<LeaveType[]>([]);
   const [authorizerOptions, setAuthorizerOptions] = useState<{ empFkey: number; name: string }[]>([]);
@@ -913,7 +926,13 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
   const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Server-state hard blocks the user can't fix by editing the form right there (attendance already
+  // exists/verified, leave already exists, no leave balance) surface as a modal alert, not inline
+  // form text — distinct from `error`, which is reserved for field-level validation the user fixes
+  // by changing what they typed.
+  const [alertMessage, setAlertMessage] = useState<string | null>(null);
   const [preview, setPreview] = useState<LeaveBalancePreview | null>(null);
+  const [attendanceConflictError, setAttendanceConflictError] = useState<string | null>(null);
   const [form, setForm] = useState({ leave_type_id: defaultTypeId ? String(defaultTypeId) : '', from_date: '', from_half: '1', to_date: '', to_half: '2', reason: '', contact_person: '', contact_no: '' });
   // Mirrors validateLeave()'s exact trigger-gating (addeditleave_new.ctp:921-933) — legacy only
   // checks max_leave_limit when #TODATE fires changeDate, and min_leave_limit only when #TOHALF
@@ -947,15 +966,30 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
     if (form.from_date) {
       setForm((f) => ({ ...f, from_date: '' }));
       setPreview(null);
+      setAttendanceConflictError(null);
     }
   }
 
   useEffect(() => {
     if (!form.leave_type_id || !form.from_date) return;
-    fetch(`/api/leave/balance-preview?employee=${empId}&leaveType=${form.leave_type_id}&fromDate=${form.from_date}`)
-      .then((r) => (r.ok ? r.json() : null)).then(setPreview).catch(() => setPreview(null));
+    const toDate = form.to_date || form.from_date;
+    fetch(
+      `/api/leave/balance-preview?employee=${empId}&leaveType=${form.leave_type_id}&fromDate=${form.from_date}` +
+        `&toDate=${toDate}&fromHalf=${form.from_half}&toHalf=${form.to_half}`
+    )
+      .then(async (r) => {
+        const body = await r.json().catch(() => null);
+        if (!r.ok) {
+          setAttendanceConflictError(body?.error ?? 'Unable to check leave eligibility for these dates.');
+          setPreview(null);
+          return;
+        }
+        setAttendanceConflictError(null);
+        setPreview(body);
+      })
+      .catch(() => { setPreview(null); setAttendanceConflictError(null); });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [empId, form.from_date]);
+  }, [empId, form.from_date, form.to_date, form.from_half, form.to_half]);
 
   const leaveDays = calcLeaveDays(form.from_date, Number(form.from_half), form.to_date, Number(form.to_half));
   // Same hard-block set shown live in the "Available Leave Balance" box — computed once here so
@@ -970,6 +1004,7 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
     dateOrderInvalid ||
     beforeJoining ||
     afterTermination ||
+    !!attendanceConflictError ||
     !preview ||
     (preview.documentMandatory && !file) ||
     (preview.documentMandatory && !fileDisplayName.trim()) ||
@@ -1010,9 +1045,12 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error || 'Failed to apply');
-      onSaved();
+      onSaved(body.warningMessage);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to apply');
+      // A rejection at this final server-side check (overlap/attendance-conflict/balance) is the
+      // same class of server-state hard block the pre-submit checks above already alert for — same
+      // treatment here as a defense-in-depth fallback, not inline form text.
+      setAlertMessage(err instanceof Error ? err.message : 'Failed to apply');
     } finally {
       setUploading(false);
       setSaving(false);
@@ -1025,6 +1063,11 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
     // required field missing now says exactly what's missing via the same alert modal.
     if (!form.leave_type_id) { setError('Please select a leave type.'); return; }
     if (!form.from_date || !form.to_date) { setError('Please choose a From and To date.'); return; }
+    // Ported from checkAttendancePunches() (controller.php:6135, wired into both criterias() and
+    // saveLeaveEntry()) — an existing "Present" attendance status over the requested half(s) is a
+    // hard block discovered against server state (not a typo the user can fix by editing a field),
+    // so it's an alert, not inline form text.
+    if (attendanceConflictError) { setAlertMessage(attendanceConflictError); return; }
     // Matches validateLeave()'s `edt < sdt` hard block in addeditleave_new.ctp — legacy alerts
     // "To date should be greater than or equal to From date" and clears TODATE.
     if (new Date(form.to_date) < new Date(form.from_date)) {
@@ -1052,15 +1095,15 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
     if (!preview) { setError('Still checking your leave balance — please wait a moment and try again.'); return; }
     if (preview.documentMandatory && !file) { setError('A supporting document is required for this leave type.'); return; }
     if (preview.documentMandatory && !fileDisplayName.trim()) { setError('Please enter the uploaded file name.'); return; }
-    // Genuine policy ineligibility (not served yet / applied too late) — hard block, same as
-    // legacy's own Apply Leave form.
-    if (!preview.minServiceOk) { setError(preview.minServiceMessage); return; }
-    if (!preview.advanceNoticeOk) { setError(preview.advanceNoticeMessage); return; }
+    // Genuine policy ineligibility (not served yet / applied too late) — server-state hard block,
+    // same as legacy's own Apply Leave form — alert, not inline.
+    if (!preview.minServiceOk) { setAlertMessage(preview.minServiceMessage); return; }
+    if (!preview.advanceNoticeOk) { setAlertMessage(preview.advanceNoticeMessage); return; }
     // Balance is a hard stop — legacy's own client-side validateLeave() blocks purely on
     // `leave_balance < diffDays` regardless of ALLOW_NEGETIVE, so a 0-balance leave type can never
-    // be submitted here.
+    // be submitted here. Server-state (the computed balance), so alert rather than inline.
     if (leaveDays > preview.balance) {
-      setError(`You do not have enough leave balance. Available: ${preview.balance} day(s), requested: ${leaveDays}.`);
+      setAlertMessage(`You do not have enough leave balance. Available: ${preview.balance} day(s), requested: ${leaveDays}.`);
       return;
     }
     // Min/max-per-request limits are hard stops too, not a Continue-Anyway warning — legacy's
@@ -1095,6 +1138,11 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
               placeholder="-- Select --"
               options={types.map((t) => ({ value: String(t.salaryHeadItemFkey), label: t.occurance ? `${t.name} (${t.occurance})` : t.name }))}
             />
+            {attendanceConflictError && (
+              <div style={{ background: '#fef2f2', border: '1px solid #dc262633', borderRadius: 9, padding: '8px 12px', marginTop: 8, fontSize: 12.5, color: '#dc2626', fontWeight: 700 }}>
+                {attendanceConflictError}
+              </div>
+            )}
             {preview && (
               <div style={{ background: 'var(--bg-page)', border: '1px solid var(--border)', borderRadius: 9, padding: '8px 12px', marginTop: 8, fontSize: 12.5 }}>
                 <div style={{ fontWeight: 700, color: 'var(--text-primary)' }}>
@@ -1231,6 +1279,7 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
           </div>
         </form>
       </div>
+      {alertMessage && <AlertModal message={alertMessage} onClose={() => setAlertMessage(null)} />}
     </div>
   );
 }
@@ -1292,6 +1341,33 @@ function LeaveDetailModal({ leave: r, onClose, onCancelled }: { leave: LeaveRow;
           {r.contact_No && <LeaveInfoRow label="Contact During Leave" value={r.contact_No} />}
         </div>
 
+        {(() => {
+          // file_name/file_type are legacy's own swapped columns: file_name holds the stored file's
+          // path, file_type holds the user-typed display label — matches the same parsing used by the
+          // admin Leave Requests details view (api/leave/requests/[id]/details/route.ts).
+          const paths = (r.file_name ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+          const labels = (r.file_type ?? '').split(',').map((s) => s.trim());
+          if (paths.length === 0) return null;
+          return (
+            <div style={sec}>
+              <div style={secLabel}>Documents</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                {paths.map((path, i) => (
+                  <a
+                    key={i}
+                    href={path}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ fontSize: 12, fontWeight: 700, color: BRAND, textDecoration: 'none' }}
+                  >
+                    {labels[i] || path}
+                  </a>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
+
         <div style={sec}>
           <div style={secLabel}>Approval Chain</div>
           <LeaveInfoRow label="Applied On" value={fmt(r.applied_date)} />
@@ -1331,6 +1407,12 @@ function LeaveTab({ empId }: { empId: number }) {
   const [applyType, setApplyType] = useState<number | null>(null);
   const [selectedLeaveRequest, setSelectedLeaveRequest] = useState<LeaveRow | null>(null);
   const [page, setPage] = useState(1);
+  const [message, setMessage] = useState<string | null>(null);
+  useEffect(() => {
+    if (!message) return;
+    const t = setTimeout(() => setMessage(null), 4000);
+    return () => clearTimeout(t);
+  }, [message]);
 
   const nowMonth = new Date().toISOString().slice(0, 7);
   const [selectedMonth, setSelectedMonth] = useState(nowMonth);
@@ -1375,11 +1457,10 @@ function LeaveTab({ empId }: { empId: number }) {
                 <input
                   type="month"
                   value={selectedMonth}
-                  max={nowMonth}
                   onChange={(e) => { if (e.target.value) { setSelectedMonth(e.target.value); setPage(1); } }}
                   style={{ background: 'none', border: 'none', color: 'var(--text-primary)', fontSize: 12, fontWeight: 700, cursor: 'pointer', outline: 'none' }}
                 />
-                <button onClick={() => selectedMonth < nowMonth && shiftMonth(1)} style={{ background: 'none', border: 'none', color: selectedMonth >= nowMonth ? 'var(--border)' : 'var(--text-muted)', fontSize: 15, cursor: selectedMonth >= nowMonth ? 'default' : 'pointer', padding: '0 4px', lineHeight: 1 }}>›</button>
+                <button onClick={() => shiftMonth(1)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: 15, cursor: 'pointer', padding: '0 4px', lineHeight: 1 }}>›</button>
                 {selectedMonth !== nowMonth && (
                   <button onClick={() => { setSelectedMonth(nowMonth); setPage(1); }} style={{ background: `${BRAND}15`, border: 'none', color: BRAND, fontSize: 10, fontWeight: 700, cursor: 'pointer', borderRadius: 6, padding: '2px 8px' }}>Today</button>
                 )}
@@ -1420,13 +1501,25 @@ function LeaveTab({ empId }: { empId: number }) {
         </>
       )}
 
-      {applyOpen && <ApplyLeaveModal empId={empId} defaultTypeId={applyType} onClose={() => setApplyOpen(false)} onSaved={() => { setApplyOpen(false); load(); }} />}
+      {applyOpen && (
+        <ApplyLeaveModal
+          empId={empId}
+          defaultTypeId={applyType}
+          onClose={() => setApplyOpen(false)}
+          onSaved={(warningMessage) => { setApplyOpen(false); load(); setMessage(warningMessage || 'Leave applied successfully'); }}
+        />
+      )}
       {selectedLeaveRequest && (
         <LeaveDetailModal
           leave={selectedLeaveRequest}
           onClose={() => setSelectedLeaveRequest(null)}
-          onCancelled={() => { setSelectedLeaveRequest(null); load(); }}
+          onCancelled={() => { setSelectedLeaveRequest(null); load(); setMessage('Leave cancelled'); }}
         />
+      )}
+      {message && (
+        <div style={{ position: 'fixed', bottom: 24, right: 24, zIndex: 1300, background: '#16a34a', color: '#fff', fontWeight: 700, fontSize: 13, padding: '12px 18px', borderRadius: 10, boxShadow: '0 12px 28px rgba(0,0,0,0.2)', minWidth: '18rem', maxWidth: '28rem' }}>
+          {message}
+        </div>
       )}
     </div>
   );

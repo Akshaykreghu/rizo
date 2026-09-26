@@ -1,7 +1,7 @@
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
-import { isLeaveTransactionFailure, runLeaveTransaction, toISODate } from '@/lib/leave';
+import { attendancePunchConflictMessage, checkAttendancePunches, checkAttendanceRegisterRangeVerified, isLeaveTransactionFailure, runLeaveTransaction, toISODate } from '@/lib/leave';
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket } from 'mysql2';
 
@@ -37,6 +37,19 @@ export async function POST(
     return NextResponse.json({ error: `Cannot authorize a request in status '${entry.LEAVESTATUS}'` }, { status: 409 });
   }
 
+  // Ported from grandLeave()'s criterias() call, gated exactly as legacy does — only when the
+  // action isn't a Reject and the leave is currently 'Applied' (controller.php:2374-2384) — every
+  // Applied->Authorized/Approved transition re-checks both the attendance-punch conflict and the
+  // attendance-verified-for-month lock, not just the bulk-action path.
+  const fromDate = toISODate(entry.FROMDATE);
+  const toDate = toISODate(entry.TODATE);
+  const attendanceVerifiedConflict = await checkAttendanceRegisterRangeVerified(pool, entry.EMP_fkey, fromDate, toDate);
+  if (attendanceVerifiedConflict) return NextResponse.json({ error: attendanceVerifiedConflict }, { status: 409 });
+  const conflictMask = await checkAttendancePunches(pool, entry.EMP_fkey, fromDate, toDate, entry.FROMHALF, entry.TOHALF);
+  if (conflictMask) {
+    return NextResponse.json({ error: attendancePunchConflictMessage(conflictMask, 'save') }, { status: 409 });
+  }
+
   const autoApprove = entry.APPROVEDBY != null && entry.ISAutherizedby === entry.APPROVEDBY;
   const newStatus = autoApprove ? 'Approved' : 'Authorized';
 
@@ -58,8 +71,8 @@ export async function POST(
   }
 
   const { finalStatus, errorMessage } = await runLeaveTransaction(pool, {
-    leaveEntryId: entry.LEAVEENTRYID, empFkey: entry.EMP_fkey, fromDate: toISODate(entry.FROMDATE),
-    fromHalf: entry.FROMHALF, toDate: toISODate(entry.TODATE), toHalf: entry.TOHALF,
+    leaveEntryId: entry.LEAVEENTRYID, empFkey: entry.EMP_fkey, fromDate,
+    fromHalf: entry.FROMHALF, toDate, toHalf: entry.TOHALF,
     leaveDays: Number(entry.leave_days), status: newStatus,
   });
 

@@ -1,7 +1,7 @@
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
-import { checkAttendanceConflict, getEmployeeLeaveTypes, isLeaveTransactionFailure, runLeaveTransaction, toISODate } from '@/lib/leave';
+import { attendancePunchConflictMessage, checkAttendancePunches, checkAttendanceRegisterRangeVerified, checkExistingLeaveOverlap, getEmployeeLeaveTypes, isLeaveTransactionFailure, runLeaveTransaction, toISODate } from '@/lib/leave';
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket, ResultSetHeader } from 'mysql2';
 
@@ -71,7 +71,7 @@ export async function GET(request: NextRequest) {
     `SELECT le.LEAVEENTRYID, le.EMP_fkey, le.salary_head_item_fkey, shi.item AS leave_type,
             le.FROMDATE, le.FROMHALF, le.TODATE, le.TOHALF, le.leave_days, le.LEAVESTATUS,
             le.ISAutherizedby, le.ISAutherized, le.Autherized_date, le.APPROVEDBY, le.ISAPPROVED, le.APPROVED_date,
-            le.Reason, le.contact_No, le.contact_person, le.REMARKS, le.applied_date,
+            le.Reason, le.contact_No, le.contact_person, le.REMARKS, le.applied_date, le.file_name, le.file_type,
             ed.first_name, ed.last_name, ed.emp_id,
             auth.first_name AS authorized_by_first_name, auth.last_name AS authorized_by_last_name,
             appr.first_name AS approved_by_first_name, appr.last_name AS approved_by_last_name,
@@ -146,8 +146,27 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'This leave type is not part of the employee\'s leave policy' }, { status: 400 });
   }
 
-  const conflict = await checkAttendanceConflict(pool, empFkey, fromDate, toDate);
-  if (conflict) return NextResponse.json({ error: conflict }, { status: 409 });
+  // Ported from saveLeaveEntry()'s own existing-leave overlap guard (controller.php:1994-2029) —
+  // a distinct check from the attendance-verified/punch checks below, scoped to the employee's OWN
+  // prior leave requests rather than real attendance.
+  const overlap = await checkExistingLeaveOverlap(pool, empFkey, fromDate, toDate, Number(fromHalf), Number(toHalf));
+  if (overlap) return NextResponse.json({ error: overlap }, { status: 409 });
+
+  // Ported from saveLeaveEntry()'s boundary-spanning attendance-verified check (controller.php:
+  // 1716-1757) — the same 4-branch att_start_end_fn-anchored logic already correctly used by the
+  // bulk-upload single-add path; this route previously called a cruder single-month lookup
+  // (checkAttendanceConflict, now removed) that missed the case where FROMDATE falls near a
+  // verification-period boundary and the FOLLOWING month is the one actually verified.
+  const attendanceVerifiedConflict = await checkAttendanceRegisterRangeVerified(pool, empFkey, fromDate, toDate);
+  if (attendanceVerifiedConflict) return NextResponse.json({ error: attendanceVerifiedConflict }, { status: 409 });
+
+  // Final server-side guard from saveLeaveEntry() (controller.php:1691-1709, added 2026-05-20) —
+  // half-day-aware punch conflict, checked separately from the attendance-verified check above since
+  // legacy treats these as two distinct checks on this exact save path.
+  const conflictMask = await checkAttendancePunches(pool, empFkey, fromDate, toDate, Number(fromHalf), Number(toHalf));
+  if (conflictMask) {
+    return NextResponse.json({ error: attendancePunchConflictMessage(conflictMask, 'save') }, { status: 409 });
+  }
 
   // Ported from GetLeaveBalanceNew's document_mandatory flag (leavepolicy.document_mandatory) —
   // addeditleave_new.ctp only enforces this client-side (disables submit / marks the file input
@@ -197,26 +216,29 @@ export async function POST(request: NextRequest) {
   // row(s) for this leave (confirmed via EmployeeLeaveUploadController::leavesave()'s two-call
   // sequence). Calling the proc directly with 'Approved' and no prior 'Applied' call was the real
   // bug — the proc has nothing to transition, so it silently wrote no transaction row at all.
-  let { finalStatus, errorMessage } = await runLeaveTransaction(pool, {
+  let { finalStatus, leaveMessage } = await runLeaveTransaction(pool, {
     leaveEntryId, empFkey, fromDate, fromHalf: Number(fromHalf), toDate, toHalf: Number(toHalf),
     leaveDays, status: 'Applied',
   });
 
-  if (isLeaveTransactionFailure(finalStatus)) {
-    return NextResponse.json({ error: errorMessage || finalStatus, id: leaveEntryId }, { status: 409 });
-  }
+  // Ported from saveLeaveEntry()'s `if (!$out)` branch (controller.php:2139-2150): when the proc
+  // rejects (e.g. finalStatus 'Can not Apply 0 days', typically a range that falls entirely on
+  // week-off/holiday days), legacy does NOT roll back or fail the request — the leaveentries row
+  // stays exactly as the proc left it, and the response just carries a warningmessage (read from
+  // leaveentries.message, the proc's own specific reason — e.g. naming the weekoff/holiday date —
+  // not the generic status text) alongside the otherwise-normal success payload.
+  const warningMessage = isLeaveTransactionFailure(finalStatus) ? (leaveMessage || finalStatus) : null;
 
   // Second proc call, admin-applied leave only: status 'Approved' — transitions the transaction(s)
   // just created above from Applied to Approved, matching legacy's re-fetch-then-call-again pattern.
   if (isAdmin && finalStatus === 'Applied') {
-    ({ finalStatus, errorMessage } = await runLeaveTransaction(pool, {
+    ({ finalStatus } = await runLeaveTransaction(pool, {
       leaveEntryId, empFkey, fromDate, fromHalf: Number(fromHalf), toDate, toHalf: Number(toHalf),
       leaveDays, status: 'Approved',
     }));
-    if (isLeaveTransactionFailure(finalStatus)) {
-      return NextResponse.json({ error: errorMessage || finalStatus, id: leaveEntryId }, { status: 409 });
-    }
   }
 
-  return NextResponse.json({ success: true, id: leaveEntryId, leaveDays, status: finalStatus, procMessage: errorMessage });
+  return NextResponse.json({
+    success: true, id: leaveEntryId, leaveDays, status: finalStatus, warningMessage,
+  });
 }

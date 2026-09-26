@@ -1,16 +1,19 @@
 'use client';
 
-import { Suspense, useEffect, useState } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useSearchParams } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { EmployeeSearch } from '@/components/employees/EmployeeSearch';
-import { Plus, X, Eye, CalendarCheck } from 'lucide-react';
+import { SearchableSelect } from '@/components/ui/SearchableSelect';
+import { Plus, X, Eye, CalendarCheck, Check, Trash2, Download, Upload } from 'lucide-react';
 import type { ColumnDef } from '@tanstack/react-table';
 import { cn } from '@/lib/utils';
 import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
 import { DataTable } from '@/components/data-table/DataTable';
 import { SkeletonText } from '@/components/ui/Skeleton';
+import { AlertModal } from '@/components/ui/AlertModal';
+import { useSetupOptions } from '@/lib/setupOptions';
 
 interface LeaveType {
   salaryHeadItemFkey: number;
@@ -61,15 +64,34 @@ const STATUS_STYLE: Record<string, string> = {
   CancelledByAdmin: 'bg-slate-100 text-slate-600',
   CancellationOfAuthorized: 'bg-[color:var(--color-accent-soft)] text-[color:var(--color-accent-dark)]',
   CancellationOfApproved: 'bg-[color:var(--color-accent-soft)] text-[color:var(--color-accent-dark)]',
-  'Can not Apply 0 days': 'bg-[color:var(--color-danger-soft)] text-[color:var(--color-danger-dark)]',
+  // Legacy's own alternate spelling for the same two cancellation-pending states (spaced, Title
+  // Case) — seen defensively filtered-for elsewhere in this app (ess/reports), so kept recognized
+  // here too even though no active write path in this port currently produces them.
+  'Cancellation Authorized': 'bg-[color:var(--color-accent-soft)] text-[color:var(--color-accent-dark)]',
+  'Cancellation Approved': 'bg-[color:var(--color-accent-soft)] text-[color:var(--color-accent-dark)]',
 };
 
 const STATUS_LABEL: Record<string, string> = {
   CancellationOfAuthorized: 'Cancellation of Authorized',
   CancellationOfApproved: 'Cancellation of Approved',
   CancelledByAdmin: 'Cancelled by Admin',
-  'Can not Apply 0 days': 'Rejected — No Leave Days Available',
+  'Cancellation Authorized': 'Cancellation of Authorized',
+  'Cancellation Approved': 'Cancellation of Approved',
 };
+
+// leave_transaction_prc's own internal rejection statuses all start with "Can not Apply" (seen live
+// as both 'Can not Apply' and 'Can not Apply 0 days') — matched by prefix, same as
+// isLeaveTransactionFailure() server-side, rather than one hardcoded exact string, so any variant the
+// proc returns still gets a real user-facing label/color instead of leaking the raw internal text.
+function isRejectedByProc(status: string): boolean {
+  return status.toLowerCase().startsWith('can not apply');
+}
+function statusStyle(status: string): string {
+  return isRejectedByProc(status) ? 'bg-[color:var(--color-danger-soft)] text-[color:var(--color-danger-dark)]' : STATUS_STYLE[status] ?? 'bg-slate-100 text-slate-700';
+}
+function statusLabel(status: string): string {
+  return isRejectedByProc(status) ? 'Rejected — No Leave Days Available' : STATUS_LABEL[status] ?? status;
+}
 
 const INPUT_CLASS =
   'border border-slate-200 bg-white rounded-[9px] px-2.5 py-1.5 text-[12.5px] text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/25 focus:border-[color:var(--color-primary)] transition-colors';
@@ -89,12 +111,49 @@ function LeaveRequestsContent() {
   const [viewingId, setViewingId] = useState<number | null>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [alertMessage, setAlertMessage] = useState<string | null>(null);
 
   useEffect(() => {
     if (!toast) return;
     const t = setTimeout(() => setToast(null), 4000);
     return () => clearTimeout(t);
   }, [toast]);
+
+  // Bulk Excel upload — same underlying /api/leave/bulk-upload endpoints previously exposed on
+  // their own page; folded in here so admins have one place for both single Apply Leave and
+  // spreadsheet import, matching how Attendance Upload keeps Download Template/Upload File next
+  // to its own manual-add action.
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [uploadResult, setUploadResult] = useState<{ imported: number; errors: { row: number; message: string }[] } | null>(null);
+  const { data: branches = [] } = useSetupOptions('setup/branches', 'branch_code', (r) => String(r.branch_name));
+  const [templateBranch, setTemplateBranch] = useState('');
+  const [templateEmployee, setTemplateEmployee] = useState('');
+
+  const bulkUpload = useMutation({
+    mutationFn: (file: File) => {
+      const formData = new FormData();
+      formData.append('file', file);
+      return fetch('/api/leave/bulk-upload', { method: 'POST', body: formData }).then(async (res) => {
+        if (!res.ok) throw new Error((await res.json()).error ?? 'Upload failed');
+        return res.json();
+      });
+    },
+    onSuccess: (data: { imported: number; errors: { row: number; message: string }[] }) => {
+      setUploadResult(data);
+      setToast({
+        message: `${data.imported} leave request${data.imported === 1 ? '' : 's'} applied & approved${data.errors.length > 0 ? `, ${data.errors.length} row(s) skipped` : ''}`,
+        type: data.errors.length > 0 ? 'error' : 'success',
+      });
+      refetch();
+    },
+    onError: (err: Error) => setToast({ message: err.message, type: 'error' }),
+  });
+
+  function handleBulkFileSelected(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (file) bulkUpload.mutate(file);
+    e.target.value = '';
+  }
   const [form, setForm] = useState({
     empFkey: '', salaryHeadItemFkey: '', fromDate: '', fromHalf: '1', toDate: '', toHalf: '2',
     reason: '', contactNo: '', contactPerson: '',
@@ -108,8 +167,9 @@ function LeaveRequestsContent() {
   const leaveTypes = leaveTypesData?.data ?? [];
 
   // Ported from addeditleave_new.ctp's getLeaveBalance(): re-fetched whenever employee, leave type,
-  // or From Date changes, so the balance shown reflects the date being applied for.
-  const { data: balancePreview } = useQuery<{
+  // From Date, To Date, or either half changes (the attendance-punch conflict check below is
+  // range-and-half-aware), so the balance/eligibility shown reflects the exact request being made.
+  const { data: balancePreview, error: balancePreviewError } = useQuery<{
     balance: number;
     allowNegative: boolean;
     minLeaveLimit: number;
@@ -121,12 +181,18 @@ function LeaveRequestsContent() {
     joiningDate: string | null;
     terminationDate: string | null;
   }>({
-    queryKey: ['leave', 'balance-preview', form.empFkey, form.salaryHeadItemFkey, form.fromDate],
+    queryKey: ['leave', 'balance-preview', form.empFkey, form.salaryHeadItemFkey, form.fromDate, form.toDate, form.fromHalf, form.toHalf],
     queryFn: () =>
       fetch(
-        `/api/leave/balance-preview?employee=${form.empFkey}&leaveType=${form.salaryHeadItemFkey}&fromDate=${form.fromDate}`
-      ).then((r) => r.json()),
+        `/api/leave/balance-preview?employee=${form.empFkey}&leaveType=${form.salaryHeadItemFkey}&fromDate=${form.fromDate}` +
+          `&toDate=${form.toDate || form.fromDate}&fromHalf=${form.fromHalf}&toHalf=${form.toHalf}`
+      ).then(async (r) => {
+        const body = await r.json();
+        if (!r.ok) throw new Error(body.error ?? 'Unable to check leave eligibility for these dates.');
+        return body;
+      }),
     enabled: !!form.empFkey && !!form.salaryHeadItemFkey && !!form.fromDate,
+    retry: false,
   });
 
   const leaveDays = calcLeaveDays(form.fromDate, Number(form.fromHalf), form.toDate, Number(form.toHalf));
@@ -146,10 +212,25 @@ function LeaveRequestsContent() {
     (!!balancePreview.joiningDate && form.fromDate < balancePreview.joiningDate) ||
     (!!balancePreview.terminationDate && form.toDate > balancePreview.terminationDate)
   );
+  // checkAttendancePunches() (controller.php:6135) is an unconditional hard block in legacy — not
+  // gated behind the exceptions='Y' branch the min/max/advance-notice checks live in — so unlike
+  // those, this one still applies to admin-applied leave too.
+  const attendanceConflictMessage = balancePreviewError instanceof Error ? balancePreviewError.message : null;
+  const noBalanceMessage = balancePreview && balancePreview.balance === 0 && !balancePreview.allowNegative
+    ? 'You have no leave balance!'
+    : null;
+  // Server-state hard blocks (attendance already exists/verified, no leave balance) surface as a
+  // popup alert rather than inline text buried in the balance box — the user can't fix these by
+  // editing a field, unlike a bad date order or a missing document.
+  useEffect(() => {
+    if (attendanceConflictMessage) setAlertMessage(attendanceConflictMessage);
+    else if (noBalanceMessage) setAlertMessage(noBalanceMessage);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [attendanceConflictMessage, noBalanceMessage]);
 
   // Ported from EmployeeLeavesController::showleavedays() / showleavedays.ctp — the "Leave Details"
   // modal, shown via the row's View action.
-  const { data: details, isLoading: detailsLoading } = useQuery<{
+  const { data: details, isLoading: detailsLoading, refetch: refetchDetails } = useQuery<{
     leaveType: string;
     leaveBalance: number;
     allowNegative: boolean;
@@ -162,6 +243,22 @@ function LeaveRequestsContent() {
     queryKey: ['leave', 'requests', 'details', viewingId],
     queryFn: () => fetch(`/api/leave/requests/${viewingId}/details`).then((r) => r.json()),
     enabled: viewingId !== null,
+  });
+
+  // Ported from LeaveRequestController::deletedoc() — removes one document from the entry.
+  const deleteDocument = useMutation({
+    mutationFn: (docIndex: number) =>
+      fetch(`/api/leave/requests/${viewingId}/document`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ index: docIndex }),
+      }).then(async (r) => {
+        const b = await r.json();
+        if (!r.ok) throw new Error(b.error ?? 'Failed to delete document');
+        return b;
+      }),
+    onSuccess: () => refetchDetails(),
+    onError: (err: Error) => setToast({ message: err.message, type: 'error' }),
   });
 
   const { data, isLoading, refetch } = useQuery<{ data: LeaveRow[] }>({
@@ -190,7 +287,11 @@ function LeaveRequestsContent() {
     onSuccess: (b) => {
       setShowApply(false);
       setForm({ empFkey: '', salaryHeadItemFkey: '', fromDate: '', fromHalf: '1', toDate: '', toHalf: '2', reason: '', contactNo: '', contactPerson: '' });
-      setToast({ message: `Leave applied successfully (${b.leaveDays} day(s))`, type: 'success' });
+      setToast(
+        b.warningMessage
+          ? { message: b.warningMessage, type: 'error' }
+          : { message: `Leave applied successfully (${b.leaveDays} day(s))`, type: 'success' }
+      );
       // The just-submitted leave changes this employee's balance server-side (via
       // leave_transaction_prc) — without this, a cached balance-preview result for the same
       // employee/leaveType/fromDate combination would still show the pre-submit figure the next
@@ -380,8 +481,8 @@ function LeaveRequestsContent() {
       id: 'status',
       header: 'Status',
       cell: ({ row }) => (
-        <span className={cn('px-2 py-0.5 rounded text-[11px] font-medium', STATUS_STYLE[row.original.LEAVESTATUS] ?? 'bg-slate-100 text-slate-700')}>
-          {STATUS_LABEL[row.original.LEAVESTATUS] ?? row.original.LEAVESTATUS}
+        <span className={cn('px-2 py-0.5 rounded text-[11px] font-medium', statusStyle(row.original.LEAVESTATUS))}>
+          {statusLabel(row.original.LEAVESTATUS)}
         </span>
       ),
     },
@@ -436,15 +537,6 @@ function LeaveRequestsContent() {
           slotEl
         )}
 
-      <div className="flex items-center justify-end mb-4">
-        <button
-          onClick={() => setShowApply(true)}
-          className={cn(BTN_BASE, 'bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)] text-white')}
-        >
-          <Plus className="w-3.5 h-3.5" /> Apply Leave
-        </button>
-      </div>
-
       <div className="surface-card rounded-xl px-4 py-2.5 mb-4 flex flex-wrap items-end gap-3">
         <div className="w-[28rem]">
           <label className="block text-[11.5px] font-medium text-slate-500 mb-1">Employee</label>
@@ -452,39 +544,88 @@ function LeaveRequestsContent() {
         </div>
         <div>
           <label className="block text-[11.5px] font-medium text-slate-500 mb-1">Status</label>
-          <select value={status} onChange={(e) => setStatus(e.target.value)} className={INPUT_CLASS}>
-            <option value="">All</option>
-            <option value="Applied">Applied</option>
-            <option value="Authorized">Authorized</option>
-            <option value="Approved">Approved</option>
-            <option value="Rejected">Rejected</option>
-            <option value="Cancelled">Cancelled</option>
-            <option value="CancelledByAdmin">Cancelled by Admin</option>
-            <option value="CancellationOfAuthorized">Cancellation of Authorized</option>
-            <option value="CancellationOfApproved">Cancellation of Approved</option>
-          </select>
+          <SearchableSelect
+            value={status}
+            onChange={setStatus}
+            options={[
+              { value: 'Applied', label: 'Applied' },
+              { value: 'Authorized', label: 'Authorized' },
+              { value: 'Approved', label: 'Approved' },
+              { value: 'Rejected', label: 'Rejected' },
+              { value: 'Cancelled', label: 'Cancelled' },
+              { value: 'CancelledByAdmin', label: 'Cancelled by Admin' },
+              { value: 'CancellationOfAuthorized', label: 'Cancellation of Authorized' },
+              { value: 'CancellationOfApproved', label: 'Cancellation of Approved' },
+              { value: 'Cancellation Authorized', label: 'Cancellation Authorized (legacy)' },
+              { value: 'Cancellation Approved', label: 'Cancellation Approved (legacy)' },
+            ]}
+            placeholder="All"
+            className="min-w-[190px]"
+            buttonClassName="!py-1.5 !text-[12.5px] !rounded-[9px]"
+          />
         </div>
-      </div>
-
-      {selected.size > 0 && (
-        <div className="surface-card rounded-xl px-4 py-2.5 mb-4 flex items-center justify-between">
-          <div className="flex items-center gap-2">
+        <div>
+          <label className="block text-[11.5px] font-medium text-slate-500 mb-1">Template Branch</label>
+          <SearchableSelect
+            value={templateBranch}
+            onChange={(v) => { setTemplateBranch(v); setTemplateEmployee(''); }}
+            options={branches}
+            placeholder="All branches"
+            className="min-w-[170px]"
+            buttonClassName="!py-1.5 !text-[12.5px] !rounded-[9px]"
+          />
+        </div>
+        <a
+          href={`/api/leave/bulk-upload/template?branch=${encodeURIComponent(templateBranch)}&employee=${encodeURIComponent(templateEmployee)}`}
+          className={cn(BTN_BASE, 'bg-white border border-slate-200 hover:bg-slate-50 text-slate-600')}
+        >
+          <Download className="w-3.5 h-3.5" /> Download Template
+        </a>
+        <button
+          onClick={() => fileInputRef.current?.click()}
+          disabled={bulkUpload.isPending}
+          className={cn(BTN_BASE, 'bg-white border border-slate-200 hover:bg-slate-50 text-slate-600')}
+        >
+          <Upload className="w-3.5 h-3.5" /> {bulkUpload.isPending ? 'Uploading…' : 'Upload File'}
+        </button>
+        <input ref={fileInputRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleBulkFileSelected} />
+        <button
+          onClick={() => setShowApply(true)}
+          className={cn(BTN_BASE, 'bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)] text-white ml-auto')}
+        >
+          <Plus className="w-3.5 h-3.5" /> Apply Leave
+        </button>
+        {selected.size > 0 && (
+          <>
             <button
               onClick={() => bulkApprove.mutate([...selected])}
               disabled={bulkApprove.isPending || bulkCancel.isPending}
-              className={cn(BTN_BASE, 'bg-[color:var(--color-success-soft)] text-[color:var(--color-success-dark)] hover:opacity-80')}
+              className={cn(BTN_BASE, 'bg-[color:var(--color-success)]/10 text-[color:var(--color-success-dark)] hover:bg-[color:var(--color-success)]/20')}
             >
-              Approve
+              <Check className="w-3.5 h-3.5" /> Approve ({selected.size})
             </button>
             <button
               onClick={() => bulkCancel.mutate([...selected])}
               disabled={bulkApprove.isPending || bulkCancel.isPending}
-              className={cn(BTN_BASE, 'bg-slate-100 text-slate-600 hover:bg-slate-200')}
+              className={cn(BTN_BASE, 'bg-[color:var(--color-danger)]/10 text-[color:var(--color-danger-dark)] hover:bg-[color:var(--color-danger)]/20')}
             >
-              Cancel
+              <Trash2 className="w-3.5 h-3.5" /> Cancel ({selected.size})
             </button>
+          </>
+        )}
+      </div>
+
+      {uploadResult && uploadResult.errors.length > 0 && (
+        <div className="surface-card rounded-xl px-4 py-2.5 mb-4 text-[12.5px]">
+          <div className="flex items-center justify-between">
+            <span className="font-medium text-[#0F172A]">Skipped rows</span>
+            <button onClick={() => setUploadResult(null)} className="text-slate-400 hover:text-slate-600 text-[11.5px]">Dismiss</button>
           </div>
-          <span className="text-[12.5px] text-slate-500">{selected.size} selected</span>
+          <ul className="mt-2 space-y-0.5 text-[11.5px] text-[color:var(--color-danger)]">
+            {uploadResult.errors.map((err, i) => (
+              <li key={i}>Row {err.row}: {err.message}</li>
+            ))}
+          </ul>
         </div>
       )}
 
@@ -528,9 +669,6 @@ function LeaveRequestsContent() {
                   </div>
                   {!balancePreview.minServiceOk && (
                     <div className="text-[color:var(--color-danger-dark)]">{balancePreview.minServiceMessage}</div>
-                  )}
-                  {balancePreview.balance === 0 && !balancePreview.allowNegative && (
-                    <div className="text-[color:var(--color-danger-dark)]">You have no leave balance!</div>
                   )}
                 </div>
               )}
@@ -703,7 +841,28 @@ function LeaveRequestsContent() {
                   {details.documents.length === 0 ? (
                     <span className="text-[12.5px] text-slate-400">None</span>
                   ) : (
-                    <span className="text-[12.5px] font-medium text-[#0F172A]">{details.documents.map((d) => d.name).join(', ')}</span>
+                    <span className="text-[12.5px] font-medium text-[#0F172A] flex flex-wrap gap-x-2 gap-y-1 justify-end">
+                      {details.documents.map((d, i) => (
+                        <span key={i} className="inline-flex items-center gap-1">
+                          <a
+                            href={d.name}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-[color:var(--color-primary)] hover:underline"
+                          >
+                            {d.type || d.name}
+                          </a>
+                          <button
+                            onClick={() => deleteDocument.mutate(i)}
+                            disabled={deleteDocument.isPending}
+                            title="Remove document"
+                            className="text-slate-400 hover:text-[color:var(--color-danger)] disabled:opacity-40 transition-colors"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </span>
+                      ))}
+                    </span>
                   )}
                 </div>
               </div>
@@ -722,6 +881,7 @@ function LeaveRequestsContent() {
           {toast.message}
         </div>
       )}
+      {alertMessage && <AlertModal message={alertMessage} onClose={() => setAlertMessage(null)} />}
     </div>
   );
 }

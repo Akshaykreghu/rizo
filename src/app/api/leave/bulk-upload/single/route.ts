@@ -1,7 +1,7 @@
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
-import { checkAttendancePunches, checkAttendanceRegisterRangeVerified, runLeaveTransaction } from '@/lib/leave';
+import { attendancePunchConflictMessage, checkAttendancePunches, checkAttendanceRegisterRangeVerified, isLeaveTransactionFailure, runLeaveTransaction } from '@/lib/leave';
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket, ResultSetHeader } from 'mysql2';
 
@@ -69,13 +69,10 @@ export async function POST(request: NextRequest) {
   // Punch conflict (controller.php:304-317), half-day-aware.
   const conflictMask = await checkAttendancePunches(pool, empFkey, fromDate, toDate, fromHalf, toHalf);
   if (conflictMask) {
-    const msg =
-      conflictMask === 1
-        ? 'Leave cannot be applied, attendance exists for the first half. Apply leave for next halves'
-        : conflictMask === 2
-          ? 'Leave cannot be applied, attendance exists for the second half. Apply leave for next halves'
-          : 'Leave cannot be applied, attendance exists for full day';
-    return NextResponse.json({ success: false, error: msg }, { status: 409 });
+    return NextResponse.json(
+      { success: false, error: attendancePunchConflictMessage(conflictMask, 'save') },
+      { status: 409 }
+    );
   }
 
   // Boundary-spanning verified-month check (controller.php:320-353).
@@ -114,6 +111,14 @@ export async function POST(request: NextRequest) {
     leaveEntryId, empFkey, fromDate, fromHalf, toDate, toHalf, leaveDays, status: 'Applied',
   });
 
+  // Same warningMessage behavior as the Leave Requests apply path (api/leave/requests/route.ts) —
+  // when the proc rejects (e.g. a range that falls entirely on week-off/holiday days), the row
+  // isn't rolled back, but the specific reason (leaveentries.message, the proc's own text) is
+  // surfaced instead of a silent success.
+  const warningMessage = isLeaveTransactionFailure(applied.finalStatus)
+    ? (applied.leaveMessage || applied.finalStatus)
+    : null;
+
   // Approve step only proceeds if the proc's Applied call didn't itself divert the status
   // elsewhere (matches legacy's `if ($arr_leave_details_old['LEAVESTATUS'] == 'Applied')` guard).
   if (applied.finalStatus === 'Applied') {
@@ -141,5 +146,5 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  return NextResponse.json({ success: true, leaveDays });
+  return NextResponse.json({ success: true, leaveDays, warningMessage });
 }

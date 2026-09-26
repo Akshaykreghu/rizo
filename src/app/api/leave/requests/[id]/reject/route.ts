@@ -34,8 +34,17 @@ export async function POST(
     return NextResponse.json({ error: `Cannot reject a request in status '${entry.LEAVESTATUS}'` }, { status: 409 });
   }
 
+  // Ported from grandLeave()'s plain-Reject branch (controller.php:2712-2723): stamps
+  // Autherized_date when rejecting from 'Applied', otherwise APPROVED_date — and always stamps
+  // APPROVED_date when the same person is both authorizer and approver for this request.
+  const sameActor = entry.ISAutherizedby != null && entry.ISAutherizedby === entry.APPROVEDBY;
+  const stampAuthorizedDate = entry.LEAVESTATUS === 'Applied';
   await pool.execute(
-    `UPDATE leaveentries SET LEAVESTATUS = 'Rejected', REMARKS = ? WHERE LEAVEENTRYID = ?`,
+    `UPDATE leaveentries SET
+       LEAVESTATUS = 'Rejected', REMARKS = ?,
+       Autherized_date = ${stampAuthorizedDate ? 'CURDATE()' : 'Autherized_date'},
+       APPROVED_date = ${!stampAuthorizedDate || sameActor ? 'CURDATE()' : 'APPROVED_date'}
+     WHERE LEAVEENTRYID = ?`,
     [remarks, id]
   );
 

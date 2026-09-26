@@ -21,7 +21,8 @@ export async function GET(
 
   const [[entry]] = await pool.execute<RowDataPacket[]>(
     `SELECT le.LEAVEENTRYID, le.EMP_fkey, le.salary_head_item_fkey, le.LEAVESTATUS, le.Reason,
-            le.FROMDATE, le.TODATE, le.file_name, le.file_type, shi.item AS leave_type
+            le.FROMDATE, le.TODATE, le.file_name, le.file_type, le.ISAutherizedby, le.APPROVEDBY,
+            shi.item AS leave_type
      FROM leaveentries le
      LEFT JOIN salary_head_items shi ON shi.salary_head_item_pkey = le.salary_head_item_fkey
      WHERE le.LEAVEENTRYID = ?`,
@@ -29,8 +30,12 @@ export async function GET(
   );
   if (!entry) return NextResponse.json({ error: 'Leave request not found' }, { status: 404 });
 
-  // Self-service may only view their own leave; admin can view any.
-  if (session.user.userGroup !== 1 && session.user.empFkey !== entry.EMP_fkey) {
+  // Viewable by admin, the leave's own employee, or whichever hierarchy authorizer/approver this
+  // request is routed to (the ESS Approvals queue reviews someone else's leave, same as the admin
+  // Leave Requests page already can).
+  const isOwnLeave = session.user.empFkey === entry.EMP_fkey;
+  const isAssignedReviewer = session.user.empFkey === entry.ISAutherizedby || session.user.empFkey === entry.APPROVEDBY;
+  if (session.user.userGroup !== 1 && !isOwnLeave && !isAssignedReviewer) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 

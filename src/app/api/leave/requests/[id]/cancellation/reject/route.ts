@@ -37,7 +37,13 @@ export async function POST(
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
-  await pool.execute(`UPDATE leaveentries SET LEAVESTATUS = ? WHERE LEAVEENTRYID = ?`, [revertTo, id]);
+  // Ported from grandLeave()'s Reject-of-cancellation branches (controller.php:2673-2700): both
+  // CancellationOfAuthorized->Authorized and CancellationOfApproved->Approved also stamp
+  // APPROVED_date and ISAPPROVED=1, not just the status column.
+  await pool.execute(
+    `UPDATE leaveentries SET LEAVESTATUS = ?, APPROVED_date = CURDATE(), ISAPPROVED = 1 WHERE LEAVEENTRYID = ?`,
+    [revertTo, id]
+  );
 
   const { finalStatus, errorMessage } = await runLeaveTransaction(pool, {
     leaveEntryId: entry.LEAVEENTRYID, empFkey: entry.EMP_fkey, fromDate: toISODate(entry.FROMDATE),

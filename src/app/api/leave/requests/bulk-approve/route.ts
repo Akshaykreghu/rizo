@@ -10,6 +10,15 @@ import type { RowDataPacket } from 'mysql2';
 // single apply/save path checks attendance_register.isdelete='N'): a row whose month is already
 // attendance-verified is skipped rather than approved, and reported back rather than silently
 // dropped.
+//
+// A row already in CancellationOfApproved/CancellationOfAuthorized (an employee-initiated pending
+// cancellation awaiting review) is routed to the SAME transition .../cancellation/approve uses
+// (-> 'Cancelled'), not approveleave()'s literal unconditional 'Approved' — reusing the admin bulk
+// "Approve" button to silently dismiss a pending cancellation and land on 'Approved' would make the
+// word "Approve" mean opposite things depending on which button happened to be clicked, which is the
+// actual bug this project decision fixes (2026-09-26): "Approve" on a pending cancellation always
+// means approving that cancellation, consistent with the hierarchy reviewer's own Confirm
+// Cancellation action.
 export async function POST(request: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session || session.user.userGroup !== 1) {
@@ -41,10 +50,6 @@ export async function POST(request: NextRequest) {
       continue;
     }
     const employeeName = (entry.employee_name ?? '').trim();
-    if (entry.LEAVESTATUS !== 'Applied' && entry.LEAVESTATUS !== 'Authorized') {
-      skipped.push({ id, employeeName, reason: `Cannot approve a request in status '${entry.LEAVESTATUS}'` });
-      continue;
-    }
 
     const fromDate = toISODate(entry.FROMDATE);
     const toDate = toISODate(entry.TODATE);
@@ -54,21 +59,32 @@ export async function POST(request: NextRequest) {
       continue;
     }
 
-    const skippingAuthorize = entry.LEAVESTATUS === 'Applied';
-    await pool.execute(
-      `UPDATE leaveentries SET
-         ISAutherized = ${skippingAuthorize ? '1' : 'ISAutherized'},
-         Autherized_date = ${skippingAuthorize ? 'CURDATE()' : 'Autherized_date'},
-         ISAPPROVED = 1, APPROVED_date = CURDATE(), LEAVESTATUS = 'Approved'
-       WHERE LEAVEENTRYID = ?`,
-      [id]
-    );
+    const isPendingCancellation = entry.LEAVESTATUS === 'CancellationOfApproved' || entry.LEAVESTATUS === 'CancellationOfAuthorized';
 
-    await runLeaveTransaction(pool, {
-      leaveEntryId: entry.LEAVEENTRYID, empFkey: entry.EMP_fkey, fromDate,
-      fromHalf: entry.FROMHALF, toDate, toHalf: entry.TOHALF,
-      leaveDays: Number(entry.leave_days), status: 'Approved',
-    });
+    if (isPendingCancellation) {
+      await pool.execute(`UPDATE leaveentries SET LEAVESTATUS = 'Cancelled' WHERE LEAVEENTRYID = ?`, [id]);
+      await runLeaveTransaction(pool, {
+        leaveEntryId: entry.LEAVEENTRYID, empFkey: entry.EMP_fkey, fromDate,
+        fromHalf: entry.FROMHALF, toDate, toHalf: entry.TOHALF,
+        leaveDays: Number(entry.leave_days), status: 'Cancelled',
+      });
+    } else {
+      const skippingAuthorize = entry.LEAVESTATUS === 'Applied';
+      await pool.execute(
+        `UPDATE leaveentries SET
+           ISAutherized = ${skippingAuthorize ? '1' : 'ISAutherized'},
+           Autherized_date = ${skippingAuthorize ? 'CURDATE()' : 'Autherized_date'},
+           ISAPPROVED = 1, APPROVED_date = CURDATE(), LEAVESTATUS = 'Approved'
+         WHERE LEAVEENTRYID = ?`,
+        [id]
+      );
+
+      await runLeaveTransaction(pool, {
+        leaveEntryId: entry.LEAVEENTRYID, empFkey: entry.EMP_fkey, fromDate,
+        fromHalf: entry.FROMHALF, toDate, toHalf: entry.TOHALF,
+        leaveDays: Number(entry.leave_days), status: 'Approved',
+      });
+    }
 
     approved.push(id);
   }

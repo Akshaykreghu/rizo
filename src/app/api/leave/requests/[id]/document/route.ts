@@ -46,3 +46,49 @@ export async function POST(
 
   return NextResponse.json({ success: true });
 }
+
+// Ported from LeaveRequestController::deletedoc() (controller.php:5627-5641) — removes one document
+// from the comma-joined file_name/file_type lists. Legacy does this with a crude str_replace of the
+// raw path/display-name substring out of the whole string, which can leave a stray comma or match
+// the wrong entry if a display name repeats; reimplemented here by index (split on comma, drop that
+// position, rejoin) for the same net effect without that fragility.
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const session = await getServerSession(authOptions);
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const { id } = await params;
+  const body = await request.json().catch(() => ({}));
+  const { index } = body as { index?: number };
+  if (index == null || index < 0) {
+    return NextResponse.json({ error: 'index is required' }, { status: 400 });
+  }
+
+  const pool = await getCompanyPool(session.user.companyCode);
+
+  const [[entry]] = await pool.execute<RowDataPacket[]>(
+    'SELECT EMP_fkey, file_name, file_type FROM leaveentries WHERE LEAVEENTRYID = ?',
+    [id]
+  );
+  if (!entry) return NextResponse.json({ error: 'Leave request not found' }, { status: 404 });
+  if (session.user.userGroup !== 1 && session.user.empFkey !== entry.EMP_fkey) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
+
+  const names = (entry.file_name ?? '').split(',');
+  const types = (entry.file_type ?? '').split(',');
+  if (index >= names.length) {
+    return NextResponse.json({ error: 'No document at that index' }, { status: 404 });
+  }
+  names.splice(index, 1);
+  types.splice(index, 1);
+
+  await pool.execute(
+    'UPDATE leaveentries SET file_name = ?, file_type = ? WHERE LEAVEENTRYID = ?',
+    [names.join(','), types.join(','), id]
+  );
+
+  return NextResponse.json({ success: true });
+}

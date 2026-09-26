@@ -110,39 +110,49 @@ export async function getAuthorizerApprover(
   };
 }
 
-// Attendance-conflict guard ported from checkAttendancePunches()/the attendance-verified block in
-// grandLeave(): blocks if real attendance (present punches) already exists for the date range, or if
-// the employee's attendance is already verified (locked) for that month.
-export async function checkAttendanceConflict(
+// Ported from saveLeaveEntry()'s existing-leave-overlap guard (controller.php:1994-2029) — a real
+// hard block (not merely a warning) on the main apply path, missing from our port. Legacy's own
+// query has a real quirk, reproduced literally: the first check only keys off FROMHALF (matching
+// session (1,3) or (2,3), TOHALF is never consulted there), and only re-checks a narrower single-
+// session query when that first count comes back 0 AND the request is itself a single-session
+// half-day (FROMHALF==TOHALF). Scoped to the SAME employee's own leaveentries, matching legacy.
+export async function checkExistingLeaveOverlap(
   pool: Pool,
   empFkey: number,
   fromDate: string,
-  toDate: string
+  toDate: string,
+  fromHalf: number,
+  toHalf: number
 ): Promise<string | null> {
-  const [[verified]] = await pool.execute<RowDataPacket[]>(
-    `SELECT isdelete FROM attendance_register WHERE emp_fkey = ? AND month_year = ? LIMIT 1`,
-    [empFkey, fromDate.slice(0, 7)]
+  const sessions = fromHalf === 1 ? [1, 3] : [2, 3];
+  const [[row]] = await pool.query<RowDataPacket[]>(
+    `SELECT COUNT(*) AS cnt FROM emp_leave_transactions
+     WHERE leave_date BETWEEN ? AND ? AND leave_session IN (?, ?)
+       AND Leavestatus IN ('Applied', 'Approved', 'Authorized')
+       AND LEAVEENTRYID IN (SELECT LEAVEENTRYID FROM leaveentries WHERE EMP_fkey = ?)`,
+    [fromDate, toDate, sessions[0], sessions[1], empFkey]
   );
-  if (verified?.isdelete === 'N') {
-    return 'Attendance is already verified for this month — leave cannot be applied against a locked period';
+  let count = Number(row?.cnt ?? 0);
+
+  if (count === 0 && fromHalf === toHalf) {
+    const [[row1]] = await pool.query<RowDataPacket[]>(
+      `SELECT COUNT(*) AS cnt FROM emp_leave_transactions
+       WHERE leave_date BETWEEN ? AND ? AND leave_session = ?
+         AND Leavestatus IN ('Applied', 'Approved', 'Authorized')
+         AND LEAVEENTRYID IN (SELECT LEAVEENTRYID FROM leaveentries WHERE EMP_fkey = ?)`,
+      [fromDate, toDate, fromHalf, empFkey]
+    );
+    count = Number(row1?.cnt ?? 0);
   }
 
-  const [[punched]] = await pool.execute<RowDataPacket[]>(
-    `SELECT COUNT(*) AS cnt FROM emp_detail_timeattandance
-     WHERE emp_pkey = ? AND att_date BETWEEN ? AND ? AND present LIKE 'P/%'`,
-    [empFkey, fromDate, toDate]
-  );
-  if (Number(punched?.cnt ?? 0) > 0) {
-    return 'Real attendance punches already exist for one or more of these dates';
-  }
-  return null;
+  return count > 0 ? `Leave already existing in the range ${fromDate} - ${toDate}. Please remove it, before applying.` : null;
 }
 
 // Ported from EmployeeLeaveUploadController::uploadandsaveempctc()'s bulk-path attendance check
-// (controller.php:1566) — deliberately narrower than checkAttendanceConflict above: only the
-// verified-register-for-start-month check, no real-punch check. Legacy's bulk path never checks
-// emp_detail_timeattandance at all. Kept separate (not merged into checkAttendanceConflict) so the
-// single-apply/manual-add paths keep their stricter check while bulk upload stays literal-parity.
+// (controller.php:1566) — deliberately narrower than checkAttendanceRegisterRangeVerified below:
+// only the verified-register-for-start-month check, no boundary-spanning/real-punch check. Legacy's
+// bulk path never checks emp_detail_timeattandance at all. Kept separate so the single-apply/manual-
+// add paths keep their stricter check while bulk upload stays literal-parity.
 export async function checkAttendanceRegisterVerified(
   pool: Pool,
   empFkey: number,
@@ -213,8 +223,8 @@ export async function checkAttendanceRegisterRangeVerified(
 
 // Ported from checkAttendancePunches() (controller.php:2515) — used by the manual single-add path
 // (leavesave()). Returns a bitmask: 1 = first-half punch conflict, 2 = second-half, 3 = both/full-day.
-// Distinct from checkAttendanceConflict's simple "any punch in range" check because legacy's manual
-// path is half-day-aware (it lets you apply for the half of a day that has no punch).
+// Half-day-aware: it lets you apply for the half of a day that has no punch, rather than blocking on
+// any punch anywhere in the range.
 export async function checkAttendancePunches(
   pool: Pool,
   empFkey: number,
@@ -258,6 +268,21 @@ export async function checkAttendancePunches(
     if (checkSecondHalf && secondHalfPresent) conflictMask |= 2;
   }
   return conflictMask;
+}
+
+// Two different wordings for the same bitmask, matching legacy exactly: criterias() (the balance
+// preview, called as the employee is still filling the form) says "please remove it before
+// applying"; saveLeaveEntry()/the bulk single-add path (called at actual save time) says "cannot be
+// applied ... apply leave for next halves".
+export function attendancePunchConflictMessage(conflictMask: number, stage: 'preview' | 'save'): string {
+  if (stage === 'preview') {
+    if (conflictMask === 1) return 'Attendance already existing for the first half. Please remove it, before applying.';
+    if (conflictMask === 2) return 'Attendance already existing for the second half. Please remove it, before applying.';
+    return 'Attendance already existing for full day. Please remove it, before applying.';
+  }
+  if (conflictMask === 1) return 'Leave cannot be applied, attendance exists for the first half. Apply leave for next halves';
+  if (conflictMask === 2) return 'Leave cannot be applied, attendance exists for the second half. Apply leave for next halves';
+  return 'Leave cannot be applied, attendance exists for full day';
 }
 
 const RESTRICTED_BALANCE_COMPANIES = [
@@ -325,7 +350,7 @@ export async function runLeaveTransaction(
     leaveDays: number;
     status: string;
   }
-): Promise<{ finalStatus: string; errorMessage: string | null }> {
+): Promise<{ finalStatus: string; errorMessage: string | null; leaveMessage: string | null }> {
   // MySQL session variables (@err) are per-connection. Every caller here was passing the shared
   // Pool directly — each `.query()` on a Pool can be served by a different pooled connection, so
   // the CALL, the `SELECT @err`, and (in principle) the proc's own internal session state were not
@@ -339,11 +364,18 @@ export async function runLeaveTransaction(
       entry.toDate, entry.toHalf, entry.leaveDays, entry.status,
     ]);
     const [[errRow]] = await dedicated.query<RowDataPacket[]>('SELECT @err AS err');
+    // Ported from saveLeaveEntry()'s `if (!$out)` branch (controller.php:2139-2150) — legacy reads
+    // leaveentries.message (a real column the proc itself writes, e.g. the specific weekoff/holiday
+    // reason a 0-days rejection came from), NOT @Perror_message, as the text shown to the user.
     const [[statusRow]] = await dedicated.query<RowDataPacket[]>(
-      'SELECT LEAVESTATUS FROM leaveentries WHERE LEAVEENTRYID = ?',
+      'SELECT LEAVESTATUS, message FROM leaveentries WHERE LEAVEENTRYID = ?',
       [entry.leaveEntryId]
     );
-    return { finalStatus: statusRow?.LEAVESTATUS ?? entry.status, errorMessage: errRow?.err ?? null };
+    return {
+      finalStatus: statusRow?.LEAVESTATUS ?? entry.status,
+      errorMessage: errRow?.err ?? null,
+      leaveMessage: statusRow?.message || null,
+    };
   } finally {
     if (isPool) (dedicated as PoolConnection).release();
   }

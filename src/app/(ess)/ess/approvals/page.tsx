@@ -104,10 +104,64 @@ const ACTION_ENDPOINT: Record<Action, string> = {
   rejectCancellation: 'cancellation/reject',
 };
 
+interface LeaveDetails {
+  leaveType: string; leaveBalance: number; allowNegative: boolean; isSandwich: boolean;
+  reason: string | null; status: string;
+  transactions: { leaveDate: string; status: string; remarks: string | null }[];
+  documents: { name: string; type: string }[];
+}
+
+// Same source the admin Leave Requests details modal and the employee's own Leave tab use — full
+// context (balance, per-day breakdown, documents) for whoever is about to authorize/approve/reject,
+// not just the one-line summary the action modals showed before.
+function useLeaveDetails(leaveEntryId: number) {
+  const [details, setDetails] = useState<LeaveDetails | null>(null);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    setLoading(true);
+    fetch(`/api/leave/requests/${leaveEntryId}/details`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then(setDetails)
+      .finally(() => setLoading(false));
+  }, [leaveEntryId]);
+  return { details, loading };
+}
+
+function LeaveDetailsPanel({ row, details, loading }: { row: LeaveRow; details: LeaveDetails | null; loading: boolean }) {
+  if (loading) return <div style={{ fontSize: 12.5, color: 'var(--text-muted)', marginBottom: 14 }}>Loading details…</div>;
+  if (!details) return null;
+  return (
+    <div style={{ background: 'var(--bg-page)', border: '1px solid var(--border)', borderRadius: 10, padding: '10px 12px', marginBottom: 14, fontSize: 12.5 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 12px', marginBottom: details.reason || details.documents.length > 0 ? 8 : 0 }}>
+        <div><span style={{ color: 'var(--text-muted)' }}>Leave Balance:</span> <strong>{details.leaveBalance}</strong></div>
+        <div><span style={{ color: 'var(--text-muted)' }}>Sandwich Leave:</span> <strong>{details.isSandwich ? 'Yes' : 'No'}</strong></div>
+      </div>
+      {details.reason && (
+        <div style={{ marginBottom: details.documents.length > 0 ? 8 : 0 }}>
+          <span style={{ color: 'var(--text-muted)' }}>Reason:</span> {details.reason}
+        </div>
+      )}
+      {details.documents.length > 0 && (
+        <div>
+          <span style={{ color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>Documents:</span>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            {details.documents.map((d, i) => (
+              <a key={i} href={d.name} target="_blank" rel="noopener noreferrer" style={{ color: BRAND, fontWeight: 700, textDecoration: 'none' }}>
+                {d.type || d.name}
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function RemarkModal({ row, action, onClose, onDone }: { row: LeaveRow; action: Action; onClose: () => void; onDone: () => void }) {
   const [remark, setRemark] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { details, loading: detailsLoading } = useLeaveDetails(row.LEAVEENTRYID);
 
   const labels: Record<Action, string> = {
     authorize: 'Authorize', approve: 'Approve', reject: 'Reject',
@@ -140,11 +194,12 @@ function RemarkModal({ row, action, onClose, onDone }: { row: LeaveRow; action: 
 
   return essPortal(
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.35)', backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: 'var(--bg-card)', borderRadius: 14, padding: 28, width: 420, maxWidth: '95vw', maxHeight: '90vh', overflowY: 'auto', boxSizing: 'border-box', boxShadow: '0 8px 40px rgba(0,0,0,0.18)' }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: 'var(--bg-card)', borderRadius: 14, padding: 28, width: 480, maxWidth: '95vw', maxHeight: '90vh', overflowY: 'auto', boxSizing: 'border-box', boxShadow: '0 8px 40px rgba(0,0,0,0.18)' }}>
         <h3 style={{ margin: '0 0 6px', color: BRAND, fontSize: 16, fontWeight: 800 }}>{labels[action]} Leave Request</h3>
-        <p style={{ margin: '0 0 16px', fontSize: 13, color: 'var(--text-muted)' }}>
+        <p style={{ margin: '0 0 10px', fontSize: 13, color: 'var(--text-muted)' }}>
           {row.first_name} {row.last_name} · {row.leave_type} · {row.FROMDATE.slice(0, 10)} – {row.TODATE.slice(0, 10)} ({row.leave_days}d)
         </p>
+        <LeaveDetailsPanel row={row} details={details} loading={detailsLoading} />
         <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 6 }}>
           {needsRemark ? 'Reason for rejection *' : 'Remarks (optional)'}
         </label>
@@ -171,6 +226,7 @@ function RemarkModal({ row, action, onClose, onDone }: { row: LeaveRow; action: 
 function CancellationModal({ row, action, onClose, onDone }: { row: LeaveRow; action: 'confirm' | 'reject'; onClose: () => void; onDone: () => void }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { details, loading: detailsLoading } = useLeaveDetails(row.LEAVEENTRYID);
 
   const endpoint = action === 'confirm' ? 'cancellation/approve' : 'cancellation/reject';
   const label = action === 'confirm' ? 'Confirm Cancellation' : 'Keep Leave Active';
@@ -195,13 +251,14 @@ function CancellationModal({ row, action, onClose, onDone }: { row: LeaveRow; ac
 
   return essPortal(
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.35)', backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: 'var(--bg-card)', borderRadius: 14, padding: 28, width: 420, maxWidth: '95vw', maxHeight: '90vh', overflowY: 'auto', boxSizing: 'border-box', boxShadow: '0 8px 40px rgba(0,0,0,0.18)' }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: 'var(--bg-card)', borderRadius: 14, padding: 28, width: 480, maxWidth: '95vw', maxHeight: '90vh', overflowY: 'auto', boxSizing: 'border-box', boxShadow: '0 8px 40px rgba(0,0,0,0.18)' }}>
         <h3 style={{ margin: '0 0 6px', color: BRAND, fontSize: 16, fontWeight: 800 }}>
           {action === 'confirm' ? 'Confirm Leave Cancellation' : 'Reject Leave Cancellation'}
         </h3>
         <p style={{ margin: '0 0 10px', fontSize: 13, color: 'var(--text-muted)' }}>
           {row.first_name} {row.last_name} · {row.leave_type} · {row.FROMDATE.slice(0, 10)} – {row.TODATE.slice(0, 10)} ({row.leave_days}d)
         </p>
+        <LeaveDetailsPanel row={row} details={details} loading={detailsLoading} />
         <p style={{ margin: 0, fontSize: 12.5, color: 'var(--text-primary)' }}>
           {action === 'confirm'
             ? 'This cancels the leave and restores the employee’s leave balance.'

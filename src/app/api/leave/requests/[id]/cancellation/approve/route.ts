@@ -36,7 +36,12 @@ export async function POST(
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
-  await pool.execute(`UPDATE leaveentries SET LEAVESTATUS = 'Cancelled' WHERE LEAVEENTRYID = ?`, [id]);
+  // Ported from grandLeave()'s 'Cancelled' branch (controller.php:2796-2804): also stamps
+  // APPROVED_date and ISAPPROVED=1, not just the status column.
+  await pool.execute(
+    `UPDATE leaveentries SET LEAVESTATUS = 'Cancelled', APPROVED_date = CURDATE(), ISAPPROVED = 1 WHERE LEAVEENTRYID = ?`,
+    [id]
+  );
 
   const { finalStatus, errorMessage } = await runLeaveTransaction(pool, {
     leaveEntryId: entry.LEAVEENTRYID, empFkey: entry.EMP_fkey, fromDate: toISODate(entry.FROMDATE),

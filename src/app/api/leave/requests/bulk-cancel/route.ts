@@ -9,6 +9,13 @@ import type { RowDataPacket } from 'mysql2';
 // checkbox-grid bulk action (which always sets 'CancelledByAdmin', matching our single-row admin
 // cancel), plus the same new attendance-verified safeguard as bulk-approve: a row whose month is
 // already attendance-verified is skipped rather than cancelled, and reported back.
+//
+// A row already in CancellationOfApproved/CancellationOfAuthorized (an employee-initiated pending
+// cancellation awaiting review) is routed to the SAME transition .../cancellation/reject uses
+// (revert to Approved/Authorized), not deleteleave()'s literal unconditional 'CancelledByAdmin' —
+// same reasoning as bulk-approve's own carve-out: on a pending cancellation, admin's "Cancel" button
+// means "keep the leave active, decline the cancellation," matching the hierarchy reviewer's own
+// Keep Leave action (project decision, 2026-09-26), not a second, contradictory way to end the leave.
 export async function POST(request: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session || session.user.userGroup !== 1) {
@@ -40,10 +47,6 @@ export async function POST(request: NextRequest) {
       continue;
     }
     const employeeName = (entry.employee_name ?? '').trim();
-    if (!['Applied', 'Authorized', 'Approved'].includes(entry.LEAVESTATUS)) {
-      skipped.push({ id, employeeName, reason: `Cannot cancel a request in status '${entry.LEAVESTATUS}'` });
-      continue;
-    }
 
     const fromDate = toISODate(entry.FROMDATE);
     const toDate = toISODate(entry.TODATE);
@@ -53,16 +56,28 @@ export async function POST(request: NextRequest) {
       continue;
     }
 
-    await pool.execute(`UPDATE leaveentries SET LEAVESTATUS = 'Cancelled' WHERE LEAVEENTRYID = ?`, [id]);
+    const isPendingCancellation = entry.LEAVESTATUS === 'CancellationOfApproved' || entry.LEAVESTATUS === 'CancellationOfAuthorized';
 
-    // leave_transaction_prc only recognizes legacy's real status names — run it as 'Cancelled' so
-    // its balance-restoration/cleanup logic executes, then relabel for the admin-cancel outcome.
-    await runLeaveTransaction(pool, {
-      leaveEntryId: entry.LEAVEENTRYID, empFkey: entry.EMP_fkey, fromDate,
-      fromHalf: entry.FROMHALF, toDate, toHalf: entry.TOHALF,
-      leaveDays: Number(entry.leave_days), status: 'Cancelled',
-    });
-    await pool.execute(`UPDATE leaveentries SET LEAVESTATUS = 'CancelledByAdmin' WHERE LEAVEENTRYID = ?`, [id]);
+    if (isPendingCancellation) {
+      const revertTo = entry.LEAVESTATUS === 'CancellationOfAuthorized' ? 'Authorized' : 'Approved';
+      await pool.execute(`UPDATE leaveentries SET LEAVESTATUS = ? WHERE LEAVEENTRYID = ?`, [revertTo, id]);
+      await runLeaveTransaction(pool, {
+        leaveEntryId: entry.LEAVEENTRYID, empFkey: entry.EMP_fkey, fromDate,
+        fromHalf: entry.FROMHALF, toDate, toHalf: entry.TOHALF,
+        leaveDays: Number(entry.leave_days), status: revertTo,
+      });
+    } else {
+      await pool.execute(`UPDATE leaveentries SET LEAVESTATUS = 'Cancelled' WHERE LEAVEENTRYID = ?`, [id]);
+
+      // leave_transaction_prc only recognizes legacy's real status names — run it as 'Cancelled' so
+      // its balance-restoration/cleanup logic executes, then relabel for the admin-cancel outcome.
+      await runLeaveTransaction(pool, {
+        leaveEntryId: entry.LEAVEENTRYID, empFkey: entry.EMP_fkey, fromDate,
+        fromHalf: entry.FROMHALF, toDate, toHalf: entry.TOHALF,
+        leaveDays: Number(entry.leave_days), status: 'Cancelled',
+      });
+      await pool.execute(`UPDATE leaveentries SET LEAVESTATUS = 'CancelledByAdmin' WHERE LEAVEENTRYID = ?`, [id]);
+    }
 
     cancelled.push(id);
   }
