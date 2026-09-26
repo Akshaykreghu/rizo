@@ -78,11 +78,18 @@ export async function GET(request: NextRequest) {
     }
   }
 
+  // downloadempattendanceformat() emits TWO rows per employee — one with Direction pre-filled "in",
+  // one "out" — both carrying the same date/status pre-fill, so the admin only has to overwrite the
+  // date cells with actual punch times rather than also having to type the direction or duplicate
+  // rows by hand.
   const headers = ['Employee ID *', 'Employee Name', 'Direction * (in/out)', ...dates];
-  const rows = employees.map((e) => {
+  const rows = employees.flatMap((e) => {
     const register = registerByEmp.get(e.emp_pkey);
     const dateValues = dates.map((_, i) => (register?.[FIELD_COLUMNS[i]] ?? '').toString().trim());
-    return [e.user_id, e.emp_name, '', ...dateValues];
+    return [
+      [e.user_id, e.emp_name, 'in', ...dateValues],
+      [e.user_id, e.emp_name, 'out', ...dateValues],
+    ];
   });
 
   const worksheet = XLSX.utils.aoa_to_sheet([headers, ...rows]);

@@ -375,13 +375,15 @@ export default function AttendanceRegisterPage() {
             Verified
           </button>
         </div>
-        <button
-          onClick={() => setShowSummaryCols((v) => !v)}
-          className="flex items-center gap-1.5 border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 px-3 py-1.5 rounded-[9px] text-[12.5px] font-medium transition-colors"
-        >
-          {showSummaryCols ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-          {showSummaryCols ? 'Hide Summary Columns' : 'Show Summary Columns'}
-        </button>
+        {rows.length > 0 && (
+          <button
+            onClick={() => setShowSummaryCols((v) => !v)}
+            className="flex items-center gap-1.5 border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 px-3 py-1.5 rounded-[9px] text-[12.5px] font-medium transition-colors"
+          >
+            {showSummaryCols ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+            {showSummaryCols ? 'Hide Summary Columns' : 'Show Summary Columns'}
+          </button>
+        )}
 
         {tab === 'verified' && rows.length > 0 && (
           <div className="ml-auto flex items-center gap-2 text-[12.5px] text-slate-500">
@@ -814,12 +816,14 @@ function DayEditor({
                     key={c}
                     onClick={() => setPendingStatus({ half, status: c })}
                     disabled={saving || leaveConflict}
-                    className="text-[13px] font-medium px-3.5 py-[7px] rounded-[9px] border disabled:opacity-40 transition-all duration-150"
+                    className="text-[13px] font-medium px-3.5 py-[7px] rounded-[9px] border disabled:opacity-40 transition-all duration-150 enabled:hover:-translate-y-px enabled:hover:shadow-sm"
                     style={{
                       backgroundColor: hexToRgba(color.bg, isSelected ? 0.16 : 0.08),
                       color: color.bg,
                       borderColor: isSelected ? hexToRgba(color.bg, 0.5) : 'transparent',
                     }}
+                    onMouseEnter={(e) => { if (!isSelected) e.currentTarget.style.backgroundColor = hexToRgba(color.bg, 0.14); }}
+                    onMouseLeave={(e) => { if (!isSelected) e.currentTarget.style.backgroundColor = hexToRgba(color.bg, 0.08); }}
                   >
                     {c}
                   </button>
@@ -832,12 +836,14 @@ function DayEditor({
                     key={lo.salary_head_item_fkey}
                     onClick={() => setPendingStatus({ half, status: lo.code, salaryHeadItemFkey: lo.salary_head_item_fkey })}
                     disabled={saving || leaveConflict || (!lo.isIndirect && lo.balance <= 0)}
-                    className="text-[13px] font-medium px-3.5 py-[7px] rounded-[9px] border disabled:opacity-40 transition-all duration-150"
+                    className="text-[13px] font-medium px-3.5 py-[7px] rounded-[9px] border disabled:opacity-40 transition-all duration-150 enabled:hover:-translate-y-px enabled:hover:shadow-sm"
                     style={{
                       backgroundColor: hexToRgba('#8b5cf6', isSelected ? 0.16 : 0.08),
                       color: '#7041d8',
                       borderColor: isSelected ? 'rgba(139, 92, 246, 0.5)' : 'transparent',
                     }}
+                    onMouseEnter={(e) => { if (!isSelected) e.currentTarget.style.backgroundColor = hexToRgba('#8b5cf6', 0.14); }}
+                    onMouseLeave={(e) => { if (!isSelected) e.currentTarget.style.backgroundColor = hexToRgba('#8b5cf6', 0.08); }}
                   >
                     {lo.code} <span className="opacity-60 font-normal">({lo.balance})</span>
                   </button>
@@ -1004,6 +1010,7 @@ function DayEditor({
                           onClick={() => setStagedPunches((prev) => prev.filter((_, idx) => idx !== i))}
                           disabled={isSaving}
                           aria-label="Remove staged punch"
+                          title="Remove"
                           className="w-6 h-6 rounded-full flex items-center justify-center text-[#86868B] hover:text-[color:var(--color-danger)] hover:bg-[color:var(--color-danger)]/10 disabled:opacity-40 transition-colors duration-150"
                         >
                           <X className="w-3.5 h-3.5" />

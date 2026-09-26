@@ -4,11 +4,12 @@ import { useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useSetupOptions } from '@/lib/setupOptions';
-import { Download, Upload, Trash2 } from 'lucide-react';
+import { Download, Upload, Trash2, Plus, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
 import { TableSkeleton } from '@/components/ui/Skeleton';
 import { SearchableSelect } from '@/components/ui/SearchableSelect';
+import { TimePicker } from '@/components/ui/TimePicker';
 import { recentMonthOptions } from '@/lib/attendance';
 
 // Ports EmployeeAttendanceUploadController's upload/list/delete screen. See
@@ -42,6 +43,9 @@ export default function AttendanceUploadPage() {
   const [empFkey, setEmpFkey] = useState('');
   const [result, setResult] = useState<UploadResult | null>(null);
   const [checked, setChecked] = useState<Set<number>>(new Set());
+  const [showAdd, setShowAdd] = useState(false);
+  const [addForm, setAddForm] = useState({ empFkey: '', date: '', inTime: '09:00:00', outTime: '18:00:00' });
+  const [addError, setAddError] = useState<string | null>(null);
 
   const { data: branches = [] } = useLookup('setup/branches', 'branch_code', (r) => String(r.branch_name));
   const monthOptions = useMemo(() => recentMonthOptions(), []);
@@ -75,6 +79,31 @@ export default function AttendanceUploadPage() {
       });
     },
     onSuccess: (data: UploadResult) => { setResult(data); refetch(); },
+  });
+
+  const addSingle = useMutation({
+    mutationFn: () =>
+      fetch('/api/attendance/upload/single', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          empFkey: Number(addForm.empFkey),
+          date: addForm.date,
+          inTime: addForm.inTime,
+          outTime: addForm.outTime,
+        }),
+      }).then(async (r) => {
+        const body = await r.json();
+        if (!r.ok) throw new Error(body.error ?? 'Failed to save attendance');
+        return body;
+      }),
+    onSuccess: () => {
+      setShowAdd(false);
+      setAddForm({ empFkey: '', date: '', inTime: '09:00:00', outTime: '18:00:00' });
+      setAddError(null);
+      refetch();
+    },
+    onError: (err: Error) => setAddError(err.message),
   });
 
   const remove = useMutation({
@@ -156,6 +185,12 @@ export default function AttendanceUploadPage() {
         >
           <Download className="w-3.5 h-3.5" /> Download Template
         </a>
+        <button
+          onClick={() => { setAddError(null); setShowAdd(true); }}
+          className={cn(BTN_BASE, 'bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)] text-white ml-auto')}
+        >
+          <Plus className="w-3.5 h-3.5" /> Add Attendance
+        </button>
         <button
           onClick={() => fileInputRef.current?.click()}
           disabled={upload.isPending}
@@ -246,6 +281,66 @@ export default function AttendanceUploadPage() {
           </table>
         )}
       </div>
+
+      {showAdd && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/25 backdrop-blur-[2px] p-4 animate-fade-in" onClick={() => setShowAdd(false)}>
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="relative bg-white rounded-[20px] border border-black/[0.06] shadow-[0_25px_70px_-15px_rgba(0,0,0,0.25)] p-6 w-full max-w-md animate-modal-in"
+          >
+            <div className="flex items-center justify-between mb-5">
+              <h2 className="text-[19px] font-semibold text-[#0F172A] tracking-tight">Add Attendance</h2>
+              <button onClick={() => setShowAdd(false)} aria-label="Close" className="p-1 rounded-full hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors duration-150">
+                <X className="w-4.5 h-4.5" />
+              </button>
+            </div>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-[12px] font-medium text-slate-600 mb-1.5">
+                  Employee <span className="text-slate-400 font-normal normal-case">(Shift Allocated Employees Only)</span>
+                </label>
+                <SearchableSelect
+                  value={addForm.empFkey}
+                  onChange={(v) => setAddForm((f) => ({ ...f, empFkey: v }))}
+                  options={employeeOptions}
+                  placeholder="Select employee"
+                />
+              </div>
+              <div>
+                <label className="block text-[12px] font-medium text-slate-600 mb-1.5">Date</label>
+                <input
+                  type="date"
+                  value={addForm.date}
+                  onChange={(e) => setAddForm((f) => ({ ...f, date: e.target.value }))}
+                  className={cn(INPUT_CLASS, 'w-full')}
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[12px] font-medium text-slate-600 mb-1.5">In Time</label>
+                  <TimePicker value={addForm.inTime} onChange={(v) => setAddForm((f) => ({ ...f, inTime: v }))} />
+                </div>
+                <div>
+                  <label className="block text-[12px] font-medium text-slate-600 mb-1.5">Out Time</label>
+                  <TimePicker value={addForm.outTime} onChange={(v) => setAddForm((f) => ({ ...f, outTime: v }))} />
+                </div>
+              </div>
+              {addError && (
+                <div className="rounded-[9px] bg-[color:var(--color-danger-soft)] border border-[color:var(--color-danger-dark)]/20 px-3 py-2 text-[12.5px] text-[color:var(--color-danger-dark)]">
+                  {addError}
+                </div>
+              )}
+            </div>
+            <button
+              onClick={() => addSingle.mutate()}
+              disabled={!addForm.empFkey || !addForm.date || !addForm.inTime || !addForm.outTime || addSingle.isPending}
+              className={cn(BTN_BASE, 'w-full justify-center mt-4 bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)] text-white')}
+            >
+              {addSingle.isPending ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
