@@ -3,6 +3,7 @@ import { authOptions } from '@/lib/auth';
 import { getCompanyPool, realInstant } from '@/lib/db';
 import { NextResponse } from 'next/server';
 import type { RowDataPacket } from 'mysql2';
+import { canWebPunch } from '@/lib/webPunch';
 
 // Whether the employee is currently checked in and how long they've been working today, derived
 // fresh from today's device_attandance rows rather than a separate cached "last punch" value —
@@ -19,7 +20,9 @@ export async function GET() {
     `SELECT emp_id FROM emp_details WHERE emp_pkey = ?`,
     [session.user.empFkey]
   );
-  if (!emp) return NextResponse.json({ checkedIn: false, elapsedSeconds: 0, lastPunch: null });
+  if (!emp) return NextResponse.json({ canPunch: false, checkedIn: false, elapsedSeconds: 0, lastPunch: null });
+
+  const canPunch = await canWebPunch(pool, session.user.empFkey);
 
   const [rows] = await pool.execute<RowDataPacket[]>(
     `SELECT LOGDATE, DIRECTION FROM device_attandance
@@ -50,6 +53,7 @@ export async function GET() {
 
   const last = rows.length > 0 ? rows[rows.length - 1] : null;
   return NextResponse.json({
+    canPunch,
     checkedIn,
     elapsedSeconds: Math.round(elapsedSeconds),
     lastPunch: last ? { time: realInstant(last.LOGDATE as Date)!.toISOString(), direction: String(last.DIRECTION).toLowerCase() } : null,

@@ -26,6 +26,8 @@ export interface RepeatableFieldDef {
   validate?: (value: string) => string | null;
   /** Mobile keyboard hint for text fields that only take numbers. */
   inputMode?: 'numeric' | 'decimal';
+  /** Pre-filled value for a new row (e.g. nationality defaulting to "Indian"). */
+  defaultValue?: string;
 }
 
 interface RepeatableRowsProps {
@@ -49,7 +51,7 @@ function showDate(v: unknown): string {
 }
 
 export function RepeatableRows({ fields, rows, pkeyField, onAdd, onRemove, onUpdate, addLabel }: RepeatableRowsProps) {
-  const empty = Object.fromEntries(fields.map((f) => [f.key, '']));
+  const empty = Object.fromEntries(fields.map((f) => [f.key, f.defaultValue ?? '']));
   const [draft, setDraft] = useState<Record<string, string>>(empty);
   const [adding, setAdding] = useState(false);
   const [blocked, setBlocked] = useState(false);

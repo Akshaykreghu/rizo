@@ -25,7 +25,7 @@ import {
 } from '@/lib/childRowValidation';
 import {
   dobError, ageAtDateError, aadhaarError, panError, esiError, uanError, lwfError, accountNoError, pfNumberError,
-  mobileError, pincodeError,
+  mobileError, pincodeError, localDateStr,
 } from '@/lib/validation';
 import { DetailSkeleton } from '@/components/ui/Skeleton';
 
@@ -59,17 +59,18 @@ const FIELD_TAB: Record<string, TabKey> = {
   contract_end_date: 'onboarding',
 };
 
-const EMPTY_DOC = { document_type: '', document_number: '', name: '', relation: '', nationality: '', valid_from: '', valid_till: '' };
+// nationality defaults to "Indian" (matches the India default on the profile's nationality_id).
+const EMPTY_DOC = { document_type: '', document_number: '', name: '', relation: '', nationality: 'Indian', valid_from: '', valid_till: '' };
 const FAMILY_RELATIONS = ['Self', 'Mother', 'Father', 'Sister', 'Brother', 'Cousin', 'Spouse', 'Other'];
-const EMPTY_FAMILY = { name: '', relation: '', gender: '', DOB: '', blood_group: '', nationality: '', contact_number: '', alternate_number: '', is_nominee: 'N', emergency_contact: 'N' };
+const EMPTY_FAMILY = { name: '', relation: '', gender: '', DOB: '', blood_group: '', nationality: 'Indian', contact_number: '', alternate_number: '', is_nominee: 'N', emergency_contact: 'N' };
 // Matches lib/validation.ts's dobError (18-years-minimum) check — caps the calendar itself at
 // that same boundary instead of only rejecting an underage pick after submit.
 const MAX_DOB = (() => {
   const d = new Date();
   d.setFullYear(d.getFullYear() - 18);
-  return d.toISOString().slice(0, 10);
+  return localDateStr(d);
 })();
-const TODAY = new Date().toISOString().slice(0, 10);
+const TODAY = localDateStr(new Date());
 
 interface NationalityOption { id: number; nationality: string; country_name: string }
 
@@ -1115,11 +1116,12 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                           </div>
                           <div>
                             <label className={LABEL_CLASS}>Nationality</label>
-                            <input
-                              maxLength={CHILD_FIELD_LIMITS.nationality}
-                              className={INPUT_CLASS}
+                            <SearchableSelect
                               value={familyDraft.nationality}
-                              onChange={(e) => setFamilyDraft((p) => ({ ...p, nationality: e.target.value }))}
+                              onChange={(v) => setFamilyDraft((p) => ({ ...p, nationality: v }))}
+                              options={nationalities.map((n) => ({ value: n.nationality, label: n.country_name }))}
+                              placeholder="Select nationality"
+                              buttonClassName={INPUT_CLASS}
                             />
                           </div>
                           <div>
@@ -1311,11 +1313,12 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                           </div>
                           <div>
                             <label className={LABEL_CLASS}>Nationality</label>
-                            <input
-                              maxLength={CHILD_FIELD_LIMITS.nationality}
-                              className={INPUT_CLASS}
+                            <SearchableSelect
                               value={docDraft.nationality}
-                              onChange={(e) => setDocDraft((p) => ({ ...p, nationality: e.target.value }))}
+                              onChange={(v) => setDocDraft((p) => ({ ...p, nationality: v }))}
+                              options={nationalities.map((n) => ({ value: n.nationality, label: n.country_name }))}
+                              placeholder="Select nationality"
+                              buttonClassName={INPUT_CLASS}
                             />
                           </div>
                           <div>
@@ -1341,7 +1344,7 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                         </div>
                         <div className="mt-4">
                           <label className={LABEL_CLASS}>File Upload</label>
-                          <DocumentUploadField value={docFile} onChange={setDocFile} />
+                          <DocumentUploadField value={docFile} onChange={setDocFile} accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.gif" maxBytes={100_000_000} />
                         </div>
                         <FieldError>{docErrors.form}</FieldError>
                         <div className="flex items-center gap-2 mt-5">

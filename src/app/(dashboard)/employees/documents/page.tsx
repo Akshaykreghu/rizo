@@ -247,7 +247,7 @@ export default function DocumentLibraryPage() {
                   placeholder="e.g. Offer Letter Template"
                 />
               </div>
-              <DocumentUploadField value={newPath} onChange={setNewPath} />
+              <DocumentUploadField value={newPath} onChange={setNewPath} accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.gif" maxBytes={100_000_000} />
               <button
                 onClick={() => create.mutate()}
                 disabled={!newName || !newPath || create.isPending}

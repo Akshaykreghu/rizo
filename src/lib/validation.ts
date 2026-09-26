@@ -1,13 +1,38 @@
 const MIN_WORKING_AGE_YEARS = 18;
 
+// Parses a plain "YYYY-MM-DD" field value as *local* midnight, matching how every cutoff/"today"
+// below is built with `new Date(y, m, d)`. Passing the string straight to `new Date(value)`
+// instead parses a date-only ISO string as UTC midnight — which drifts against a local-time
+// cutoff by the timezone offset, and in any positive-UTC-offset zone (e.g. India, +5:30) that
+// made someone turning exactly 18 *today* fail the check, and could flag "today" itself as a
+// future date. Every date comparison in this file must go through this, not `new Date(string)`.
+function parseLocalDate(value: string): Date {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+  if (!m) return new Date(NaN);
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+}
+
+// The inverse of parseLocalDate: a Date's own "YYYY-MM-DD" in *local* time, for building a
+// DatePicker's min/max (e.g. today, or today minus 18 years). `d.toISOString().slice(0, 10)`
+// looks equivalent but reports the UTC calendar date, which is a day behind the local one for
+// part of the day in any positive-UTC-offset timezone (e.g. India, for the first ~5.5 hours after
+// local midnight) — so a cutoff built that way could reject an otherwise-valid pick, or briefly
+// re-enable one that shouldn't be, depending on what time of day it's computed.
+export function localDateStr(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 // Generic "not in the future" check, shared by every date field that's turned out to need this
 // exact validation (Employee Join's Date of Birth, Allocate Assets' Allocated Date, and any
 // future one) — confirmed as a recurring gap across 3+ date fields rather than fixing it per-field.
 export function futureDateError(value: string, label = 'Date'): string | null {
   if (!value) return null;
-  const date = new Date(value);
+  const date = parseLocalDate(value);
   if (Number.isNaN(date.getTime())) return `Invalid ${label.toLowerCase()}`;
-  if (date > new Date()) return `${label} cannot be in the future`;
+  const today = new Date();
+  const todayLocalMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  if (date > todayLocalMidnight) return `${label} cannot be in the future`;
   return null;
 }
 
@@ -15,7 +40,7 @@ export function dobError(value: string): string | null {
   if (!value) return null;
   const futureCheck = futureDateError(value, 'Date of birth');
   if (futureCheck) return futureCheck;
-  const dob = new Date(value);
+  const dob = parseLocalDate(value);
   const today = new Date();
   const cutoff = new Date(today.getFullYear() - MIN_WORKING_AGE_YEARS, today.getMonth(), today.getDate());
   if (dob > cutoff) return `Employee must be at least ${MIN_WORKING_AGE_YEARS} years old`;
@@ -138,8 +163,8 @@ export function statutoryFieldErrors(
 // View/Employee/setup.ctp:1001-1037 blocks submit unless the person is 18+ at joining.
 export function ageAtDateError(dob: string, onDate: string): string | null {
   if (!dob || !onDate) return null;
-  const dobDate = new Date(dob);
-  const on = new Date(onDate);
+  const dobDate = parseLocalDate(dob);
+  const on = parseLocalDate(onDate);
   if (Number.isNaN(dobDate.getTime()) || Number.isNaN(on.getTime())) return null;
   const cutoff = new Date(on.getFullYear() - MIN_WORKING_AGE_YEARS, on.getMonth(), on.getDate());
   return dobDate > cutoff

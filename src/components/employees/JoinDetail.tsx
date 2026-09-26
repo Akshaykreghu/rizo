@@ -22,7 +22,7 @@ import {
 } from '@/lib/childRowValidation';
 import {
   dobError, mobileError, aadhaarError, panError, esiError, uanError, lwfError,
-  accountNoError, pfNumberError, pincodeError,
+  accountNoError, pfNumberError, pincodeError, localDateStr,
 } from '@/lib/validation';
 import { DetailSkeleton } from '@/components/ui/Skeleton';
 
@@ -40,7 +40,8 @@ const DATE_KEYS = new Set(['date_of_birth']);
 
 const DOCUMENT_TYPES = ['Aadhaar', 'PAN', 'Passport', 'Driving License', 'Voter ID', 'Educational Certificate', 'Offer Letter', 'Relieving Letter', 'Other'];
 
-const EMPTY_DOC = { document_type: '', document_number: '', name: '', relation: '', nationality: '', valid_from: '', valid_till: '' };
+// nationality defaults to "Indian" (matches the India default on nationality_id / the Family row below).
+const EMPTY_DOC = { document_type: '', document_number: '', name: '', relation: '', nationality: 'Indian', valid_from: '', valid_till: '' };
 
 const PKEY_FIELD: Record<'documents' | 'education' | 'experience' | 'family', string> = {
   documents: 'emp_doc_pkey', education: 'education_pkey', experience: 'experience_pkey', family: 'emp_family_pkey',
@@ -97,7 +98,7 @@ const GATED_MESSAGE = 'Save the previous step first — this tab is available on
 const MAX_DOB = (() => {
   const d = new Date();
   d.setFullYear(d.getFullYear() - 18);
-  return d.toISOString().slice(0, 10);
+  return localDateStr(d);
 })();
 
 const INPUT_CLASS = 'w-full px-3 py-2 border border-slate-200 rounded-lg text-sm text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/40 focus:border-[color:var(--color-primary)]/40 transition-colors duration-[180ms]';
@@ -899,7 +900,10 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
                 { key: 'relation', label: 'Relation', required: true, maxLength: CHILD_FIELD_LIMITS.relation },
                 { key: 'gender', label: 'Gender', type: 'select', required: true, options: FAMILY_GENDERS.map((g) => ({ value: g, label: g })) },
                 { key: 'DOB', label: 'Date of Birth', type: 'date', required: true },
-                { key: 'nationality', label: 'Nationality', maxLength: CHILD_FIELD_LIMITS.nationality },
+                {
+                  key: 'nationality', label: 'Nationality', type: 'select', defaultValue: 'Indian',
+                  options: nationalities.map((n) => ({ value: n.nationality, label: n.country_name })),
+                },
                 { key: 'contact_number', label: 'Contact Number', required: true, maxLength: CHILD_FIELD_LIMITS.contact_number, inputMode: 'numeric', sanitize: onlyDigits, validate: (v) => contactNumberError(v) },
               ]}
             />
@@ -1032,11 +1036,12 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
                   </div>
                   <div>
                     <label className={LABEL_CLASS}>Nationality</label>
-                    <input
-                      maxLength={CHILD_FIELD_LIMITS.nationality}
-                      className={INPUT_CLASS}
+                    <SearchableSelect
                       value={docDraft.nationality}
-                      onChange={(e) => setDocDraft((p) => ({ ...p, nationality: e.target.value }))}
+                      onChange={(v) => setDocDraft((p) => ({ ...p, nationality: v }))}
+                      options={nationalities.map((n) => ({ value: n.nationality, label: n.country_name }))}
+                      placeholder="Select nationality"
+                      buttonClassName={INPUT_CLASS}
                     />
                   </div>
                   <div>
@@ -1065,7 +1070,7 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
                 </div>
                 <div className="mt-4 max-w-sm">
                   <label className={LABEL_CLASS}>File Upload</label>
-                  <DocumentUploadField value={docFile} onChange={setDocFile} />
+                  <DocumentUploadField value={docFile} onChange={setDocFile} accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.gif" maxBytes={100_000_000} />
                 </div>
                 <FieldError>{docErrors.form}</FieldError>
                 <div className="flex items-center gap-2 mt-5">

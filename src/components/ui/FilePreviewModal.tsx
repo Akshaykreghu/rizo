@@ -1,11 +1,15 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Download, ExternalLink, FileText, X } from 'lucide-react';
+import { Download, ExternalLink, FileText, Loader2, X } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp|svg)(\?.*)?$/i;
 const PDF_EXT = /\.pdf(\?.*)?$/i;
+const DOCX_EXT = /\.docx(\?.*)?$/i;
+const DOC_EXT = /\.doc(\?.*)?$/i;
+const SHEET_EXT = /\.xlsx?(\?.*)?$/i;
 
 interface FilePreviewModalProps {
   /** File to show; null/empty keeps the modal closed. */
@@ -57,8 +61,22 @@ async function saveAs(url: string, name: string) {
   }
 }
 
-/** Shows an uploaded file (image or PDF) in a popup on the current page instead of a new tab. */
+interface SheetTab { name: string; html: string }
+
+/** Shows an uploaded file (image, PDF, Word or Excel) in a popup on the current page instead of a
+ *  new tab. Word (.docx) is rendered with docx-preview; Excel (.xls/.xlsx) is parsed with `xlsx`
+ *  and shown as a plain HTML table per sheet — neither library needs a server round-trip, so both
+ *  render straight from the file already fetched for download. Legacy .doc (pre-OOXML binary
+ *  Word) has no browser-side renderer available and falls through to the download/open fallback. */
 export function FilePreviewModal({ url, onClose, title = 'Document' }: FilePreviewModalProps) {
+  const wordContainerRef = useRef<HTMLDivElement>(null);
+  const [officeState, setOfficeState] = useState<'idle' | 'loading' | 'error'>('idle');
+  const [sheets, setSheets] = useState<SheetTab[] | null>(null);
+  const [activeSheet, setActiveSheet] = useState(0);
+
+  const isDocx = !!url && DOCX_EXT.test(url);
+  const isSheet = !!url && SHEET_EXT.test(url);
+
   useEffect(() => {
     if (!url) return;
     // Capture phase on window runs before the document-level Escape handler of any host Modal
@@ -72,12 +90,56 @@ export function FilePreviewModal({ url, onClose, title = 'Document' }: FilePrevi
     return () => window.removeEventListener('keydown', handleKeyDown, true);
   }, [url, onClose]);
 
+  useEffect(() => {
+    setSheets(null);
+    setActiveSheet(0);
+    if (!url || (!isDocx && !isSheet)) { setOfficeState('idle'); return; }
+
+    let cancelled = false;
+    setOfficeState('loading');
+
+    (async () => {
+      try {
+        const res = await fetch(url);
+        if (!res.ok) throw new Error('fetch failed');
+
+        if (isDocx) {
+          const blob = await res.blob();
+          const { renderAsync } = await import('docx-preview');
+          if (cancelled) return;
+          const container = wordContainerRef.current;
+          if (!container) throw new Error('no container');
+          container.innerHTML = '';
+          await renderAsync(blob, container, undefined, { inWrapper: true, ignoreLastRenderedPageBreak: true });
+          if (cancelled) return;
+          setOfficeState('idle');
+        } else {
+          const buf = await res.arrayBuffer();
+          const XLSX = await import('xlsx');
+          if (cancelled) return;
+          const workbook = XLSX.read(buf, { type: 'array' });
+          const tabs = workbook.SheetNames.map((name) => ({
+            name,
+            html: XLSX.utils.sheet_to_html(workbook.Sheets[name], { editable: false }),
+          }));
+          setSheets(tabs);
+          setOfficeState('idle');
+        }
+      } catch {
+        if (!cancelled) setOfficeState('error');
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [url, isDocx, isSheet]);
+
   if (!url || typeof document === 'undefined') return null;
 
   const fileName = downloadNameFor(title, url);
   const originalName = uploadedFileName(url);
   const isImage = IMAGE_EXT.test(url);
   const isPdf = PDF_EXT.test(url);
+  const isLegacyDoc = !isDocx && DOC_EXT.test(url);
 
   // Portalled to <body>: a host Modal's entry animation leaves a transform on its panel, which
   // would otherwise make this `fixed` overlay position (and clip) relative to that panel.
@@ -117,34 +179,83 @@ export function FilePreviewModal({ url, onClose, title = 'Document' }: FilePrevi
             <X className="w-4 h-4" />
           </button>
         </div>
-        <div className="flex-1 min-h-0 bg-slate-50 flex items-center justify-center">
+        <div className="flex-1 min-h-0 bg-slate-50 flex flex-col overflow-hidden">
           {isImage ? (
-            // eslint-disable-next-line @next/next/no-img-element -- arbitrary user-uploaded file URL
-            <img src={url} alt={title} className="max-w-full max-h-full object-contain" />
+            <div className="flex-1 flex items-center justify-center">
+              {/* eslint-disable-next-line @next/next/no-img-element -- arbitrary user-uploaded file URL */}
+              <img src={url} alt={title} className="max-w-full max-h-full object-contain" />
+            </div>
           ) : isPdf ? (
             <iframe src={url} title={title} className="w-full h-full border-0 bg-white" />
+          ) : isDocx && officeState !== 'error' ? (
+            <div className="flex-1 overflow-auto bg-white relative">
+              {officeState === 'loading' && (
+                <div className="absolute inset-0 flex items-center justify-center gap-2 text-sm text-slate-400">
+                  <Loader2 className="w-4 h-4 animate-spin" /> Loading document…
+                </div>
+              )}
+              <div ref={wordContainerRef} className={cn('p-6 [&_.docx-wrapper]:bg-white', officeState === 'loading' && 'invisible')} />
+            </div>
+          ) : isSheet && officeState !== 'error' ? (
+            officeState === 'loading' || !sheets ? (
+              <div className="flex-1 flex items-center justify-center gap-2 text-sm text-slate-400">
+                <Loader2 className="w-4 h-4 animate-spin" /> Loading spreadsheet…
+              </div>
+            ) : (
+              <>
+                {sheets.length > 1 && (
+                  <div className="flex gap-1 px-3 py-2 border-b border-slate-100 bg-white overflow-x-auto flex-shrink-0">
+                    {sheets.map((s, i) => (
+                      <button
+                        key={s.name}
+                        type="button"
+                        onClick={() => setActiveSheet(i)}
+                        className={cn(
+                          'px-3 py-1 text-xs font-medium rounded-md whitespace-nowrap transition-colors duration-150',
+                          i === activeSheet ? 'bg-[color:var(--color-primary)] text-white' : 'text-slate-500 hover:bg-slate-100'
+                        )}
+                      >
+                        {s.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <div
+                  className="flex-1 overflow-auto bg-white p-3 text-xs [&_table]:border-collapse [&_table]:min-w-full [&_td]:border [&_td]:border-slate-200 [&_td]:px-2 [&_td]:py-1 [&_th]:border [&_th]:border-slate-200 [&_th]:bg-slate-50 [&_th]:px-2 [&_th]:py-1"
+                  dangerouslySetInnerHTML={{ __html: sheets[activeSheet]?.html ?? '' }}
+                />
+              </>
+            )
           ) : (
-            <div className="text-center px-6">
-              <FileText className="w-10 h-10 text-slate-300 mx-auto mb-3" />
-              <p className="text-sm text-slate-600 mb-1">This file type can&apos;t be previewed here.</p>
-              <p className="text-xs text-slate-400 mb-4 break-all">{fileName}</p>
-              <div className="flex items-center justify-center gap-2">
-                <a
-                  href={url}
-                  download={fileName}
-                  onClick={(e) => { e.preventDefault(); saveAs(url, fileName); }}
-                  className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium bg-[color:var(--color-primary)] hover:opacity-90 text-white rounded-lg transition-opacity duration-150"
-                >
-                  <Download className="w-4 h-4" /> Download
-                </a>
-                <a
-                  href={url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 rounded-lg transition-colors duration-150"
-                >
-                  <ExternalLink className="w-4 h-4" /> Open in new tab
-                </a>
+            <div className="flex-1 flex items-center justify-center text-center px-6">
+              <div>
+                <FileText className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+                <p className="text-sm text-slate-600 mb-1">
+                  {isLegacyDoc
+                    ? 'Older .doc files can’t be previewed here.'
+                    : (isDocx || isSheet) && officeState === 'error'
+                      ? 'This file couldn’t be previewed.'
+                      : 'This file type can’t be previewed here.'}
+                </p>
+                <p className="text-xs text-slate-400 mb-4 break-all">{fileName}</p>
+                <div className="flex items-center justify-center gap-2">
+                  <a
+                    href={url}
+                    download={fileName}
+                    onClick={(e) => { e.preventDefault(); saveAs(url, fileName); }}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium bg-[color:var(--color-primary)] hover:opacity-90 text-white rounded-lg transition-opacity duration-150"
+                  >
+                    <Download className="w-4 h-4" /> Download
+                  </a>
+                  <a
+                    href={url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 rounded-lg transition-colors duration-150"
+                  >
+                    <ExternalLink className="w-4 h-4" /> Open in new tab
+                  </a>
+                </div>
               </div>
             </div>
           )}

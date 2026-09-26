@@ -65,7 +65,7 @@ interface FamilyMember { is_emergency_contact?: string | null; emergency_contact
 interface EducationRow { education_pkey: number }
 interface PersonalDoc { document_type: string; valid_till: string | null }
 interface EventPerson { emp_pkey: number; first_name: string; last_name: string | null; desig_name: string | null; dept_name: string | null; date_of_birth?: string; joining_date?: string }
-interface PunchStatus { checkedIn: boolean; elapsedSeconds: number; lastPunch: { time: string; direction: 'in' | 'out' } | null }
+interface PunchStatus { canPunch: boolean; checkedIn: boolean; elapsedSeconds: number; lastPunch: { time: string; direction: 'in' | 'out' } | null }
 interface LeaveBalance { salaryHeadItemFkey: number; name: string; balance: number }
 interface HomeSummary {
   workDays?: boolean[];
@@ -564,10 +564,13 @@ export default function EssHomePage() {
               </Ring>
               <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 7 }}>
                 <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase', whiteSpace: 'nowrap', color: punchPill.color, background: punchPill.bg, padding: '3px 9px', borderRadius: 999, alignSelf: 'flex-start' }}>{punchPill.label}</span>
-                <button type="button" onClick={() => handlePunch(punchStatus.checkedIn ? 'out' : 'in')} disabled={punching}
-                  style={{ minWidth: 140, padding: '0 20px', height: 38, border: 'none', borderRadius: 11, background: punchStatus.checkedIn ? RED : BRAND, color: '#fff', fontSize: 13.5, fontWeight: 800, cursor: punching ? 'not-allowed' : 'pointer', opacity: punching ? 0.6 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 9, boxShadow: '0 8px 18px -10px rgba(30,81,110,0.9)' }}>
-                  {punching ? 'Please wait…' : punchStatus.checkedIn ? <><LogOut size={15} aria-hidden="true" />Punch out</> : <><LogIn size={15} aria-hidden="true" />Punch in</>}
-                </button>
+                {/* Only web-punch employees get the button (legacy empdashboard.ctp: punch_type == 'S'). */}
+                {punchStatus.canPunch && (
+                  <button type="button" onClick={() => handlePunch(punchStatus.checkedIn ? 'out' : 'in')} disabled={punching}
+                    style={{ minWidth: 140, padding: '0 20px', height: 38, border: 'none', borderRadius: 11, background: punchStatus.checkedIn ? RED : BRAND, color: '#fff', fontSize: 13.5, fontWeight: 800, cursor: punching ? 'not-allowed' : 'pointer', opacity: punching ? 0.6 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 9, boxShadow: '0 8px 18px -10px rgba(30,81,110,0.9)' }}>
+                    {punching ? 'Please wait…' : punchStatus.checkedIn ? <><LogOut size={15} aria-hidden="true" />Punch out</> : <><LogIn size={15} aria-hidden="true" />Punch in</>}
+                  </button>
+                )}
                 <p style={{ fontSize: 11, lineHeight: 1.35, ...muted }}>
                   {punchStatus.checkedIn
                     ? <>Working time <b style={{ color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>{fmtElapsed(displaySecs)}</b></>

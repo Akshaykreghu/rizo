@@ -3,6 +3,7 @@ import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket } from 'mysql2';
+import { canWebPunch } from '@/lib/webPunch';
 
 // Self-service web check-in/check-out. Content ported from legacy's
 // Controller/DashboardController.php checkpunch() — same two writes (device_attandance is what
@@ -44,6 +45,9 @@ export async function POST(request: NextRequest) {
     [empFkey]
   );
   if (!emp) return NextResponse.json({ error: 'Employee not found' }, { status: 404 });
+  if (!(await canWebPunch(pool, empFkey))) {
+    return NextResponse.json({ error: 'Web punching is not enabled for this employee' }, { status: 403 });
+  }
 
   // Every other attendance read in this app (admin register, presence-summary, last-punch status
   // below) sources from device_attandance, so this write must not fail silently the way the

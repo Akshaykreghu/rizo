@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSession } from 'next-auth/react';
-import { mobileError, futureDateError } from '@/lib/validation';
+import { mobileError, futureDateError, localDateStr } from '@/lib/validation';
 import { DocumentUploadField } from '@/components/employees/DocumentUploadField';
 import { FilePreviewModal } from '@/components/ui/FilePreviewModal';
 import { EssDropdown } from '@/components/ess/EssDropdown';
@@ -66,11 +66,11 @@ function fmtMY(d?: Scalar) {
 const MAX_DOB = (() => {
   const d = new Date();
   d.setFullYear(d.getFullYear() - 18);
-  return d.toISOString().slice(0, 10);
+  return localDateStr(d);
 })();
 // Matches lib/validation.ts's futureDateError check — blocks a future pick in the calendar itself
 // (Work Experience from/to, Family DOB) instead of only rejecting it after submit.
-const TODAY = new Date().toISOString().slice(0, 10);
+const TODAY = localDateStr(new Date());
 // Education duration only ever needs a year, not a full day/month/year pick — a plain year
 // dropdown (last 60 years through the current one) instead of a full date-of-day calendar.
 const YEAR_OPTIONS = Array.from({ length: 60 }, (_, i) => String(new Date().getFullYear() - i));
@@ -188,8 +188,9 @@ const BLOOD_OPTS = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
 const MARITAL_OPTS = ['Single', 'Married', 'Divorced', 'Widowed'];
 const FAMILY_RELATIONS = ['Self', 'Mother', 'Father', 'Sister', 'Brother', 'Cousin', 'Spouse', 'Other'];
 const DOCUMENT_TYPES = ['Aadhaar', 'PAN', 'Passport', 'Driving License', 'Voter ID', 'Educational Certificate', 'Offer Letter', 'Relieving Letter', 'Other'];
-const EMPTY_FAMILY = { name: '', relation: '', gender: '', DOB: '', blood_group: '', nationality: '', contact_number: '', alternate_number: '', is_nominee: 'N', emergency_contact: 'N' };
-const EMPTY_DOC = { document_type: '', document_number: '', name: '', relation: '', classification: '', nationality: '', valid_from: '', valid_till: '', files: '' };
+// nationality defaults to "Indian" (matches the profile's India default on nationality_id).
+const EMPTY_FAMILY = { name: '', relation: '', gender: '', DOB: '', blood_group: '', nationality: 'Indian', contact_number: '', alternate_number: '', is_nominee: 'N', emergency_contact: 'N' };
+const EMPTY_DOC = { document_type: '', document_number: '', name: '', relation: '', classification: '', nationality: 'Indian', valid_from: '', valid_till: '', files: '' };
 // Field names match /api/employees/[id]/education's own GET aliases (degree/marks, not the raw
 // qualifcations columns course/mark) — see that route's comment for why. durationFrom/durationTo
 // are this form's own fields, not sent as-is: addEducation() combines them into the single
@@ -580,7 +581,7 @@ export default function EssAboutPage() {
     const r = d as unknown as Record<string, unknown>;
     setDocDraft({
       document_type: str(r.document_type), document_number: str(r.document_number), name: str(r.name),
-      relation: pickOpt(r.relation, FAMILY_RELATIONS), classification: pickOpt(r.classification, ['Male', 'Female']),
+      relation: pickOpt(r.relation, FAMILY_RELATIONS), classification: pickOpt(r.classification, ['Male', 'Female', 'Other']),
       nationality: str(r.nationality), valid_from: str(r.valid_from).slice(0, 10), valid_till: str(r.valid_till).slice(0, 10),
       files: str(r.files),
     });
@@ -942,6 +943,8 @@ export default function EssAboutPage() {
                               <EF label="Date of Birth" name="DOB" form={familyDraft} onChange={(e) => setFamilyDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} type="date" max={TODAY} required />
                               <EF label="Gender" name="gender" form={familyDraft} onChange={(e) => setFamilyDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} opts={['Male', 'Female', 'Other']} required />
                               <EF label="Blood Group" name="blood_group" form={familyDraft} onChange={(e) => setFamilyDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} opts={BLOOD_OPTS} />
+                              <IdSelect label="Nationality" name="nationality" form={familyDraft} onChange={(e) => setFamilyDraft((d) => ({ ...d, [e.target.name]: e.target.value }))}
+                                options={nationalities.map((n) => ({ v: n.nationality, l: n.country_name }))} />
                               <EF label="Contact Number" name="contact_number" form={familyDraft} onChange={(e) => setFamilyDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} type="tel" required />
                               <div style={{ display: 'flex', alignItems: 'center', gap: 16, paddingTop: 18 }}>
                                 <EF name="is_nominee" form={familyDraft} onChange={(e) => setFamilyDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} type="checkbox" label="Nominee" />
@@ -1112,8 +1115,9 @@ export default function EssAboutPage() {
                             <EF label="Relation" name="relation" form={docDraft} onChange={(e) => setDocDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} opts={FAMILY_RELATIONS} cols={2} required />
                             <EF label="Valid From" name="valid_from" form={docDraft} onChange={(e) => setDocDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} type="date" required />
                             <EF label="Valid Till" name="valid_till" form={docDraft} onChange={(e) => setDocDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} type="date" />
-                            <EF label="Gender" name="classification" form={docDraft} onChange={(e) => setDocDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} opts={['Male', 'Female']} required />
-                            <EF label="Nationality" name="nationality" form={docDraft} onChange={(e) => setDocDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} required />
+                            <EF label="Gender" name="classification" form={docDraft} onChange={(e) => setDocDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} opts={['Male', 'Female', 'Other']} required />
+                            <IdSelect label="Nationality" name="nationality" form={docDraft} onChange={(e) => setDocDraft((d) => ({ ...d, [e.target.name]: e.target.value }))}
+                              options={nationalities.map((n) => ({ v: n.nationality, l: n.country_name }))} required />
                           </div>
                           <div style={{ marginTop: 10 }}>
                             <label style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.6px', color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>Document Attachment</label>

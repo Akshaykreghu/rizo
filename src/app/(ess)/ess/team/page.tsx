@@ -1,13 +1,39 @@
 'use client';
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { useSession } from 'next-auth/react';
+import { Building2, MapPin, Phone, Mail, Globe } from 'lucide-react';
 import { photoUrl } from '@/lib/utils';
 import { PageSkeleton } from '@/components/ui/Skeleton';
+import AppTabs from '@/components/ess/AppTabs';
 
 // Port of New Rizo's pages/ESS/ESSTeam.jsx, backed by /api/employees/[id]/team (hierarchy)
 // and /api/ess/directory (search) — see those routes' comments for why they're separate
 // from the admin employee-list/hierarchy endpoints.
+//
+// This page is the "Organisation" tab group: My Team (this original page, unchanged) plus three
+// read-only views an employee has no admin access to edit — Company Details (/api/company, the
+// same row the admin Company Profile page's Profile tab edits), Branches (/api/setup/branches),
+// and HR Policy documents (documents.policy = 1 — see DocumentManagersController.php's doc_template
+// save: a template flagged policy=1 auto-creates a company-wide documents row, distinct from an
+// employee's own allocated documents shown on the Allocations page's My Documents tab).
+
+function EmptyNote({ text }: { text: string }) {
+  return <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>{text}</div>;
+}
+
+function fmtDate(d?: string | null) {
+  if (!d) return '—';
+  return new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+/** Blanks out legacy sentinel values ("0", "0.00") so a never-filled-in field reads as empty. */
+function clean(v: unknown): string {
+  if (v == null) return '';
+  const s = String(v).trim();
+  return s === '0' || s === '0.00' ? '' : s;
+}
 
 interface Person {
   emp_pkey: number;
@@ -62,6 +88,12 @@ function EmpNode({ emp, isYou = false, size = 'sm' }: { emp?: Person | null; isY
             {emp?.dept_name && <span style={{ padding: '1px 6px', borderRadius: 10, fontSize: 9, fontWeight: 700, background: `${accent}15`, color: accent }}>{emp.dept_name}</span>}
             {emp?.branch_name && <span style={{ padding: '1px 6px', borderRadius: 10, fontSize: 9, fontWeight: 600, background: 'var(--bg-page)', color: 'var(--text-muted)', border: '1px solid var(--border)' }}>📍 {emp.branch_name}</span>}
           </div>
+          {emp?.mobile_no && (
+            <div style={{ marginTop: 4, fontSize: 9.5, color: 'var(--text-muted)' }}>
+              <a href={`tel:${emp.mobile_no}`} style={{ color: 'inherit', textDecoration: 'none' }}>📱 {emp.mobile_no}</a>
+            </div>
+          )}
+          {emp?.emp_code && <div style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 2, fontFamily: 'monospace' }}>{emp.emp_code}</div>}
         </div>
       </div>
     );
@@ -242,6 +274,12 @@ function OrgTreeCard({
       <div style={{ textAlign: 'center' }}>
         <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--text-primary)', lineHeight: 1.3 }}>{person.first_name} {person.last_name}</div>
         {person.desig_name && <div style={{ fontSize: 10, color: '#2563eb', marginTop: 2 }}>{person.desig_name}</div>}
+        {person.emp_code && <div style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 2, fontFamily: 'monospace' }}>{person.emp_code}</div>}
+        {person.mobile_no && (
+          <div style={{ fontSize: 9.5, color: 'var(--text-muted)', marginTop: 2 }}>
+            <a href={`tel:${person.mobile_no}`} style={{ color: 'inherit', textDecoration: 'none' }}>📱 {person.mobile_no}</a>
+          </div>
+        )}
       </div>
       {reportCount > 0 && (
         <div style={{ fontSize: 9, fontWeight: 700, color: '#059669' }}>{reportCount} report{reportCount !== 1 ? 's' : ''}</div>
@@ -304,7 +342,7 @@ function OrgTreeNode({
   );
 }
 
-export default function EssTeamPage() {
+function MyTeamTab() {
   const { data: session } = useSession();
   const empId = session?.user.empFkey;
 
@@ -402,8 +440,7 @@ export default function EssTeamPage() {
   const rootChildren = me ? childrenMap.get(me.emp_pkey) ?? [] : [];
 
   return (
-    <div className="page-content">
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px', gap: 24, alignItems: 'start' }}>
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px', gap: 24, alignItems: 'start' }}>
 
         {/* LEFT — Hierarchy: one container, connector lines throughout, expands in place */}
         <div style={{ background: 'var(--bg-card)', border: '1.5px solid var(--border)', borderRadius: 16, overflow: 'hidden' }}>
@@ -530,6 +567,303 @@ export default function EssTeamPage() {
           </div>
         </div>
       </div>
+  );
+}
+
+// ── Company Details (read-only) ─────────────────────────────────────────────────────────────
+interface CompanyProfile {
+  business_name?: string | null;
+  business_type?: string | null;
+  business_nature?: string | null;
+  address?: string | null;
+  city?: string | null;
+  state?: string | null;
+  pincode?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  website?: string | null;
+  logo?: string | null;
+}
+
+function FieldCard({ icon: Icon, label, value, href }: { icon: React.ElementType; label: string; value?: string | null; href?: string }) {
+  const clean_ = clean(value);
+  const content = clean_ || '—';
+  return (
+    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '12px 14px', borderRadius: 12, background: 'var(--bg-page)', border: '1px solid var(--border)' }}>
+      <div style={{ width: 32, height: 32, borderRadius: 9, background: 'rgba(30,81,110,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+        <Icon size={15} color="#1E516E" strokeWidth={2} />
+      </div>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: 9.5, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.4px', color: 'var(--text-muted)', marginBottom: 3 }}>{label}</div>
+        {clean_ && href ? (
+          <a href={href} target="_blank" rel="noreferrer" style={{ fontSize: 13, fontWeight: 600, color: '#1E516E', textDecoration: 'none', wordBreak: 'break-word' }}>{content}</a>
+        ) : (
+          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', wordBreak: 'break-word' }}>{content}</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Branches (read-only) — also used as the compact panel next to Company Details ──────────
+interface Branch {
+  id: number;
+  branch_name: string;
+  branch_code: string;
+  address: string | null;
+  city: string | null;
+  state: string | null;
+  pincode: string | null;
+}
+
+function useBranches() {
+  const [rows, setRows] = useState<Branch[] | null>(null);
+  useEffect(() => {
+    fetch('/api/setup/branches')
+      .then((r) => (r.ok ? r.json() : []))
+      .then(setRows)
+      .catch(() => setRows([]));
+  }, []);
+  return rows;
+}
+
+// 6 rows visible (each ~54px) before scrolling — the browser's default overlay scrollbar is
+// near-invisible on this dark/light theme pair, so it's styled explicitly here instead of relying
+// on the platform default to signal there's more to scroll.
+const BRANCHES_PANEL_ROWS = 6;
+const BRANCHES_PANEL_ROW_HEIGHT = 54;
+
+function BranchesPanel({ branches }: { branches: Branch[] | null }) {
+  const [query, setQuery] = useState('');
+  const q = query.trim().toLowerCase();
+  const filtered = !branches ? branches : !q ? branches : branches.filter((b) =>
+    [b.branch_name, b.branch_code, b.city, b.state].some((v) => (v ?? '').toLowerCase().includes(q))
+  );
+
+  return (
+    <div style={{ background: 'var(--bg-card)', border: '1.5px solid var(--border)', borderRadius: 16, overflow: 'hidden', boxShadow: '0 1px 6px rgba(0,0,0,0.05)' }}>
+      <style>{`
+        .branches-panel-scroll { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+        .branches-panel-scroll::-webkit-scrollbar { width: 7px; }
+        .branches-panel-scroll::-webkit-scrollbar-track { background: transparent; }
+        .branches-panel-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+        .branches-panel-scroll::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+      `}</style>
+      <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8 }}>
+        <MapPin size={15} color="#1E516E" strokeWidth={2} />
+        <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--text-primary)' }}>Branches</span>
+        {branches && <span style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 700, color: 'var(--text-muted)' }}>{filtered?.length}{q ? ` / ${branches.length}` : ''}</span>}
+      </div>
+      {branches && branches.length > 0 && (
+        <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)' }}>
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search branch, city, state…"
+            style={{ width: '100%', padding: '6px 10px', fontSize: 12, borderRadius: 8, border: '1.5px solid var(--border)', background: 'var(--bg-page)', color: 'var(--text-primary)', outline: 'none', boxSizing: 'border-box' }}
+          />
+        </div>
+      )}
+      <div className="branches-panel-scroll" style={{ maxHeight: BRANCHES_PANEL_ROWS * BRANCHES_PANEL_ROW_HEIGHT, overflowY: 'auto' }}>
+        {filtered === null ? (
+          <div style={{ padding: 16 }}><PageSkeleton body="cards" /></div>
+        ) : filtered.length === 0 ? (
+          <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-muted)', fontSize: 12 }}>
+            {q ? `No branches match "${query}".` : 'No branches have been set up yet.'}
+          </div>
+        ) : (
+          filtered.map((b) => {
+            const loc = [clean(b.city), clean(b.state)].filter(Boolean).join(', ');
+            return (
+              <div key={b.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 16px', borderBottom: '1px solid var(--border)' }}>
+                <div style={{ width: 30, height: 30, borderRadius: 8, background: 'rgba(30,81,110,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  <Building2 size={14} color="#1E516E" strokeWidth={2} />
+                </div>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--text-primary)' }}>{b.branch_name}</div>
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 1 }}>{loc || b.branch_code}</div>
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+    </div>
+  );
+}
+
+function CompanyDetailsTab() {
+  const [data, setData] = useState<CompanyProfile | null>(null);
+  const branches = useBranches();
+
+  useEffect(() => {
+    fetch('/api/company')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setData(d ?? {}))
+      .catch(() => setData({}));
+  }, []);
+
+  if (data === null) {
+    return <div style={{ padding: 24 }}><PageSkeleton hero body="cards" /></div>;
+  }
+
+  const typeLine = [clean(data.business_type), clean(data.business_nature)].filter(Boolean).join(' · ');
+  const fullAddress = [clean(data.address), clean(data.city), clean(data.state), clean(data.pincode)].filter(Boolean).join(', ');
+  // Some legacy-migrated logos are a bare filesystem-relative path ("files/companylogos/...")
+  // rather than a real URL this app can serve — same dead-path issue photoUrl() already guards
+  // against for profile pictures elsewhere on this page, so it's reused here instead of requesting
+  // (and 404-ing on) a path that was never servable to begin with.
+  const logoUrl = photoUrl(data.logo);
+
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: 20, alignItems: 'start' }}>
+      <div style={{ background: 'var(--bg-card)', border: '1.5px solid var(--border)', borderRadius: 16, overflow: 'hidden', boxShadow: '0 1px 6px rgba(0,0,0,0.05)' }}>
+        <div style={{ background: 'linear-gradient(135deg, #0c1f2c, #1E516E)', height: 72 }} />
+        <div style={{ padding: '0 24px 24px' }}>
+          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 16, marginBottom: 22 }}>
+            <div style={{ width: 76, height: 76, marginTop: -36, borderRadius: 18, background: 'var(--bg-card)', border: '4px solid var(--bg-card)', boxShadow: '0 4px 16px rgba(0,0,0,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0 }}>
+              {logoUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element -- admin-uploaded company logo URL
+                <img src={logoUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+              ) : (
+                <Building2 size={28} color="#1E516E" strokeWidth={1.75} />
+              )}
+            </div>
+            <div style={{ paddingBottom: 4, minWidth: 0 }}>
+              <div style={{ fontSize: 18, fontWeight: 900, color: 'var(--text-primary)' }}>{clean(data.business_name) || 'Company'}</div>
+              {typeLine && (
+                <span style={{ display: 'inline-block', marginTop: 5, padding: '2px 10px', borderRadius: 20, fontSize: 10.5, fontWeight: 700, background: 'rgba(30,81,110,0.1)', color: '#1E516E' }}>
+                  {typeLine}
+                </span>
+              )}
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
+            <div style={{ gridColumn: '1 / -1' }}>
+              <FieldCard icon={MapPin} label="Address" value={fullAddress} />
+            </div>
+            <FieldCard icon={Phone} label="Phone" value={data.phone} />
+            <FieldCard icon={Mail} label="Email" value={data.email} href={clean(data.email) ? `mailto:${clean(data.email)}` : undefined} />
+            <FieldCard icon={Globe} label="Website" value={data.website} href={clean(data.website) ? clean(data.website) : undefined} />
+          </div>
+        </div>
+      </div>
+
+      <BranchesPanel branches={branches} />
+    </div>
+  );
+}
+
+// ── HR Policy documents (read-only) ─────────────────────────────────────────────────────────
+interface PolicyDoc {
+  document_pkey: number;
+  document_name: string;
+  doc_id: string;
+  creation_date: string;
+  created_by: string;
+}
+
+// Same fixed-overlay-portaled-into-.ess-legacy pattern as the Allocations page's AssetDetailModal
+// (see that file's comment) — needed so the modal both escapes the sticky header's stacking
+// context and stays inside the .ess-legacy[data-theme] scope that every var(--bg-card)/etc. color
+// here is defined under.
+function PolicyViewModal({ doc, onClose }: { doc: PolicyDoc; onClose: () => void }) {
+  const [content, setContent] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch(`/api/documents/policies/${doc.document_pkey}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setContent(d?.document ?? ''))
+      .catch(() => setContent(''));
+  }, [doc.document_pkey]);
+
+  useEffect(() => {
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = prevOverflow; };
+  }, []);
+
+  const portalTarget = document.querySelector('.ess-legacy') ?? document.body;
+
+  return createPortal(
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.35)', backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)', zIndex: 1050, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: 'var(--bg-card)', borderRadius: 14, width: 720, maxWidth: '95vw', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 24px 60px rgba(0,0,0,0.35)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--text-primary)' }}>{doc.document_name}</div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 20, lineHeight: 1, padding: 4 }}>×</button>
+        </div>
+        <div style={{ padding: 20 }}>
+          {content === null ? (
+            <div style={{ textAlign: 'center', padding: 24, color: 'var(--text-muted)', fontSize: 12 }}>Loading…</div>
+          ) : (
+            <div className="prose prose-sm max-w-none" style={{ color: 'var(--text-primary)' }} dangerouslySetInnerHTML={{ __html: content }} />
+          )}
+        </div>
+      </div>
+    </div>,
+    portalTarget
+  );
+}
+
+function HrPolicyTab() {
+  const [rows, setRows] = useState<PolicyDoc[] | null>(null);
+  const [viewing, setViewing] = useState<PolicyDoc | null>(null);
+
+  useEffect(() => {
+    fetch('/api/documents/policies')
+      .then((r) => (r.ok ? r.json() : []))
+      .then(setRows)
+      .catch(() => setRows([]));
+  }, []);
+
+  if (rows === null) return <div style={{ padding: 24 }}><PageSkeleton hero body="cards" /></div>;
+  if (rows.length === 0) return <EmptyNote text="No HR policy documents have been published yet." />;
+
+  return (
+    <div style={{ background: 'var(--bg-card)', border: '1.5px solid var(--border)', borderRadius: 16, padding: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {rows.map((d) => (
+        <div key={d.document_pkey} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', borderRadius: 10, background: 'var(--bg-page)', border: '1px solid var(--border)' }}>
+          <div style={{ width: 36, height: 36, borderRadius: 9, background: 'rgba(30,81,110,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, flexShrink: 0 }}>📘</div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{d.document_name}</div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>Published: {fmtDate(d.creation_date)}</div>
+          </div>
+          <button onClick={() => setViewing(d)} style={{ background: 'none', border: 'none', color: '#1E516E', fontWeight: 700, fontSize: 12.5, cursor: 'pointer', flexShrink: 0 }}>
+            View
+          </button>
+        </div>
+      ))}
+      {viewing && <PolicyViewModal doc={viewing} onClose={() => setViewing(null)} />}
+    </div>
+  );
+}
+
+// ── Organisation page shell — tabs: My Team (unchanged), Company Details (branches live inside
+// it as a side panel — no separate tab needed), HR Policy ──
+const ORG_TABS = [
+  { key: 'team', label: 'My Team', icon: '👥' },
+  { key: 'company', label: 'Company Details', icon: '🏢' },
+  { key: 'policy', label: 'HR Policy', icon: '📘' },
+] as const;
+type OrgTab = (typeof ORG_TABS)[number]['key'];
+
+export default function EssTeamPage() {
+  const [tab, setTab] = useState<OrgTab>('team');
+
+  return (
+    <div className="page-content">
+      <div style={{ marginBottom: 20 }}>
+        <AppTabs
+          tabs={ORG_TABS.map((t) => ({ key: t.key, label: t.label, icon: t.icon }))}
+          active={tab}
+          onChange={(k) => setTab(k as OrgTab)}
+        />
+      </div>
+
+      {tab === 'team' && <MyTeamTab />}
+      {tab === 'company' && <CompanyDetailsTab />}
+      {tab === 'policy' && <HrPolicyTab />}
     </div>
   );
 }

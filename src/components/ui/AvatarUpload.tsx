@@ -18,14 +18,37 @@ interface AvatarUploadProps {
   disabled?: boolean;
 }
 
+// Profile picture: jpg/jpeg/png/gif only, capped at 100MB — matches the limit on the Other
+// Details document upload (DocumentUploadField).
+const ALLOWED_EXT = ['.jpg', '.jpeg', '.png', '.gif'];
+const MAX_BYTES = 100_000_000;
+
 export function AvatarUpload({ name, imageUrl, onUploaded, className, avatarClassName, disabled }: AvatarUploadProps) {
   const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  function showError(message: string) {
+    setError(message);
+    setTimeout(() => setError((cur) => (cur === message ? null : cur)), 4000);
+  }
 
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
+
+    const ext = '.' + (file.name.split('.').pop() ?? '').toLowerCase();
+    if (!ALLOWED_EXT.includes(ext)) {
+      showError('Only JPG, PNG or GIF images are allowed.');
+      return;
+    }
+    if (file.size > MAX_BYTES) {
+      showError('Image is too large (max 100 MB).');
+      return;
+    }
+
     setUploading(true);
+    setError(null);
     try {
       const formData = new FormData();
       formData.append('file', file);
@@ -56,7 +79,7 @@ export function AvatarUpload({ name, imageUrl, onUploaded, className, avatarClas
             <Camera className="w-4 h-4 text-white opacity-0 group-hover/avatar:opacity-100 transition-opacity duration-[180ms]" />
           )}
         </span>
-        <input type="file" accept="image/*" onChange={handleFile} disabled={uploading} className="hidden" />
+        <input type="file" accept=".jpg,.jpeg,.png,.gif" onChange={handleFile} disabled={uploading} className="hidden" />
         {/* No photo yet: an always-visible pencil badge shows the avatar can be clicked to add one
             (the camera overlay only appears on hover). */}
         {!imageUrl && !uploading && (
@@ -78,6 +101,11 @@ export function AvatarUpload({ name, imageUrl, onUploaded, className, avatarClas
         >
           <Trash2 className="w-2.5 h-2.5" />
         </button>
+      )}
+      {error && (
+        <div className="absolute top-full left-0 mt-1.5 z-10 whitespace-nowrap rounded-md bg-[color:var(--color-danger)] px-2 py-1 text-[11px] font-medium text-white shadow-md">
+          {error}
+        </div>
       )}
     </div>
   );

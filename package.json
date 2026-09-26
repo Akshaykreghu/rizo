@@ -16,6 +16,7 @@
     "@tanstack/react-table": "^8.21.3",
     "bcryptjs": "^3.0.3",
     "clsx": "^2.1.1",
+    "docx-preview": "^0.4.1",
     "exceljs": "^4.4.0",
     "framer-motion": "^13.0.0",
     "jspdf": "^4.2.1",

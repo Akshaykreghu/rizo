@@ -12,14 +12,14 @@ import { photoUrl } from '@/lib/utils';
 // the old AuthContext/ThemeContext → next-auth session + a small localStorage-backed theme state
 // scoped to this shell only (admin side keeps its own theme). Visual design is untouched.
 //
-// Tab visibility: Home / About Me / My Team have no `gate` and always show. Every other tab lists
+// Tab visibility: Home / About Me / Organisation have no `gate` and always show. Every other tab lists
 // a `gate` key into TAB_MENU_GATES, checked against the employee's real menu-allocation grants
 // (fetched below from /api/ess/menu-access) — a fresh login with nothing allocated yet sees only
 // the three ungated tabs.
 const ALL_TABS = [
   { to: '/ess', label: 'Home', emoji: '🏠' },
   { to: '/ess/about', label: 'About Me', emoji: '👤' },
-  { to: '/ess/team', label: 'My Team', emoji: '👥' },
+  { to: '/ess/team', label: 'Organisation', emoji: '🏢' },
   { to: '/ess/presence', label: 'My Presence', emoji: '📊', gate: 'presence' },
   { to: '/ess/salary', label: 'My Salary', emoji: '💰', gate: 'salary' },
   // overflow → "More" dropdown
