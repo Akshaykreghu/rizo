@@ -1,7 +1,7 @@
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
-import { attendancePunchConflictMessage, checkAttendancePunches, checkAttendanceRegisterRangeVerified, isLeaveTransactionFailure, runLeaveTransaction } from '@/lib/leave';
+import { attendancePunchConflictMessage, checkAttendancePunches, checkAttendanceRegisterRangeVerified, describeLeaveTransactionFailure, isLeaveTransactionFailure, runLeaveTransaction } from '@/lib/leave';
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket, ResultSetHeader } from 'mysql2';
 
@@ -116,7 +116,7 @@ export async function POST(request: NextRequest) {
   // isn't rolled back, but the specific reason (leaveentries.message, the proc's own text) is
   // surfaced instead of a silent success.
   const warningMessage = isLeaveTransactionFailure(applied.finalStatus)
-    ? (applied.leaveMessage || applied.finalStatus)
+    ? describeLeaveTransactionFailure(applied.finalStatus, applied.leaveMessage)
     : null;
 
   // Approve step only proceeds if the proc's Applied call didn't itself divert the status

@@ -391,6 +391,19 @@ export function isLeaveTransactionFailure(status: string): boolean {
   return status.toLowerCase().startsWith('can not apply');
 }
 
+// Turns a proc rejection into a sentence a user can actually understand. leaveMessage (from
+// leaveentries.message) is the proc's own specific reason and is preferred verbatim when present;
+// when it's empty the raw finalStatus ("Can not Apply 0 days") is not shown as-is — that reads as
+// an internal error rather than what it actually means in practice (the requested range fell
+// entirely on week-off/holiday days, so there were zero chargeable leave days to record).
+export function describeLeaveTransactionFailure(finalStatus: string, leaveMessage: string | null): string {
+  if (leaveMessage && leaveMessage.trim()) return leaveMessage.trim();
+  if (finalStatus.toLowerCase().includes('0 days')) {
+    return 'The leave is applied on a Week Off/Holiday — no chargeable leave days were recorded.';
+  }
+  return 'Leave could not be fully processed — please check with admin.';
+}
+
 // Ported from `Leave_balance_upload_fn()` (confirmed live via SHOW CREATE FUNCTION on
 // mypayrol_mpm121) for the new Leave Balance Upload feature (EmpleaveuploadController — a
 // different, unrouted-in-legacy controller from EmployeeLeaveUploadController's leave *request*

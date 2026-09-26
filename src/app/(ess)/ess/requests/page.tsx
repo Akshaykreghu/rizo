@@ -992,25 +992,74 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
   }, [empId, form.from_date, form.to_date, form.from_half, form.to_half]);
 
   const leaveDays = calcLeaveDays(form.from_date, Number(form.from_half), form.to_date, Number(form.to_half));
-  // Same hard-block set shown live in the "Available Leave Balance" box — computed once here so
-  // Submit is actually disabled (not just an alert shown after clicking), matching the admin Apply
-  // Leave form's balanceBlocked pattern. Previously Submit was only ever disabled on `saving`, so
-  // every one of these violations was surfaced as text but never stopped the request from going
-  // through on a second click once whatever changed re-triggered the mutation.
+  // Matches getEmployeeDates()'s FROMDATE/TODATE picker bounds in addeditleave_new.ctp.
   const dateOrderInvalid = !!form.from_date && !!form.to_date && new Date(form.to_date) < new Date(form.from_date);
   const beforeJoining = !!preview?.joiningDate && !!form.from_date && form.from_date < preview.joiningDate;
   const afterTermination = !!preview?.terminationDate && !!form.to_date && form.to_date > preview.terminationDate;
+  const noBalance = !!preview && preview.balance <= 0 && !preview.allowNegative;
+  const insufficientBalance = !!preview && leaveDays > preview.balance;
+
+  // Server-state hard blocks (can't be fixed by re-editing the current selection — the balance or
+  // attendance state simply doesn't allow it) surface as a popup alert, per the "submit disabling
+  // only for inline warnings, alerts clear the fields that caused them" rule — instead of silently
+  // disabling Submit (easy to miss, as with the 0.5-day-balance/1-day-request case). The fields that
+  // produced the block are cleared so the employee has to make a fresh, valid choice rather than
+  // stare at a disabled button. Applied during render (not an effect) — same pattern as the
+  // leave-type-change reset above — keyed on a signature so it fires exactly once per distinct cause
+  // rather than re-firing every render while that cause is still present.
+  let hardBlock: { signature: string; message: string; clear: Partial<typeof form> } | null = null;
+  if (attendanceConflictError) {
+    hardBlock = { signature: `att:${attendanceConflictError}`, message: attendanceConflictError, clear: { from_date: '', to_date: '' } };
+  } else if (preview && !preview.minServiceOk) {
+    hardBlock = { signature: `minservice:${preview.minServiceMessage}`, message: preview.minServiceMessage ?? '', clear: { from_date: '', to_date: '' } };
+  } else if (preview && !preview.advanceNoticeOk) {
+    hardBlock = { signature: `notice:${preview.advanceNoticeMessage}`, message: preview.advanceNoticeMessage ?? '', clear: { from_date: '', to_date: '' } };
+  } else if (preview && (beforeJoining || afterTermination)) {
+    hardBlock = {
+      signature: `dates:${beforeJoining}:${afterTermination}`,
+      message: beforeJoining
+        ? `Leave cannot be applied before the joining date (${preview.joiningDate}).`
+        : `Leave cannot be applied after the termination date (${preview.terminationDate}).`,
+      clear: { from_date: '', to_date: '' },
+    };
+  } else if (noBalance) {
+    hardBlock = { signature: 'nobalance', message: 'You have no leave balance!', clear: { from_date: '', to_date: '' } };
+  } else if (insufficientBalance && preview) {
+    hardBlock = {
+      signature: `insufficient:${form.from_date}:${form.to_date}:${form.from_half}:${form.to_half}`,
+      message: `You do not have enough leave balance. Available: ${preview.balance} day(s), requested: ${leaveDays}.`,
+      // Only the half-day selections (or the To Date, for a multi-day overreach) are the actual
+      // cause here, not the From Date itself — clearing the sessions back to defaults and the To
+      // Date lets the employee immediately try a combination that fits the balance (e.g. First
+      // Half → First Half for a 0.5-day balance) without having to re-pick the From Date too.
+      clear: { from_half: '1', to_date: '', to_half: '2' },
+    };
+  }
+  const [handledSignature, setHandledSignature] = useState<string | null>(null);
+  if (hardBlock && hardBlock.signature !== handledSignature) {
+    setHandledSignature(hardBlock.signature);
+    setAlertMessage(hardBlock.message);
+    setForm((f) => ({ ...f, ...hardBlock!.clear }));
+    // Without this, a stale preview computed under the now-cleared dates/sessions would keep
+    // showing its old balance figure and could re-derive a (differently-signatured) hardBlock from
+    // values the employee no longer has selected.
+    if ('from_date' in hardBlock.clear || 'to_date' in hardBlock.clear) {
+      setPreview(null);
+      setAttendanceConflictError(null);
+    }
+  } else if (!hardBlock && handledSignature !== null) {
+    setHandledSignature(null);
+  }
+
+  // Inline (field-level) blocks only — the user fixes these by directly editing the field that's
+  // wrong (a bad date order, a missing mandatory document, an under/over min-max day count), so
+  // disabling Submit for them is fine. Server-state hard blocks (balance/attendance/eligibility)
+  // are handled above as alerts instead, per the same rule.
   const blocked =
     dateOrderInvalid ||
-    beforeJoining ||
-    afterTermination ||
-    !!attendanceConflictError ||
     !preview ||
     (preview.documentMandatory && !file) ||
     (preview.documentMandatory && !fileDisplayName.trim()) ||
-    !preview.minServiceOk ||
-    !preview.advanceNoticeOk ||
-    leaveDays > preview.balance ||
     (limitTrigger === 'sessionChange' && preview.minLeaveLimit > 0 && leaveDays < preview.minLeaveLimit) ||
     (limitTrigger === 'dateChange' && preview.maxLeaveLimit > 0 && leaveDays > preview.maxLeaveLimit);
 
@@ -1148,22 +1197,11 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
                 <div style={{ fontWeight: 700, color: 'var(--text-primary)' }}>
                   Available Leave Balance: <strong style={{ color: preview.balance > 0 ? BRAND : '#dc2626' }}>{preview.balance}</strong>
                 </div>
-                {preview.balance <= 0 && !preview.allowNegative && (
-                  <div style={{ color: '#dc2626', marginTop: 2 }}>You have no leave balance!</div>
-                )}
-                {!preview.minServiceOk && (
-                  <div style={{ color: '#dc2626', marginTop: 2 }}>{preview.minServiceMessage}</div>
-                )}
-                {preview.minServiceOk && !preview.advanceNoticeOk && (
-                  <div style={{ color: '#dc2626', marginTop: 2 }}>{preview.advanceNoticeMessage}</div>
-                )}
-                {/* Matches getEmployeeDates()'s FROMDATE/TODATE picker bounds in addeditleave_new.ctp. */}
-                {preview.joiningDate && form.from_date && form.from_date < preview.joiningDate && (
-                  <div style={{ color: '#dc2626', marginTop: 2 }}>Leave cannot be applied before the joining date ({preview.joiningDate}).</div>
-                )}
-                {preview.terminationDate && form.to_date && form.to_date > preview.terminationDate && (
-                  <div style={{ color: '#dc2626', marginTop: 2 }}>Leave cannot be applied after the termination date ({preview.terminationDate}).</div>
-                )}
+                {/* Balance/attendance/eligibility/joining-termination violations are server-state hard
+                    blocks — shown via the popup alert (which also clears the offending fields), not
+                    duplicated here as inline text. Only the date-order check stays inline since it's
+                    directly fixable by re-picking a field without anything being cleared out from
+                    under the employee. */}
                 {/* Matches validateLeave()'s `edt < sdt` hard block in addeditleave_new.ctp. */}
                 {form.from_date && form.to_date && new Date(form.to_date) < new Date(form.from_date) && (
                   <div style={{ color: '#dc2626', marginTop: 2 }}>To date should be greater than or equal to From date.</div>
@@ -1196,8 +1234,21 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
                     style={{ ...inp, marginBottom: 6, ...(label === 'To' && !form.from_date ? { opacity: 0.5, cursor: 'not-allowed' } : {}) }}
                     value={form[dk]}
                     onChange={(e) => {
-                      setForm((f) => ({ ...f, [dk]: e.target.value }));
-                      if (label === 'To') setLimitTrigger('dateChange');
+                      const next = e.target.value;
+                      if (label === 'From') {
+                        // Re-picking From Date can invalidate an already-chosen To Date (now before
+                        // the new From Date) — clear it instead of leaving a stale, invalid range
+                        // silently selected, which is how a From-24/09-To-24/09 leave could otherwise
+                        // still show a To Date of 01/10 left over from an earlier, larger From Date.
+                        setForm((f) => ({
+                          ...f,
+                          from_date: next,
+                          to_date: f.to_date && f.to_date < next ? '' : f.to_date,
+                        }));
+                      } else {
+                        setForm((f) => ({ ...f, to_date: next }));
+                        setLimitTrigger('dateChange');
+                      }
                     }}
                   />
                   <EssDropdown
@@ -1284,14 +1335,20 @@ function ApplyLeaveModal({ empId, defaultTypeId, onClose, onSaved }: { empId: nu
   );
 }
 
-function LeaveDetailModal({ leave: r, onClose, onCancelled }: { leave: LeaveRow; onClose: () => void; onCancelled: () => void }) {
+function LeaveDetailModal({ leave: r, onClose, onCancelled }: { leave: LeaveRow; onClose: () => void; onCancelled: (message: string) => void }) {
   const [cancelling, setCancelling] = useState(false);
+  const [cancelError, setCancelError] = useState<string | null>(null);
 
   async function handleCancel() {
     setCancelling(true);
+    setCancelError(null);
     try {
-      await fetch(`/api/leave/requests/${r.LEAVEENTRYID}/cancel`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-      onCancelled();
+      const res = await fetch(`/api/leave/requests/${r.LEAVEENTRYID}/cancel`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || 'Failed to cancel leave');
+      onCancelled(body.requiresReview ? 'Cancellation request submitted for review' : 'Leave cancelled');
+    } catch (err) {
+      setCancelError(err instanceof Error ? err.message : 'Failed to cancel leave');
     } finally {
       setCancelling(false);
     }
@@ -1387,9 +1444,12 @@ function LeaveDetailModal({ leave: r, onClose, onCancelled }: { leave: LeaveRow;
           )}
         </div>
 
+        {cancelError && (
+          <div style={{ margin: '0 20px 14px', padding: '8px 12px', borderRadius: 8, background: '#fef2f2', border: '1px solid #dc262622', fontSize: 12, color: '#dc2626' }}>{cancelError}</div>
+        )}
         <div style={{ padding: '14px 20px', display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
           <button onClick={onClose} style={{ padding: '8px 18px', borderRadius: 8, border: '1.5px solid var(--border)', background: 'var(--bg-page)', color: 'var(--text-muted)', fontWeight: 700, cursor: 'pointer', fontSize: 13 }}>Close</button>
-          {r.LEAVESTATUS === 'Applied' && (
+          {(r.LEAVESTATUS === 'Applied' || r.LEAVESTATUS === 'Authorized' || r.LEAVESTATUS === 'Approved') && (
             <button onClick={handleCancel} disabled={cancelling} style={{ padding: '8px 18px', borderRadius: 8, border: '1.5px solid #dc262644', background: '#fef2f2', color: '#dc2626', fontWeight: 800, cursor: 'pointer', fontSize: 13, opacity: cancelling ? 0.7 : 1 }}>
               {cancelling ? 'Cancelling…' : 'Cancel Leave'}
             </button>
@@ -1454,12 +1514,18 @@ function LeaveTab({ empId }: { empId: number }) {
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--bg-page)', borderRadius: 10, padding: '4px 8px', border: '1px solid var(--border)' }}>
                 <button onClick={() => shiftMonth(-1)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: 15, cursor: 'pointer', padding: '0 4px', lineHeight: 1 }}>‹</button>
-                <input
-                  type="month"
-                  value={selectedMonth}
-                  onChange={(e) => { if (e.target.value) { setSelectedMonth(e.target.value); setPage(1); } }}
-                  style={{ background: 'none', border: 'none', color: 'var(--text-primary)', fontSize: 12, fontWeight: 700, cursor: 'pointer', outline: 'none' }}
-                />
+                {/* Native month input renders the raw value (e.g. "2026-09") in the browser's own
+                    locale format — a styled label overlays it showing "Sep 2026" (fmtMonth) instead,
+                    while the underlying input still handles clicks/picker/keyboard. */}
+                <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', pointerEvents: 'none' }}>{fmtMonth(selectedMonth)}</span>
+                  <input
+                    type="month"
+                    value={selectedMonth}
+                    onChange={(e) => { if (e.target.value) { setSelectedMonth(e.target.value); setPage(1); } }}
+                    style={{ position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer', border: 'none', outline: 'none' }}
+                  />
+                </div>
                 <button onClick={() => shiftMonth(1)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: 15, cursor: 'pointer', padding: '0 4px', lineHeight: 1 }}>›</button>
                 {selectedMonth !== nowMonth && (
                   <button onClick={() => { setSelectedMonth(nowMonth); setPage(1); }} style={{ background: `${BRAND}15`, border: 'none', color: BRAND, fontSize: 10, fontWeight: 700, cursor: 'pointer', borderRadius: 6, padding: '2px 8px' }}>Today</button>
@@ -1513,7 +1579,7 @@ function LeaveTab({ empId }: { empId: number }) {
         <LeaveDetailModal
           leave={selectedLeaveRequest}
           onClose={() => setSelectedLeaveRequest(null)}
-          onCancelled={() => { setSelectedLeaveRequest(null); load(); setMessage('Leave cancelled'); }}
+          onCancelled={(cancelMessage) => { setSelectedLeaveRequest(null); load(); setMessage(cancelMessage); }}
         />
       )}
       {message && (

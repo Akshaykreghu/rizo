@@ -1,19 +1,18 @@
 'use client';
 
-import { Suspense, useEffect, useRef, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useSearchParams } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { EmployeeSearch } from '@/components/employees/EmployeeSearch';
 import { SearchableSelect } from '@/components/ui/SearchableSelect';
-import { Plus, X, Eye, CalendarCheck, Check, Trash2, Download, Upload } from 'lucide-react';
+import { Plus, X, Eye, CalendarCheck, Check, Trash2 } from 'lucide-react';
 import type { ColumnDef } from '@tanstack/react-table';
 import { cn } from '@/lib/utils';
 import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
 import { DataTable } from '@/components/data-table/DataTable';
 import { SkeletonText } from '@/components/ui/Skeleton';
 import { AlertModal } from '@/components/ui/AlertModal';
-import { useSetupOptions } from '@/lib/setupOptions';
 
 interface LeaveType {
   salaryHeadItemFkey: number;
@@ -118,42 +117,6 @@ function LeaveRequestsContent() {
     const t = setTimeout(() => setToast(null), 4000);
     return () => clearTimeout(t);
   }, [toast]);
-
-  // Bulk Excel upload — same underlying /api/leave/bulk-upload endpoints previously exposed on
-  // their own page; folded in here so admins have one place for both single Apply Leave and
-  // spreadsheet import, matching how Attendance Upload keeps Download Template/Upload File next
-  // to its own manual-add action.
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const [uploadResult, setUploadResult] = useState<{ imported: number; errors: { row: number; message: string }[] } | null>(null);
-  const { data: branches = [] } = useSetupOptions('setup/branches', 'branch_code', (r) => String(r.branch_name));
-  const [templateBranch, setTemplateBranch] = useState('');
-  const [templateEmployee, setTemplateEmployee] = useState('');
-
-  const bulkUpload = useMutation({
-    mutationFn: (file: File) => {
-      const formData = new FormData();
-      formData.append('file', file);
-      return fetch('/api/leave/bulk-upload', { method: 'POST', body: formData }).then(async (res) => {
-        if (!res.ok) throw new Error((await res.json()).error ?? 'Upload failed');
-        return res.json();
-      });
-    },
-    onSuccess: (data: { imported: number; errors: { row: number; message: string }[] }) => {
-      setUploadResult(data);
-      setToast({
-        message: `${data.imported} leave request${data.imported === 1 ? '' : 's'} applied & approved${data.errors.length > 0 ? `, ${data.errors.length} row(s) skipped` : ''}`,
-        type: data.errors.length > 0 ? 'error' : 'success',
-      });
-      refetch();
-    },
-    onError: (err: Error) => setToast({ message: err.message, type: 'error' }),
-  });
-
-  function handleBulkFileSelected(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (file) bulkUpload.mutate(file);
-    e.target.value = '';
-  }
   const [form, setForm] = useState({
     empFkey: '', salaryHeadItemFkey: '', fromDate: '', fromHalf: '1', toDate: '', toHalf: '2',
     reason: '', contactNo: '', contactPerson: '',
@@ -564,31 +527,6 @@ function LeaveRequestsContent() {
             buttonClassName="!py-1.5 !text-[12.5px] !rounded-[9px]"
           />
         </div>
-        <div>
-          <label className="block text-[11.5px] font-medium text-slate-500 mb-1">Template Branch</label>
-          <SearchableSelect
-            value={templateBranch}
-            onChange={(v) => { setTemplateBranch(v); setTemplateEmployee(''); }}
-            options={branches}
-            placeholder="All branches"
-            className="min-w-[170px]"
-            buttonClassName="!py-1.5 !text-[12.5px] !rounded-[9px]"
-          />
-        </div>
-        <a
-          href={`/api/leave/bulk-upload/template?branch=${encodeURIComponent(templateBranch)}&employee=${encodeURIComponent(templateEmployee)}`}
-          className={cn(BTN_BASE, 'bg-white border border-slate-200 hover:bg-slate-50 text-slate-600')}
-        >
-          <Download className="w-3.5 h-3.5" /> Download Template
-        </a>
-        <button
-          onClick={() => fileInputRef.current?.click()}
-          disabled={bulkUpload.isPending}
-          className={cn(BTN_BASE, 'bg-white border border-slate-200 hover:bg-slate-50 text-slate-600')}
-        >
-          <Upload className="w-3.5 h-3.5" /> {bulkUpload.isPending ? 'Uploading…' : 'Upload File'}
-        </button>
-        <input ref={fileInputRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleBulkFileSelected} />
         <button
           onClick={() => setShowApply(true)}
           className={cn(BTN_BASE, 'bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)] text-white ml-auto')}
@@ -614,20 +552,6 @@ function LeaveRequestsContent() {
           </>
         )}
       </div>
-
-      {uploadResult && uploadResult.errors.length > 0 && (
-        <div className="surface-card rounded-xl px-4 py-2.5 mb-4 text-[12.5px]">
-          <div className="flex items-center justify-between">
-            <span className="font-medium text-[#0F172A]">Skipped rows</span>
-            <button onClick={() => setUploadResult(null)} className="text-slate-400 hover:text-slate-600 text-[11.5px]">Dismiss</button>
-          </div>
-          <ul className="mt-2 space-y-0.5 text-[11.5px] text-[color:var(--color-danger)]">
-            {uploadResult.errors.map((err, i) => (
-              <li key={i}>Row {err.row}: {err.message}</li>
-            ))}
-          </ul>
-        </div>
-      )}
 
       <DataTable data={rows} columns={columns} pageSize={10} pageSizeOptions={[10, 20, 30, 50]} isLoading={isLoading} />
 

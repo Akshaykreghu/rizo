@@ -1,7 +1,7 @@
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
-import { attendancePunchConflictMessage, checkAttendancePunches, checkAttendanceRegisterRangeVerified, checkExistingLeaveOverlap, getEmployeeLeaveTypes, isLeaveTransactionFailure, runLeaveTransaction, toISODate } from '@/lib/leave';
+import { attendancePunchConflictMessage, checkAttendancePunches, checkAttendanceRegisterRangeVerified, checkExistingLeaveOverlap, describeLeaveTransactionFailure, getEmployeeLeaveTypes, isLeaveTransactionFailure, runLeaveTransaction, toISODate } from '@/lib/leave';
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket, ResultSetHeader } from 'mysql2';
 
@@ -216,10 +216,12 @@ export async function POST(request: NextRequest) {
   // row(s) for this leave (confirmed via EmployeeLeaveUploadController::leavesave()'s two-call
   // sequence). Calling the proc directly with 'Approved' and no prior 'Applied' call was the real
   // bug — the proc has nothing to transition, so it silently wrote no transaction row at all.
-  let { finalStatus, leaveMessage } = await runLeaveTransaction(pool, {
+  const firstCall = await runLeaveTransaction(pool, {
     leaveEntryId, empFkey, fromDate, fromHalf: Number(fromHalf), toDate, toHalf: Number(toHalf),
     leaveDays, status: 'Applied',
   });
+  let finalStatus = firstCall.finalStatus;
+  const leaveMessage = firstCall.leaveMessage;
 
   // Ported from saveLeaveEntry()'s `if (!$out)` branch (controller.php:2139-2150): when the proc
   // rejects (e.g. finalStatus 'Can not Apply 0 days', typically a range that falls entirely on
@@ -227,7 +229,7 @@ export async function POST(request: NextRequest) {
   // stays exactly as the proc left it, and the response just carries a warningmessage (read from
   // leaveentries.message, the proc's own specific reason — e.g. naming the weekoff/holiday date —
   // not the generic status text) alongside the otherwise-normal success payload.
-  const warningMessage = isLeaveTransactionFailure(finalStatus) ? (leaveMessage || finalStatus) : null;
+  const warningMessage = isLeaveTransactionFailure(finalStatus) ? describeLeaveTransactionFailure(finalStatus, leaveMessage) : null;
 
   // Second proc call, admin-applied leave only: status 'Approved' — transitions the transaction(s)
   // just created above from Applied to Approved, matching legacy's re-fetch-then-call-again pattern.

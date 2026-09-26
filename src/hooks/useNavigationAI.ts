@@ -113,6 +113,7 @@ export const MODULES: ModuleMeta[] = [
     submenus: [
       { label: 'Leave Requests', href: '/leave/requests' },
       { label: 'Leave Encashment', href: '/leave/encashment' },
+      { label: 'Bulk Leave Upload', href: '/leave/bulk-upload' },
       { label: 'Leave Balance Upload', href: '/leave/balance-upload' },
     ],
   },
