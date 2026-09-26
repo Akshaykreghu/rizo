@@ -5,6 +5,7 @@ import { Check, Pencil, Plus, Trash2 } from 'lucide-react';
 import { RequiredMark } from '@/components/ui/RequiredMark';
 import { SearchableSelect } from '@/components/ui/SearchableSelect';
 import { DatePicker } from '@/components/ui/DatePicker';
+import { capitalizeFirst } from '@/lib/childRowValidation';
 
 const SELECT_BUTTON_CLASS = 'w-full px-2.5 py-1.5 border border-gray-300 rounded-lg text-sm';
 
@@ -28,6 +29,11 @@ export interface RepeatableFieldDef {
   inputMode?: 'numeric' | 'decimal';
   /** Pre-filled value for a new row (e.g. nationality defaulting to "Indian"). */
   defaultValue?: string;
+  /** 'date' only: key of a 'checkbox' field in the same row (e.g. "Currently working here")
+   *  that, when checked, makes this field optional, clears it and disables it — for an ongoing
+   *  stint with no end date yet. There's no dedicated "still ongoing" column behind this; a blank
+   *  value on this field *is* the signal, both here and once the row is saved. */
+  requiredUnless?: string;
 }
 
 interface RepeatableRowsProps {
@@ -61,6 +67,13 @@ export function RepeatableRows({ fields, rows, pkeyField, onAdd, onRemove, onUpd
   function startEdit(row: Record<string, unknown>) {
     // Date inputs need plain YYYY-MM-DD; some routes return full ISO timestamps (UTC-pinned pool).
     setDraft(Object.fromEntries(fields.map((f) => {
+      if (f.type === 'checkbox') {
+        // No dedicated column for this checkbox exists on the row — its checked state is derived
+        // from whichever date field it makes optional being blank (see requiredUnless above).
+        const linked = fields.find((o) => o.requiredUnless === f.key);
+        if (linked) return [f.key, row[linked.key] ? 'N' : 'Y'];
+        return [f.key, row[f.key] === 'Y' ? 'Y' : 'N'];
+      }
       const v = row[f.key] == null ? '' : String(row[f.key]);
       return [f.key, f.type === 'date' ? v.slice(0, 10) : v];
     })));
@@ -79,7 +92,10 @@ export function RepeatableRows({ fields, rows, pkeyField, onAdd, onRemove, onUpd
   function setValue(key: string, raw: string) {
     // A number input ignores the maxLength attribute, so cap every limited field here instead.
     const field = fields.find((f) => f.key === key);
-    const cleaned = field?.sanitize ? field.sanitize(raw) : raw;
+    let cleaned = field?.sanitize ? field.sanitize(raw) : raw;
+    // Auto-capitalize the first letter, same as Personal Info's fields — only for plain text (not
+    // number/date/select/checkbox, and not a field that already forces its own casing via sanitize).
+    if ((!field?.type || field.type === 'text') && !field?.sanitize) cleaned = capitalizeFirst(cleaned);
     const value = field?.maxLength ? cleaned.slice(0, field.maxLength) : cleaned;
     setDraft((prev) => {
       const next = { ...prev, [key]: value };
@@ -92,8 +108,27 @@ export function RepeatableRows({ fields, rows, pkeyField, onAdd, onRemove, onUpd
     setRowError('');
   }
 
+  // Checking "Currently working here" (or any other requiredUnless checkbox) blanks and disables
+  // the field(s) it covers, so a stale date from before it was checked can't get saved unnoticed.
+  function setCheckbox(key: string, checked: boolean) {
+    setDraft((prev) => {
+      const next = { ...prev, [key]: checked ? 'Y' : 'N' };
+      if (checked) {
+        for (const f of fields) {
+          if (f.requiredUnless === key) next[f.key] = '';
+        }
+      }
+      return next;
+    });
+    setRowError('');
+  }
+
+  function isWaived(f: RepeatableFieldDef) {
+    return !!f.requiredUnless && draft[f.requiredUnless] === 'Y';
+  }
+
   async function handleAdd() {
-    if (fields.some((f) => f.required && !draft[f.key]?.trim())) {
+    if (fields.some((f) => f.required && !isWaived(f) && !draft[f.key]?.trim())) {
       setBlocked(true);
       return;
     }
@@ -105,7 +140,7 @@ export function RepeatableRows({ fields, rows, pkeyField, onAdd, onRemove, onUpd
         return;
       }
     }
-    const badRange = fields.find((f) => f.minFromKey && draft[f.key] && draft[f.minFromKey] && draft[f.key] < draft[f.minFromKey]);
+    const badRange = fields.find((f) => f.minFromKey && !isWaived(f) && draft[f.key] && draft[f.minFromKey] && draft[f.key] < draft[f.minFromKey]);
     if (badRange) {
       const fromLabel = fields.find((f) => f.key === badRange.minFromKey)?.label ?? badRange.minFromKey;
       setRowError(`${badRange.label} date can't be before ${fromLabel} date.`);
@@ -126,6 +161,9 @@ export function RepeatableRows({ fields, rows, pkeyField, onAdd, onRemove, onUpd
 
   // The row being edited is shown only in the editor below, not repeated in the table.
   const visibleRows = rows.filter((row) => Number(row[pkeyField]) !== editingPkey);
+  // Checkbox fields (e.g. "Currently working here") have no column of their own to show — a
+  // blank requiredUnless date field ("Present", below) already carries that.
+  const tableFields = fields.filter((f) => f.type !== 'checkbox');
 
   return (
     <div className="space-y-3">
@@ -134,7 +172,7 @@ export function RepeatableRows({ fields, rows, pkeyField, onAdd, onRemove, onUpd
           <table className="w-full text-sm">
             <thead>
               <tr className="text-left text-gray-500">
-                {fields.map((f) => (
+                {tableFields.map((f) => (
                   <th key={f.key} className="pb-2 pr-4 font-medium">{f.label}</th>
                 ))}
                 <th className="pb-2" />
@@ -143,8 +181,10 @@ export function RepeatableRows({ fields, rows, pkeyField, onAdd, onRemove, onUpd
             <tbody>
               {visibleRows.map((row) => (
                 <tr key={String(row[pkeyField])} className="border-t border-gray-100">
-                  {fields.map((f) => (
-                    <td key={f.key} className="py-2 pr-4 text-gray-800">{f.type === 'date' ? showDate(row[f.key]) : String(row[f.key] ?? '')}</td>
+                  {tableFields.map((f) => (
+                    <td key={f.key} className="py-2 pr-4 text-gray-800">
+                      {f.type === 'date' ? (row[f.key] ? showDate(row[f.key]) : (f.requiredUnless ? 'Present' : '')) : String(row[f.key] ?? '')}
+                    </td>
                   ))}
                   <td className="py-2 whitespace-nowrap">
                     {onUpdate && (
@@ -181,7 +221,8 @@ export function RepeatableRows({ fields, rows, pkeyField, onAdd, onRemove, onUpd
       <div className="grid gap-x-3 gap-y-1 items-end" style={{ gridTemplateColumns: `repeat(${fields.length}, minmax(0, 1fr)) auto` }}>
         {fields.map((f) => (
           <label key={`${f.key}-label`} className="block text-xs font-medium text-gray-500">
-            {f.label}{f.required && <RequiredMark />}
+            {/* A checkbox's own text sits inline with it in the input row below, not up here. */}
+            {f.type === 'checkbox' ? '' : <>{f.label}{f.required && !isWaived(f) && <RequiredMark />}</>}
           </label>
         ))}
         <span />
@@ -195,12 +236,24 @@ export function RepeatableRows({ fields, rows, pkeyField, onAdd, onRemove, onUpd
                 placeholder="Select"
                 buttonClassName={SELECT_BUTTON_CLASS}
               />
+            ) : f.type === 'checkbox' ? (
+              <label className="flex items-center gap-2 h-9 text-sm text-gray-600 whitespace-nowrap">
+                <input
+                  type="checkbox"
+                  checked={draft[f.key] === 'Y'}
+                  onChange={(e) => setCheckbox(f.key, e.target.checked)}
+                  className="accent-indigo-600"
+                />
+                {f.label}
+              </label>
             ) : f.type === 'date' ? (
               <DatePicker
                 value={draft[f.key]}
                 onChange={(v) => setValue(f.key, v)}
                 min={f.minFromKey ? draft[f.minFromKey] || undefined : undefined}
-                required={f.required}
+                required={f.required && !isWaived(f)}
+                disabled={isWaived(f)}
+                placeholder={isWaived(f) ? 'Present' : undefined}
                 buttonClassName={SELECT_BUTTON_CLASS}
               />
             ) : (

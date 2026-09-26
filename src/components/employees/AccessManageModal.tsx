@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { KeyRound, RotateCcw } from 'lucide-react';
+import { KeyRound, RotateCcw, Eye, EyeOff } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { FormSkeleton } from '@/components/ui/Skeleton';
 
@@ -42,6 +42,7 @@ interface AccessManageModalProps {
 export function AccessManageModal({ empPkey, onSaved, onNotify }: AccessManageModalProps) {
   const queryClient = useQueryClient();
   const [form, setForm] = useState<Record<string, string>>({});
+  const [showPassword, setShowPassword] = useState(false);
 
   const { data, isLoading, isError } = useQuery<AccessData>({
     queryKey: ['employees/access', empPkey],
@@ -192,18 +193,37 @@ export function AccessManageModal({ empPkey, onSaved, onNotify }: AccessManageMo
           <label className={cn(LABEL_CLASS, 'flex items-center gap-1.5')}>
             <KeyRound className="w-3.5 h-3.5" /> Reset Password (leave blank to keep current)
           </label>
-          <input
-            type="password"
-            className={INPUT_CLASS}
-            value={form.new_password ?? ''}
-            onChange={(e) => setForm((f) => ({ ...f, new_password: e.target.value }))}
-            disabled={form.access_allowed !== 'Y'}
-            placeholder={
-              form.access_allowed !== 'Y'
-                ? 'Enable web login to set a password'
-                : data.user_id ? '' : 'Required for a new login'
-            }
-          />
+          {(() => {
+            const locked = form.access_allowed !== 'Y';
+            return (
+              <div className="relative">
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  className={cn(INPUT_CLASS, 'pr-9')}
+                  value={form.new_password ?? ''}
+                  onChange={(e) => setForm((f) => ({ ...f, new_password: e.target.value }))}
+                  disabled={locked}
+                  placeholder={
+                    locked
+                      ? 'Enable web login to set a password'
+                      : data.user_id ? '' : 'Required for a new login'
+                  }
+                />
+                {/* Stays in sync with the field itself: no point letting someone reveal a password
+                    box that's disabled (and, per "Enable web login...", has nothing typed in it). */}
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((v) => !v)}
+                  disabled={locked}
+                  tabIndex={-1}
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 disabled:opacity-30 disabled:hover:text-slate-400 disabled:cursor-not-allowed"
+                >
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            );
+          })()}
           {passwordTooShort && (
             <p className="text-[color:var(--color-danger)] text-xs mt-1.5">
               Password must be at least {MIN_PASSWORD_LENGTH} characters.

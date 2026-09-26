@@ -7,7 +7,7 @@ import { DocumentUploadField } from '@/components/employees/DocumentUploadField'
 import { FilePreviewModal } from '@/components/ui/FilePreviewModal';
 import { EssDropdown } from '@/components/ess/EssDropdown';
 import { photoUrl } from '@/lib/utils';
-import { documentNumberError, onlyAlphanumeric } from '@/lib/childRowValidation';
+import { capitalizeFirst, documentNumberError, onlyAlphanumeric, FAMILY_RELATIONS } from '@/lib/childRowValidation';
 import { PageSkeleton } from '@/components/ui/Skeleton';
 
 // Read-only port of New Rizo's pages/ESS/ESSAbout.jsx. Self-service editing (the pencil icon /
@@ -150,10 +150,10 @@ const INP: React.CSSProperties = { width: '100%', padding: '7px 10px', fontSize:
 type FormState = Record<string, string>;
 // Searchable dropdowns (same behavior as Employee Join's) sized to match INP text inputs.
 const DD_BTN: React.CSSProperties = { padding: '7px 10px', fontSize: 12, borderRadius: 7 };
-function EF({ label, name, form, onChange, type = 'text', opts, full, cols, min, max, required }: {
+function EF({ label, name, form, onChange, type = 'text', opts, full, cols, min, max, required, disabled }: {
   label?: string; name: string; form: FormState; onChange: (e: { target: { name: string; value: string } }) => void;
   type?: 'text' | 'date' | 'tel' | 'email' | 'textarea' | 'checkbox'; opts?: readonly string[]; full?: boolean; cols?: number;
-  min?: string; max?: string; required?: boolean;
+  min?: string; max?: string; required?: boolean; disabled?: boolean;
 }) {
   const style: React.CSSProperties = { gridColumn: full ? '1 / -1' : cols ? `span ${cols}` : undefined };
   return (
@@ -174,7 +174,11 @@ function EF({ label, name, form, onChange, type = 'text', opts, full, cols, min,
           <span style={{ fontSize: 12, color: 'var(--text-primary)' }}>{label}</span>
         </label>
       ) : (
-        <input type={type} name={name} value={form[name] ?? ''} onChange={(e) => onChange({ target: { name, value: e.target.value } })} min={min} max={max} style={INP} />
+        <input
+          type={type} name={name} value={form[name] ?? ''} disabled={disabled}
+          onChange={(e) => onChange({ target: { name, value: e.target.value } })} min={min} max={max}
+          style={{ ...INP, ...(disabled ? { opacity: 0.5, cursor: 'not-allowed' } : {}) }}
+        />
       )}
     </div>
   );
@@ -186,7 +190,6 @@ const PAGE_BTN: React.CSSProperties = { width: 32, height: 32, display: 'flex', 
 const GENDER_OPTS = [{ v: 'male', l: 'Male' }, { v: 'female', l: 'Female' }, { v: 'others', l: 'Other' }];
 const BLOOD_OPTS = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
 const MARITAL_OPTS = ['Single', 'Married', 'Divorced', 'Widowed'];
-const FAMILY_RELATIONS = ['Self', 'Mother', 'Father', 'Sister', 'Brother', 'Cousin', 'Spouse', 'Other'];
 const DOCUMENT_TYPES = ['Aadhaar', 'PAN', 'Passport', 'Driving License', 'Voter ID', 'Educational Certificate', 'Offer Letter', 'Relieving Letter', 'Other'];
 // nationality defaults to "Indian" (matches the profile's India default on nationality_id).
 const EMPTY_FAMILY = { name: '', relation: '', gender: '', DOB: '', blood_group: '', nationality: 'Indian', contact_number: '', alternate_number: '', is_nominee: 'N', emergency_contact: 'N' };
@@ -196,7 +199,7 @@ const EMPTY_DOC = { document_type: '', document_number: '', name: '', relation: 
 // are this form's own fields, not sent as-is: addEducation() combines them into the single
 // `duration` string the API/DB actually store (legacy schema has no separate from/to columns).
 const EMPTY_EDUCATION = { degree: '', university: '', durationFrom: '', durationTo: '', marks: '' };
-const EMPTY_EXPERIENCE = { company_name: '', designation: '', department: '', from_date: '', to_date: '', salary: '' };
+const EMPTY_EXPERIENCE = { company_name: '', designation: '', department: '', from_date: '', to_date: '', salary: '', currently_working: '' };
 
 function GenderSelect({ form, onChange }: { form: FormState; onChange: (e: { target: { name: string; value: string } }) => void }) {
   return (
@@ -236,6 +239,10 @@ function relGroup(r?: string | null) {
   if (k.includes('father') || k.includes('mother') || k === 'guardian') return 'parent';
   if (['husband', 'wife', 'spouse', 'partner'].includes(k)) return 'partner';
   if (k.includes('son') || k.includes('daughter') || k === 'child') return 'child';
+  // Same generation as the employee (shares the same parents), not a child of theirs — drawn
+  // alongside "You" in the tree instead of falling into the catch-all "other relatives" row below,
+  // which had no line back to the parents and read as if they were the employee's own child.
+  if (k.includes('brother') || k.includes('sister') || k === 'sibling') return 'sibling';
   return 'other';
 }
 
@@ -301,6 +308,7 @@ function FamilyTree({ family, emp }: { family: FamilyMember[]; emp: Employee | n
   const parents = family.filter((f) => relGroup(f.relation) === 'parent');
   const partners = family.filter((f) => relGroup(f.relation) === 'partner');
   const children = family.filter((f) => relGroup(f.relation) === 'child');
+  const siblings = family.filter((f) => relGroup(f.relation) === 'sibling');
   const others = family.filter((f) => relGroup(f.relation) === 'other');
   const empName = `${emp?.first_name || ''} ${emp?.last_name || ''}`.trim();
   const empInits = initials(emp?.first_name, emp?.last_name);
@@ -331,6 +339,11 @@ function FamilyTree({ family, emp }: { family: FamilyMember[]; emp: Employee | n
           </div>
         )}
         <TreeNode name={empName} isEmployee empInitials={empInits} />
+        {siblings.length > 0 && (
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 20, marginLeft: 20, paddingTop: 8 }}>
+            {siblings.map((s, i) => <TreeNode key={i} name={s.name} relation={s.relation} dob={s.DOB} />)}
+          </div>
+        )}
       </div>
       {children.length > 0 && (
         <>
@@ -572,6 +585,9 @@ export default function EssAboutPage() {
     setExperienceDraft({
       company_name: str(r.company_name), designation: str(r.designation), department: str(r.department),
       from_date: str(r.from_date).slice(0, 10), to_date: str(r.to_date).slice(0, 10), salary: str(r.salary),
+      // No dedicated column for this — a blank to_date already means "Present" everywhere else
+      // this data is shown, so that's the signal for whether the checkbox starts checked too.
+      currently_working: r.to_date ? '' : 'Y',
     });
     setExperienceErrors({});
     setEditingExperiencePkey(x.experience_pkey);
@@ -712,7 +728,7 @@ export default function EssAboutPage() {
       from_date: !experienceDraft.from_date
         ? 'From date is required'
         : (futureDateError(experienceDraft.from_date, 'From date') || ''),
-      to_date: !experienceDraft.to_date
+      to_date: experienceDraft.currently_working === 'Y' ? '' : !experienceDraft.to_date
         ? 'To date is required'
         : (futureDateError(experienceDraft.to_date, 'To date')
           || (experienceDraft.from_date && experienceDraft.to_date < experienceDraft.from_date ? 'To date must be after from date' : '')),
@@ -938,7 +954,7 @@ export default function EssAboutPage() {
                         {showFamilyForm ? (
                           <div style={{ padding: '12px 14px', background: 'rgba(30,81,110,0.04)', borderRadius: 10, marginBottom: 8, border: '1.5px dashed rgba(30,81,110,0.3)' }}>
                             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '8px 12px' }}>
-                              <EF label="Full Name" name="name" form={familyDraft} onChange={(e) => setFamilyDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} required />
+                              <EF label="Full Name" name="name" form={familyDraft} onChange={(e) => setFamilyDraft((d) => ({ ...d, name: capitalizeFirst(e.target.value) }))} required />
                               <EF label="Relation" name="relation" form={familyDraft} onChange={(e) => setFamilyDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} opts={FAMILY_RELATIONS} required />
                               <EF label="Date of Birth" name="DOB" form={familyDraft} onChange={(e) => setFamilyDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} type="date" max={TODAY} required />
                               <EF label="Gender" name="gender" form={familyDraft} onChange={(e) => setFamilyDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} opts={['Male', 'Female', 'Other']} required />
@@ -990,8 +1006,8 @@ export default function EssAboutPage() {
                       {editing && (showEducationForm ? (
                         <div style={{ padding: '12px 14px', background: 'rgba(30,81,110,0.04)', borderRadius: 10, border: '1.5px dashed rgba(30,81,110,0.3)' }}>
                           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: '8px 12px' }}>
-                            <EF label="Course" name="degree" form={educationDraft} onChange={(e) => setEducationDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} cols={2} required />
-                            <EF label="University" name="university" form={educationDraft} onChange={(e) => setEducationDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} cols={2} required />
+                            <EF label="Course" name="degree" form={educationDraft} onChange={(e) => setEducationDraft((d) => ({ ...d, degree: capitalizeFirst(e.target.value) }))} cols={2} required />
+                            <EF label="University" name="university" form={educationDraft} onChange={(e) => setEducationDraft((d) => ({ ...d, university: capitalizeFirst(e.target.value) }))} cols={2} required />
                             <EF label="Start Year" name="durationFrom" form={educationDraft} onChange={(e) => setEducationDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} opts={YEAR_OPTIONS} required />
                             <EF label="End Year" name="durationTo" form={educationDraft} onChange={(e) => setEducationDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} opts={YEAR_OPTIONS} required />
                             <EF
@@ -1036,12 +1052,23 @@ export default function EssAboutPage() {
                       {editing && (showExperienceForm ? (
                         <div style={{ padding: '12px 14px', background: 'rgba(30,81,110,0.04)', borderRadius: 10, border: '1.5px dashed rgba(30,81,110,0.3)' }}>
                           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: '8px 12px' }}>
-                            <EF label="Company" name="company_name" form={experienceDraft} onChange={(e) => setExperienceDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} cols={2} required />
-                            <EF label="Designation" name="designation" form={experienceDraft} onChange={(e) => setExperienceDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} cols={2} required />
-                            <EF label="Department" name="department" form={experienceDraft} onChange={(e) => setExperienceDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} cols={2} required />
+                            <EF label="Company" name="company_name" form={experienceDraft} onChange={(e) => setExperienceDraft((d) => ({ ...d, company_name: capitalizeFirst(e.target.value) }))} cols={2} required />
+                            <EF label="Designation" name="designation" form={experienceDraft} onChange={(e) => setExperienceDraft((d) => ({ ...d, designation: capitalizeFirst(e.target.value) }))} cols={2} required />
+                            <EF label="Department" name="department" form={experienceDraft} onChange={(e) => setExperienceDraft((d) => ({ ...d, department: capitalizeFirst(e.target.value) }))} cols={2} required />
                             <EF label="Salary" name="salary" form={experienceDraft} onChange={(e) => setExperienceDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} cols={2} required />
                             <EF label="From" name="from_date" form={experienceDraft} onChange={(e) => setExperienceDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} type="date" cols={2} max={TODAY} required />
-                            <EF label="To" name="to_date" form={experienceDraft} onChange={(e) => setExperienceDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} type="date" cols={2} max={TODAY} required />
+                            <EF
+                              label="To" name="to_date" form={experienceDraft} type="date" cols={2} max={TODAY}
+                              required={experienceDraft.currently_working !== 'Y'}
+                              disabled={experienceDraft.currently_working === 'Y'}
+                              onChange={(e) => setExperienceDraft((d) => ({ ...d, [e.target.name]: e.target.value }))}
+                            />
+                            {/* No dedicated "still ongoing" column exists — a blank to_date already means
+                                "Present" everywhere this data is read, so checking this just clears to_date. */}
+                            <EF
+                              label="Currently working here" name="currently_working" form={experienceDraft} type="checkbox" cols={2}
+                              onChange={(e) => setExperienceDraft((d) => ({ ...d, currently_working: e.target.value, to_date: e.target.value === 'Y' ? '' : d.to_date }))}
+                            />
                           </div>
                           {Object.values(experienceErrors).some(Boolean) && (
                             <div style={{ marginTop: 8, fontSize: 11, color: '#dc2626' }}>{Object.values(experienceErrors).find(Boolean)}</div>
@@ -1111,7 +1138,7 @@ export default function EssAboutPage() {
                           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: '8px 12px' }}>
                             <EF label="Document Type" name="document_type" form={docDraft} onChange={(e) => setDocDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} opts={DOCUMENT_TYPES} cols={2} required />
                             <EF label="Document Number" name="document_number" form={docDraft} onChange={(e) => setDocDraft((d) => ({ ...d, document_number: onlyAlphanumeric(e.target.value) }))} cols={2} required />
-                            <EF label="Name on Document" name="name" form={docDraft} onChange={(e) => setDocDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} cols={2} required />
+                            <EF label="Name on Document" name="name" form={docDraft} onChange={(e) => setDocDraft((d) => ({ ...d, name: capitalizeFirst(e.target.value) }))} cols={2} required />
                             <EF label="Relation" name="relation" form={docDraft} onChange={(e) => setDocDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} opts={FAMILY_RELATIONS} cols={2} required />
                             <EF label="Valid From" name="valid_from" form={docDraft} onChange={(e) => setDocDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} type="date" required />
                             <EF label="Valid Till" name="valid_till" form={docDraft} onChange={(e) => setDocDraft((d) => ({ ...d, [e.target.name]: e.target.value }))} type="date" />

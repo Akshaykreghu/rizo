@@ -20,8 +20,8 @@ import { useSetupOptions, useSetupRows } from '@/lib/setupOptions';
 import { EMP_TYPES } from '@/lib/employeeOptions';
 import { EMPLOYEE_FIELD_LIMITS, CHILD_FIELD_LIMITS } from '@/lib/employeeFieldLimits';
 import {
-  FAMILY_GENDERS, marksError, salaryError, contactNumberError, documentNumberError,
-  onlyDigits, onlyAlphanumeric, onlyPercent, cleanName,
+  FAMILY_GENDERS, FAMILY_RELATIONS, marksError, salaryError, contactNumberError, documentNumberError,
+  onlyDigits, onlyAlphanumeric, onlyPercent, cleanName, capitalizeFirst,
 } from '@/lib/childRowValidation';
 import {
   dobError, ageAtDateError, aadhaarError, panError, esiError, uanError, lwfError, accountNoError, pfNumberError,
@@ -61,7 +61,6 @@ const FIELD_TAB: Record<string, TabKey> = {
 
 // nationality defaults to "Indian" (matches the India default on the profile's nationality_id).
 const EMPTY_DOC = { document_type: '', document_number: '', name: '', relation: '', nationality: 'Indian', valid_from: '', valid_till: '' };
-const FAMILY_RELATIONS = ['Self', 'Mother', 'Father', 'Sister', 'Brother', 'Cousin', 'Spouse', 'Other'];
 const EMPTY_FAMILY = { name: '', relation: '', gender: '', DOB: '', blood_group: '', nationality: 'Indian', contact_number: '', alternate_number: '', is_nominee: 'N', emergency_contact: 'N' };
 // Matches lib/validation.ts's dobError (18-years-minimum) check — caps the calendar itself at
 // that same boundary instead of only rejecting an underage pick after submit.
@@ -319,6 +318,8 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
       name: docDraft.name.trim() ? '' : 'Name on document is required',
       relation: docDraft.relation.trim() ? '' : 'Relation is required',
       valid_from: docDraft.valid_from ? '' : 'Valid from date is required',
+      valid_till: docDraft.valid_till && docDraft.valid_from && docDraft.valid_till < docDraft.valid_from
+        ? 'Valid till cannot be before valid from' : '',
     };
     if (Object.values(errors).some(Boolean)) {
       setDocErrors(errors);
@@ -393,8 +394,10 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
   }
 
   function updateField(key: string, raw: string) {
+    // Auto-capitalize the first letter on every plain text field except email (case-sensitive).
+    const capped = key === 'email' ? raw : capitalizeFirst(raw);
     // Also caps number inputs, which ignore the maxLength attribute.
-    const value = EMPLOYEE_FIELD_LIMITS[key] ? raw.slice(0, EMPLOYEE_FIELD_LIMITS[key]) : raw;
+    const value = EMPLOYEE_FIELD_LIMITS[key] ? capped.slice(0, EMPLOYEE_FIELD_LIMITS[key]) : capped;
     const next = { ...form, [key]: value };
     // Probation days only apply to a Probation hire (the field is hidden otherwise).
     if (key === 'emp_type' && value !== 'Probation') next.probation = '';
@@ -984,8 +987,9 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                         { key: 'designation', label: 'Designation', required: true, maxLength: CHILD_FIELD_LIMITS.designation },
                         { key: 'department', label: 'Department', required: true, maxLength: CHILD_FIELD_LIMITS.department },
                         { key: 'from_date', label: 'From', type: 'date', required: true },
-                        { key: 'to_date', label: 'To', type: 'date', required: true, minFromKey: 'from_date' },
+                        { key: 'to_date', label: 'To', type: 'date', required: true, minFromKey: 'from_date', requiredUnless: 'currently_working' },
                         { key: 'salary', label: 'Salary', required: true, maxLength: CHILD_FIELD_LIMITS.salary, inputMode: 'numeric', sanitize: onlyDigits, validate: salaryError },
+                        { key: 'currently_working', label: 'Currently working here', type: 'checkbox' },
                       ]}
                     />
                   </CollapsibleSection>
@@ -1068,7 +1072,7 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                               maxLength={CHILD_FIELD_LIMITS.name}
                               className={cn(INPUT_CLASS, familyErrors.name && ERROR_INPUT_CLASS)}
                               value={familyDraft.name}
-                              onChange={(e) => setFamilyDraft((p) => ({ ...p, name: e.target.value }))}
+                              onChange={(e) => setFamilyDraft((p) => ({ ...p, name: capitalizeFirst(e.target.value) }))}
                             />
                             <FieldError>{familyErrors.name}</FieldError>
                           </div>
@@ -1111,7 +1115,7 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                               maxLength={CHILD_FIELD_LIMITS.blood_group}
                               className={INPUT_CLASS}
                               value={familyDraft.blood_group}
-                              onChange={(e) => setFamilyDraft((p) => ({ ...p, blood_group: e.target.value }))}
+                              onChange={(e) => setFamilyDraft((p) => ({ ...p, blood_group: capitalizeFirst(e.target.value) }))}
                             />
                           </div>
                           <div>
@@ -1217,9 +1221,11 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                                   {String(row.name || '')}{validity ? ` · ${validity}` : ''}
                                 </p>
                               </div>
-                              <span className="text-[11px] font-medium px-2 py-1 rounded-full bg-[color:var(--color-success)]/10 text-[color:var(--color-success)] flex-shrink-0">
-                                Uploaded
-                              </span>
+                              {row.files ? (
+                                <span className="text-[11px] font-medium px-2 py-1 rounded-full bg-[color:var(--color-success)]/10 text-[color:var(--color-success)] flex-shrink-0">
+                                  Uploaded
+                                </span>
+                              ) : null}
                               <div className="flex items-center gap-0.5 flex-shrink-0">
                                 {row.files ? (
                                   <button
@@ -1297,17 +1303,18 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                               maxLength={CHILD_FIELD_LIMITS.name}
                               className={cn(INPUT_CLASS, docErrors.name && ERROR_INPUT_CLASS)}
                               value={docDraft.name}
-                              onChange={(e) => setDocDraft((p) => ({ ...p, name: e.target.value }))}
+                              onChange={(e) => setDocDraft((p) => ({ ...p, name: capitalizeFirst(e.target.value) }))}
                             />
                             <FieldError>{docErrors.name}</FieldError>
                           </div>
                           <div>
                             <label className={LABEL_CLASS}>Relation<RequiredMark /></label>
-                            <input
-                              maxLength={CHILD_FIELD_LIMITS.relation}
-                              className={cn(INPUT_CLASS, docErrors.relation && ERROR_INPUT_CLASS)}
+                            <SearchableSelect
                               value={docDraft.relation}
-                              onChange={(e) => setDocDraft((p) => ({ ...p, relation: e.target.value }))}
+                              onChange={(v) => setDocDraft((p) => ({ ...p, relation: v }))}
+                              options={FAMILY_RELATIONS.map((r) => ({ value: r, label: r }))}
+                              placeholder="Select relation"
+                              buttonClassName={cn(INPUT_CLASS, docErrors.relation && ERROR_INPUT_CLASS)}
                             />
                             <FieldError>{docErrors.relation}</FieldError>
                           </div>
@@ -1337,9 +1344,10 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                             <DatePicker
                               value={docDraft.valid_till}
                               min={docDraft.valid_from || undefined}
-                              buttonClassName={INPUT_CLASS}
+                              buttonClassName={cn(INPUT_CLASS, docErrors.valid_till && ERROR_INPUT_CLASS)}
                               onChange={(v) => setDocDraft((p) => ({ ...p, valid_till: v }))}
                             />
+                            <FieldError>{docErrors.valid_till}</FieldError>
                           </div>
                         </div>
                         <div className="mt-4">

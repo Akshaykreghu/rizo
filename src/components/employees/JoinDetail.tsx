@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useSetupOptions, useSetupRows } from '@/lib/setupOptions';
-import { Check, GraduationCap, History, Users, FileText, Plus, Trash2, Eye, Pencil } from 'lucide-react';
+import { Check, GraduationCap, History, Users, FileText, Plus, Trash2, Eye, EyeOff, Pencil, Star } from 'lucide-react';
 import { cn, formatDate } from '@/lib/utils';
 import { RequiredMark } from '@/components/ui/RequiredMark';
 import { FilePreviewModal } from '@/components/ui/FilePreviewModal';
@@ -17,8 +17,8 @@ import { EmployeeSearch } from '@/components/employees/EmployeeSearch';
 import { EMP_TYPES } from '@/lib/employeeOptions';
 import { EMPLOYEE_FIELD_LIMITS, CHILD_FIELD_LIMITS } from '@/lib/employeeFieldLimits';
 import {
-  FAMILY_GENDERS, marksError, salaryError, contactNumberError, documentNumberError,
-  onlyDigits, onlyAlphanumeric, onlyPercent, cleanName,
+  FAMILY_GENDERS, FAMILY_RELATIONS, marksError, salaryError, contactNumberError, documentNumberError,
+  onlyDigits, onlyAlphanumeric, onlyPercent, cleanName, capitalizeFirst,
 } from '@/lib/childRowValidation';
 import {
   dobError, mobileError, aadhaarError, panError, esiError, uanError, lwfError,
@@ -100,6 +100,13 @@ const MAX_DOB = (() => {
   d.setFullYear(d.getFullYear() - 18);
   return localDateStr(d);
 })();
+// Matches lib/validation.ts's futureDateError check — blocks a future pick in the calendar itself.
+const TODAY = localDateStr(new Date());
+
+// Same shape (and same bespoke Add/Edit form) as the Employee Detail view's Family section —
+// this used to be the generic RepeatableRows table here instead, which had no room for Blood
+// Group / Alternative Number / Nominee / Emergency Contact at all.
+const EMPTY_FAMILY = { name: '', relation: '', gender: '', DOB: '', blood_group: '', nationality: 'Indian', contact_number: '', alternate_number: '', is_nominee: 'N', emergency_contact: 'N' };
 
 const INPUT_CLASS = 'w-full px-3 py-2 border border-slate-200 rounded-lg text-sm text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]/40 focus:border-[color:var(--color-primary)]/40 transition-colors duration-[180ms]';
 const ERROR_INPUT_CLASS = 'border-[color:var(--color-danger)] focus:ring-[color:var(--color-danger)]/25 focus:border-[color:var(--color-danger)]';
@@ -168,6 +175,7 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
   const [savedSnapshot, setSavedSnapshot] = useState(() => (id ? '' : JSON.stringify({ ...EMPTY_FORM })));
   const [onboardForm, setOnboardForm] = useState({ ...EMPTY_ONBOARD_FORM });
   const [onboardFieldErrors, setOnboardFieldErrors] = useState<Record<string, string>>({});
+  const [showPassword, setShowPassword] = useState(false);
   const [formError, setFormError] = useState('');
   const [docFile, setDocFile] = useState('');
   const [showDocForm, setShowDocForm] = useState(false);
@@ -176,6 +184,11 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
   const [replacingPkey, setReplacingPkey] = useState<number | null>(null);
   const [docSaving, setDocSaving] = useState(false);
   const [previewDoc, setPreviewDoc] = useState<{ url: string; title: string } | null>(null);
+  const [showFamilyForm, setShowFamilyForm] = useState(false);
+  const [familyDraft, setFamilyDraft] = useState(EMPTY_FAMILY);
+  const [familyErrors, setFamilyErrors] = useState<Record<string, string>>({});
+  const [familySaving, setFamilySaving] = useState(false);
+  const [editingFamilyPkey, setEditingFamilyPkey] = useState<number | null>(null);
   const [step, setStep] = useState(initialStep ?? 0);
   const [completed, setCompleted] = useState<Set<number>>(new Set());
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
@@ -311,8 +324,10 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
   };
 
   function updateField(key: string, raw: string) {
+    // Auto-capitalize the first letter on every plain text field except email (case-sensitive).
+    const capped = key === 'email' ? raw : capitalizeFirst(raw);
     // Also caps number inputs, which ignore the maxLength attribute.
-    const value = EMPLOYEE_FIELD_LIMITS[key] ? raw.slice(0, EMPLOYEE_FIELD_LIMITS[key]) : raw;
+    const value = EMPLOYEE_FIELD_LIMITS[key] ? capped.slice(0, EMPLOYEE_FIELD_LIMITS[key]) : capped;
     setForm((prev) => ({ ...prev, [key]: value }));
     const validator = fieldValidators[key];
     if (validator) setFieldErrors((prev) => ({ ...prev, [key]: validator(value) }));
@@ -485,6 +500,55 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
       setDocErrors({ form: err instanceof Error ? err.message : String(err) });
     } finally {
       setDocSaving(false);
+    }
+  }
+
+  // Family gets the same bespoke Add/Edit card + list as the Employee view (EmployeeDetail),
+  // rather than the generic RepeatableRows table — which had no room for Blood Group /
+  // Alternative Number / Nominee / Emergency Contact.
+  function openAddFamily() {
+    setFamilyDraft(EMPTY_FAMILY);
+    setEditingFamilyPkey(null);
+    setFamilyErrors({});
+    setShowFamilyForm(true);
+  }
+
+  function openEditFamily(row: Record<string, unknown>) {
+    const str = (k: string, fallback = '') => (row[k] == null ? fallback : String(row[k]));
+    setFamilyDraft({
+      name: str('name'), relation: str('relation'), gender: str('gender'), DOB: str('DOB').slice(0, 10),
+      blood_group: str('blood_group'), nationality: str('nationality'), contact_number: str('contact_number'),
+      alternate_number: str('alternate_number'), is_nominee: str('is_nominee', 'N'), emergency_contact: str('emergency_contact', 'N'),
+    });
+    setEditingFamilyPkey(Number(row.emp_family_pkey));
+    setFamilyErrors({});
+    setShowFamilyForm(true);
+  }
+
+  async function submitFamily() {
+    const errors = {
+      name: familyDraft.name.trim() ? '' : 'Name is required',
+      relation: familyDraft.relation ? '' : 'Relation is required',
+      gender: familyDraft.gender ? '' : 'Gender is required',
+      DOB: familyDraft.DOB ? '' : 'Date of birth is required',
+      contact_number: familyDraft.contact_number.trim() ? (contactNumberError(familyDraft.contact_number) ?? '') : 'Contact number is required',
+      alternate_number: contactNumberError(familyDraft.alternate_number, 'Alternative number') ?? '',
+    };
+    if (Object.values(errors).some(Boolean)) {
+      setFamilyErrors(errors);
+      return;
+    }
+    setFamilyErrors({});
+    setFamilySaving(true);
+    try {
+      if (editingFamilyPkey != null) await updateChild('family')(editingFamilyPkey, familyDraft);
+      else await addChild('family')(familyDraft);
+      setShowFamilyForm(false);
+      setEditingFamilyPkey(null);
+    } catch (err) {
+      setFamilyErrors({ form: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setFamilySaving(false);
     }
   }
 
@@ -881,32 +945,210 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
                 { key: 'designation', label: 'Designation', required: true, maxLength: CHILD_FIELD_LIMITS.designation },
                 { key: 'department', label: 'Department', required: true, maxLength: CHILD_FIELD_LIMITS.department },
                 { key: 'from_date', label: 'From', type: 'date', required: true },
-                { key: 'to_date', label: 'To', type: 'date', required: true, minFromKey: 'from_date' },
+                { key: 'to_date', label: 'To', type: 'date', required: true, minFromKey: 'from_date', requiredUnless: 'currently_working' },
                 { key: 'salary', label: 'Salary', required: true, maxLength: CHILD_FIELD_LIMITS.salary, inputMode: 'numeric', sanitize: onlyDigits, validate: salaryError },
+                { key: 'currently_working', label: 'Currently working here', type: 'checkbox' },
               ]}
             />
           </CollapsibleSection>
 
           <CollapsibleSection title="Family" icon={Users}>
-            <RepeatableRows
-              pkeyField="emp_family_pkey"
-              rows={family}
-              addLabel="Add family member"
-              onAdd={addChild('family')}
-              onRemove={removeChild('family')}
-              onUpdate={updateChild('family')}
-              fields={[
-                { key: 'name', label: 'Name', required: true, maxLength: CHILD_FIELD_LIMITS.name },
-                { key: 'relation', label: 'Relation', required: true, maxLength: CHILD_FIELD_LIMITS.relation },
-                { key: 'gender', label: 'Gender', type: 'select', required: true, options: FAMILY_GENDERS.map((g) => ({ value: g, label: g })) },
-                { key: 'DOB', label: 'Date of Birth', type: 'date', required: true },
-                {
-                  key: 'nationality', label: 'Nationality', type: 'select', defaultValue: 'Indian',
-                  options: nationalities.map((n) => ({ value: n.nationality, label: n.country_name })),
-                },
-                { key: 'contact_number', label: 'Contact Number', required: true, maxLength: CHILD_FIELD_LIMITS.contact_number, inputMode: 'numeric', sanitize: onlyDigits, validate: (v) => contactNumberError(v) },
-              ]}
-            />
+            {family.length === 0 && !showFamilyForm && (
+              <p className="text-sm text-slate-400 py-6 text-center border border-dashed border-slate-200 rounded-lg">
+                No family members added yet.
+              </p>
+            )}
+            {/* The member being edited is shown only in the form below, not repeated here. */}
+            {family.some((r) => !(showFamilyForm && Number(r.emp_family_pkey) === editingFamilyPkey)) && (
+              <div className="space-y-2.5">
+                {family.filter((r) => !(showFamilyForm && Number(r.emp_family_pkey) === editingFamilyPkey)).map((row) => {
+                  const dob = row.DOB ? new Date(String(row.DOB)) : null;
+                  const age = dob && !Number.isNaN(dob.getTime())
+                    ? Math.floor((Date.now() - dob.getTime()) / (365.25 * 24 * 60 * 60 * 1000))
+                    : null;
+                  return (
+                    <div
+                      key={String(row.emp_family_pkey)}
+                      className="flex items-center gap-3.5 rounded-lg border border-slate-100 bg-white px-4 py-3.5 hover:border-slate-200 transition-colors duration-150"
+                    >
+                      <span className="w-9 h-9 rounded-lg bg-[color:var(--color-primary)]/8 text-[color:var(--color-primary)] flex items-center justify-center flex-shrink-0">
+                        <Users className="w-4 h-4" />
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium text-[#0F172A] truncate flex items-center gap-1.5">
+                          {String(row.name || '—')}
+                          {row.is_nominee === 'Y' && <Star className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" fill="currentColor" />}
+                        </p>
+                        <p className="text-xs text-slate-400 mt-0.5 truncate">
+                          {String(row.relation || '')}{age != null ? ` · ${age} yrs` : ''}{row.contact_number ? ` · ${row.contact_number}` : ''}
+                        </p>
+                      </div>
+                      {row.is_nominee === 'Y' && (
+                        <span className="text-[11px] font-medium px-2 py-1 rounded-full bg-amber-50 text-amber-600 flex-shrink-0">
+                          Nominee
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => openEditFamily(row)}
+                        className="p-2 rounded-lg text-slate-400 hover:text-[color:var(--color-primary)] hover:bg-slate-50 transition-colors duration-150 flex-shrink-0"
+                        title="Edit"
+                      >
+                        <Pencil className="w-4 h-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => removeChild('family')(Number(row.emp_family_pkey))}
+                        className="p-2 rounded-lg text-slate-400 hover:text-[color:var(--color-danger)] hover:bg-slate-50 transition-colors duration-150 flex-shrink-0"
+                        title="Delete"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {!showFamilyForm && (
+              <button
+                type="button"
+                onClick={openAddFamily}
+                className="mt-4 inline-flex items-center gap-1.5 text-sm font-medium text-[color:var(--color-primary)] hover:opacity-80 transition-opacity duration-150"
+              >
+                <Plus className="w-4 h-4" /> Add Family Member
+              </button>
+            )}
+
+            {showFamilyForm && (
+              <div className="mt-4 rounded-xl border border-slate-100 bg-slate-50/60 p-5">
+                <h3 className="text-sm font-semibold text-[#0F172A] mb-4">{editingFamilyPkey != null ? 'Edit Family Member' : 'Add Family Member'}</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-5 gap-y-4">
+                  <div>
+                    <label className={LABEL_CLASS}>Name<RequiredMark /></label>
+                    <input
+                      maxLength={CHILD_FIELD_LIMITS.name}
+                      className={cn(INPUT_CLASS, familyErrors.name && ERROR_INPUT_CLASS)}
+                      value={familyDraft.name}
+                      onChange={(e) => setFamilyDraft((p) => ({ ...p, name: capitalizeFirst(e.target.value) }))}
+                    />
+                    <FieldError>{familyErrors.name}</FieldError>
+                  </div>
+                  <div>
+                    <label className={LABEL_CLASS}>Relation<RequiredMark /></label>
+                    <SearchableSelect
+                      value={familyDraft.relation}
+                      onChange={(v) => setFamilyDraft((p) => ({ ...p, relation: v }))}
+                      options={FAMILY_RELATIONS.map((r) => ({ value: r, label: r }))}
+                      placeholder="Select relation"
+                      buttonClassName={cn(INPUT_CLASS, familyErrors.relation && ERROR_INPUT_CLASS)}
+                    />
+                    <FieldError>{familyErrors.relation}</FieldError>
+                  </div>
+                  <div>
+                    <label className={LABEL_CLASS}>Gender<RequiredMark /></label>
+                    <SearchableSelect
+                      value={familyDraft.gender}
+                      onChange={(v) => setFamilyDraft((p) => ({ ...p, gender: v }))}
+                      options={FAMILY_GENDERS.map((g) => ({ value: g, label: g }))}
+                      placeholder="Select gender"
+                      buttonClassName={cn(INPUT_CLASS, familyErrors.gender && ERROR_INPUT_CLASS)}
+                    />
+                    <FieldError>{familyErrors.gender}</FieldError>
+                  </div>
+                  <div>
+                    <label className={LABEL_CLASS}>Date of Birth<RequiredMark /></label>
+                    <DatePicker
+                      value={familyDraft.DOB}
+                      onChange={(v) => setFamilyDraft((p) => ({ ...p, DOB: v }))}
+                      max={TODAY}
+                      required
+                      buttonClassName={cn(INPUT_CLASS, familyErrors.DOB && ERROR_INPUT_CLASS)}
+                    />
+                    <FieldError>{familyErrors.DOB}</FieldError>
+                  </div>
+                  <div>
+                    <label className={LABEL_CLASS}>Blood Group</label>
+                    <input
+                      maxLength={CHILD_FIELD_LIMITS.blood_group}
+                      className={INPUT_CLASS}
+                      value={familyDraft.blood_group}
+                      onChange={(e) => setFamilyDraft((p) => ({ ...p, blood_group: capitalizeFirst(e.target.value) }))}
+                    />
+                  </div>
+                  <div>
+                    <label className={LABEL_CLASS}>Nationality</label>
+                    <SearchableSelect
+                      value={familyDraft.nationality}
+                      onChange={(v) => setFamilyDraft((p) => ({ ...p, nationality: v }))}
+                      options={nationalities.map((n) => ({ value: n.nationality, label: n.country_name }))}
+                      placeholder="Select nationality"
+                      buttonClassName={INPUT_CLASS}
+                    />
+                  </div>
+                  <div>
+                    <label className={LABEL_CLASS}>Contact Number<RequiredMark /></label>
+                    <input
+                      maxLength={CHILD_FIELD_LIMITS.contact_number}
+                      inputMode="numeric"
+                      className={cn(INPUT_CLASS, familyErrors.contact_number && ERROR_INPUT_CLASS)}
+                      value={familyDraft.contact_number}
+                      onChange={(e) => setFamilyDraft((p) => ({ ...p, contact_number: onlyDigits(e.target.value) }))}
+                    />
+                    <FieldError>{familyErrors.contact_number}</FieldError>
+                  </div>
+                  <div>
+                    <label className={LABEL_CLASS}>Alternative Number</label>
+                    <input
+                      maxLength={CHILD_FIELD_LIMITS.contact_number}
+                      inputMode="numeric"
+                      className={cn(INPUT_CLASS, familyErrors.alternate_number && ERROR_INPUT_CLASS)}
+                      value={familyDraft.alternate_number}
+                      onChange={(e) => setFamilyDraft((p) => ({ ...p, alternate_number: onlyDigits(e.target.value) }))}
+                    />
+                    <FieldError>{familyErrors.alternate_number}</FieldError>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-4 mt-4">
+                  <label className="flex items-center gap-2 text-sm text-slate-600">
+                    <input
+                      type="checkbox"
+                      checked={familyDraft.is_nominee === 'Y'}
+                      onChange={(e) => setFamilyDraft((p) => ({ ...p, is_nominee: e.target.checked ? 'Y' : 'N' }))}
+                      className="accent-[color:var(--color-primary)]"
+                    />
+                    Mark as Nominee
+                  </label>
+                  <label className="flex items-center gap-2 text-sm text-slate-600">
+                    <input
+                      type="checkbox"
+                      checked={familyDraft.emergency_contact === 'Y'}
+                      onChange={(e) => setFamilyDraft((p) => ({ ...p, emergency_contact: e.target.checked ? 'Y' : 'N' }))}
+                      className="accent-[color:var(--color-primary)]"
+                    />
+                    Mark as Emergency Contact
+                  </label>
+                </div>
+                <FieldError>{familyErrors.form}</FieldError>
+                <div className="flex items-center gap-2 mt-5">
+                  <button
+                    type="button"
+                    onClick={submitFamily}
+                    disabled={familySaving}
+                    className="px-4 py-2 text-sm font-medium bg-[color:var(--color-primary)] hover:opacity-90 disabled:opacity-50 text-white rounded-lg transition-opacity duration-150"
+                  >
+                    {familySaving ? 'Saving…' : editingFamilyPkey != null ? 'Save Changes' : 'Save Family Member'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setShowFamilyForm(false); setEditingFamilyPkey(null); }}
+                    className="px-4 py-2 text-sm font-medium text-slate-500 hover:bg-slate-100 rounded-lg transition-colors duration-150"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
           </CollapsibleSection>
 
           <CollapsibleSection title="Documents" icon={FileText}>
@@ -1020,17 +1262,18 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
                       maxLength={CHILD_FIELD_LIMITS.name}
                       className={cn(INPUT_CLASS, docErrors.name && ERROR_INPUT_CLASS)}
                       value={docDraft.name}
-                      onChange={(e) => setDocDraft((p) => ({ ...p, name: e.target.value }))}
+                      onChange={(e) => setDocDraft((p) => ({ ...p, name: capitalizeFirst(e.target.value) }))}
                     />
                     <FieldError>{docErrors.name}</FieldError>
                   </div>
                   <div>
                     <label className={LABEL_CLASS}>Relation<RequiredMark /></label>
-                    <input
-                      maxLength={CHILD_FIELD_LIMITS.relation}
-                      className={cn(INPUT_CLASS, docErrors.relation && ERROR_INPUT_CLASS)}
+                    <SearchableSelect
                       value={docDraft.relation}
-                      onChange={(e) => setDocDraft((p) => ({ ...p, relation: e.target.value }))}
+                      onChange={(v) => setDocDraft((p) => ({ ...p, relation: v }))}
+                      options={FAMILY_RELATIONS.map((r) => ({ value: r, label: r }))}
+                      placeholder="Select relation"
+                      buttonClassName={cn(INPUT_CLASS, docErrors.relation && ERROR_INPUT_CLASS)}
                     />
                     <FieldError>{docErrors.relation}</FieldError>
                   </div>
@@ -1114,12 +1357,23 @@ export function JoinDetail({ id, onBack, showBackLink = true, onDirtyChange, onC
             </div>
             <div>
               <label className={LABEL_CLASS}>Initial Password <span className="text-[color:var(--color-danger)]">*</span></label>
-              <input
-                type="password"
-                autoComplete="new-password"
-                className={cn(INPUT_CLASS, onboardFieldErrors.password && ERROR_INPUT_CLASS)}
-                {...fOnboard('password')}
-              />
+              <div className="relative">
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  autoComplete="new-password"
+                  className={cn(INPUT_CLASS, 'pr-9', onboardFieldErrors.password && ERROR_INPUT_CLASS)}
+                  {...fOnboard('password')}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((v) => !v)}
+                  tabIndex={-1}
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                >
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
               <FieldError>{onboardFieldErrors.password}</FieldError>
             </div>
           </div>

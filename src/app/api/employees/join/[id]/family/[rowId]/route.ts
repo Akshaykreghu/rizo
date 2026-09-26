@@ -2,7 +2,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
 import { NextRequest, NextResponse } from 'next/server';
-import type { ResultSetHeader } from 'mysql2';
+import type { ResultSetHeader } from 'mysql2';
 import { childRowError } from '@/lib/childRowValidation';
 
 export async function DELETE(
@@ -43,11 +43,14 @@ export async function PUT(
   const pool = await getCompanyPool(session.user.companyCode);
 
   const [result] = await pool.execute<ResultSetHeader>(
-    `UPDATE family SET name = ?, DOB = ?, gender = ?, relation = ?, nationality = ?, contact_number = ?
+    `UPDATE family
+     SET name = ?, DOB = ?, gender = ?, blood_group = ?, relation = ?, nationality = ?,
+         contact_number = ?, alternate_number = ?, emergency_contact = ?, remarks = ?, is_nominee = ?
      WHERE emp_family_pkey = ? AND emp_join_fkey = ?`,
     [
-      body.name, body.DOB || null, body.gender ?? null, body.relation ?? null, body.nationality ?? null,
-      body.contact_number ?? null, rowId, id,
+      body.name, body.DOB || null, body.gender ?? null, body.blood_group ?? null, body.relation ?? null,
+      body.nationality ?? null, body.contact_number ?? null, body.alternate_number ?? null,
+      body.emergency_contact ?? 'N', body.remarks ?? null, body.is_nominee ?? 'N', rowId, id,
     ]
   );
 

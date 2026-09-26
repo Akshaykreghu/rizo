@@ -46,7 +46,13 @@ export function SearchableSelect({
   const popupRef = useRef<HTMLDivElement>(null);
   // The list is portalled to <body> with fixed positioning so a scroll area, collapsible section
   // or modal around the field can't clip it; it opens upward when there's no room below.
-  const [pos, setPos] = useState<{ top: number; left: number; width: number; maxList: number } | null>(null);
+  // `top`/`bottom` are mutually exclusive: whichever the popup doesn't need is null. Anchoring an
+  // upward-opening popup by `bottom` (not a computed `top`) is what actually matters here — with a
+  // short option list, the popup's real height is far less than the `maxList` cap it's allowed to
+  // grow to, so a `top` computed from that cap left a gap of empty space between the popup and the
+  // field it belongs to. `bottom` has the browser grow the box upward from the field regardless of
+  // how tall its content turns out to be, so it always sits flush against it.
+  const [pos, setPos] = useState<{ top: number | null; bottom: number | null; left: number; width: number; maxList: number } | null>(null);
   const place = useCallback(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -56,10 +62,10 @@ export function SearchableSelect({
     const above = r.top - 12;
     const up = below < 180 && above > below;
     const maxList = Math.max(120, Math.min(224, (up ? above : below) - SEARCH - 8));
-    const height = SEARCH + maxList + 8;
     const width = Math.max(r.width, 180);
     setPos({
-      top: up ? Math.max(8, r.top - height - 4) : r.bottom + 4,
+      top: up ? null : r.bottom + 4,
+      bottom: up ? Math.max(8, window.innerHeight - r.top + 4) : null,
       left: Math.min(Math.max(8, r.left), window.innerWidth - width - 8),
       width,
       maxList,
@@ -127,7 +133,12 @@ export function SearchableSelect({
       {open && pos && typeof document !== 'undefined' && createPortal(
         <div
           ref={popupRef}
-          style={{ position: 'fixed', top: pos.top, left: pos.left, width: pos.width }}
+          style={{
+            position: 'fixed',
+            ...(pos.top != null ? { top: pos.top } : { bottom: pos.bottom as number }),
+            left: pos.left,
+            width: pos.width,
+          }}
           className="z-[1400] bg-white border border-gray-200 rounded-lg shadow-lg overflow-hidden"
         >
           <div className="flex items-center gap-2 px-2.5 py-2 border-b border-gray-100">
