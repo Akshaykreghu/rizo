@@ -59,6 +59,14 @@ const FIELD_TAB: Record<string, TabKey> = {
   contract_end_date: 'onboarding',
 };
 
+// PF/UAN are swapped on this screen relative to their column names — see the fieldValidators
+// comment lower down for the full story. EMPLOYEE_FIELD_LIMITS' own pf/company_pf entries are
+// sized for the *unswapped* Join screen (pf=PF Number/22, company_pf=UAN/12), so using them as-is
+// here would silently truncate "PF Number" (bound to company_pf) to 12 characters on every
+// keystroke, and let "UAN No" (bound to pf) run out to 22 digits instead of capping at 12 — before
+// the input's own maxLength attribute ever gets a say, since this runs on the state value itself.
+const SWAPPED_PF_LIMITS: Record<string, number> = { pf: 12, company_pf: 22 };
+
 // nationality defaults to "Indian" (matches the India default on the profile's nationality_id).
 const EMPTY_DOC = { document_type: '', document_number: '', name: '', relation: '', nationality: 'Indian', valid_from: '', valid_till: '' };
 const EMPTY_FAMILY = { name: '', relation: '', gender: '', DOB: '', blood_group: '', nationality: 'Indian', contact_number: '', alternate_number: '', is_nominee: 'N', emergency_contact: 'N' };
@@ -404,7 +412,8 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
     // Auto-capitalize the first letter on every plain text field except email (case-sensitive).
     const capped = key === 'email' ? raw : capitalizeFirst(raw);
     // Also caps number inputs, which ignore the maxLength attribute.
-    const value = EMPLOYEE_FIELD_LIMITS[key] ? capped.slice(0, EMPLOYEE_FIELD_LIMITS[key]) : capped;
+    const limit = SWAPPED_PF_LIMITS[key] ?? EMPLOYEE_FIELD_LIMITS[key];
+    const value = limit ? capped.slice(0, limit) : capped;
     const next = { ...form, [key]: value };
     // Probation days only apply to a Probation hire (the field is hidden otherwise).
     if (key === 'emp_type' && value !== 'Probation') next.probation = '';
@@ -420,7 +429,7 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
   function f(key: string) {
     return {
       value: form[key] ?? '',
-      maxLength: EMPLOYEE_FIELD_LIMITS[key],
+      maxLength: SWAPPED_PF_LIMITS[key] ?? EMPLOYEE_FIELD_LIMITS[key],
       onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => updateField(key, e.target.value),
     };
   }
@@ -806,13 +815,13 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                   <div>
                     {/* Bound to company_pf, not pf — see the fieldValidators comment above. */}
                     <label className={LABEL_CLASS}>PF Number</label>
-                    <input className={cn(INPUT_CLASS, fieldErrors.company_pf && ERROR_INPUT_CLASS)} {...f('company_pf')} maxLength={25} />
+                    <input className={cn(INPUT_CLASS, fieldErrors.company_pf && ERROR_INPUT_CLASS)} {...f('company_pf')} />
                     <FieldError>{fieldErrors.company_pf}</FieldError>
                   </div>
                   <div>
                     {/* Bound to pf, not company_pf — see the fieldValidators comment above. */}
                     <label className={LABEL_CLASS}>UAN No</label>
-                    <input className={cn(INPUT_CLASS, fieldErrors.pf && ERROR_INPUT_CLASS)} {...f('pf')} maxLength={12} />
+                    <input className={cn(INPUT_CLASS, fieldErrors.pf && ERROR_INPUT_CLASS)} {...f('pf')} />
                     <FieldError>{fieldErrors.pf}</FieldError>
                   </div>
                   <div>

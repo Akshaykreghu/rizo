@@ -889,7 +889,7 @@ export default function EssAboutPage() {
                         comment lower down: legacy's own onboarding step swaps pf/company_pf when
                         copying emp_join into emp_details, so emp_details.pf actually holds the
                         UAN number and emp_details.company_pf actually holds the PF number. */}
-                    <EF label="PF Number" name="company_pf" form={form} onChange={handleChange} maxLength={25} />
+                    <EF label="PF Number" name="company_pf" form={form} onChange={handleChange} maxLength={22} />
                     <EF label="UAN Number" name="pf" form={form} onChange={handleChange} maxLength={12} />
                     <EF label="ESI Number" name="esi" form={form} onChange={handleChange} />
                     <EF label="ESI Dispensary" name="esi_dispensary" form={form} onChange={handleChange} />
