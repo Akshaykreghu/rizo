@@ -186,12 +186,6 @@ export default function AttendanceUploadPage() {
           <Download className="w-3.5 h-3.5" /> Download Template
         </a>
         <button
-          onClick={() => { setAddError(null); setShowAdd(true); }}
-          className={cn(BTN_BASE, 'bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)] text-white ml-auto')}
-        >
-          <Plus className="w-3.5 h-3.5" /> Add Attendance
-        </button>
-        <button
           onClick={() => fileInputRef.current?.click()}
           disabled={upload.isPending}
           className={cn(BTN_BASE, 'bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)] text-white')}
@@ -199,6 +193,12 @@ export default function AttendanceUploadPage() {
           <Upload className="w-3.5 h-3.5" /> {upload.isPending ? 'Uploading…' : 'Upload File'}
         </button>
         <input ref={fileInputRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleFileSelected} />
+        <button
+          onClick={() => { setAddError(null); setShowAdd(true); }}
+          className={cn(BTN_BASE, 'bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)] text-white ml-auto')}
+        >
+          <Plus className="w-3.5 h-3.5" /> Add Attendance
+        </button>
         {checked.size > 0 && (
           <button
             onClick={() => remove.mutate()}

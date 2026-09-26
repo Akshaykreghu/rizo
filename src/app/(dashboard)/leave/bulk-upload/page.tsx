@@ -10,8 +10,9 @@ import { cn } from '@/lib/utils';
 import { useHeaderSlot } from '@/components/layout/HeaderSlotContext';
 import { DataTable } from '@/components/data-table/DataTable';
 import { EmployeeSearch } from '@/components/employees/EmployeeSearch';
-import { BranchSearch } from '@/components/employees/BranchSearch';
+import { SearchableSelect } from '@/components/ui/SearchableSelect';
 import { useSetupOptions, type SetupOption } from '@/lib/setupOptions';
+import { recentMonthOptions } from '@/lib/attendance';
 
 const BTN_BASE =
   'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[9px] text-[12.5px] font-semibold shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
@@ -66,6 +67,17 @@ function ManualGrid({
   const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
 
   const templateHref = `/api/leave/bulk-upload/template?branch=${encodeURIComponent(branch)}&employee=${encodeURIComponent(employee)}`;
+
+  const { data: employeeOptions = [] } = useQuery<{ value: string; label: string }[]>({
+    queryKey: ['leave-bulk-upload-employees', branch],
+    queryFn: () =>
+      fetch(`/api/employees?branch=${encodeURIComponent(branch)}&pageSize=1000`)
+        .then((r) => r.json())
+        .then((body) => (body.data ?? []).map((e: { emp_pkey: number; first_name: string; last_name: string; emp_id: string }) => ({
+          value: String(e.emp_pkey),
+          label: `${e.first_name} ${e.last_name ?? ''}`.trim() + (e.emp_id ? ` (${e.emp_id})` : ''),
+        }))),
+  });
 
   const upload = useMutation({
     mutationFn: (file: File) => {
@@ -183,46 +195,61 @@ function ManualGrid({
 
   return (
     <div className="mt-6">
-      <div className="flex items-center justify-between mb-3">
-        <h2 className="text-[15px] font-semibold text-[#0F172A]">Leave Upload Records</h2>
+      <div className="surface-card rounded-xl px-4 py-2.5 mb-4 flex flex-wrap items-end gap-3">
+        <div>
+          <label className="block text-[11.5px] font-medium text-slate-500 mb-1">Month</label>
+          <SearchableSelect
+            value={month}
+            onChange={(v) => { setMonth(v); setPage(1); }}
+            options={recentMonthOptions()}
+            placeholder="Select month"
+            className="min-w-[150px]"
+            buttonClassName="!py-1.5 !text-[12.5px] !rounded-[9px]"
+          />
+        </div>
+        <div>
+          <label className="block text-[11.5px] font-medium text-slate-500 mb-1">Branch</label>
+          <SearchableSelect
+            value={branch}
+            onChange={(v) => { setBranch(v); setEmployee(''); setPage(1); }}
+            options={branches}
+            placeholder="All branches"
+            className="min-w-[170px]"
+            buttonClassName="!py-1.5 !text-[12.5px] !rounded-[9px]"
+          />
+        </div>
+        <div>
+          <label className="block text-[11.5px] font-medium text-slate-500 mb-1">Employee</label>
+          <SearchableSelect
+            value={employee}
+            onChange={(v) => { setEmployee(v); setPage(1); }}
+            options={employeeOptions}
+            placeholder="All employees"
+            className="min-w-[200px]"
+            buttonClassName="!py-1.5 !text-[12.5px] !rounded-[9px]"
+          />
+        </div>
+        <a
+          href={templateHref}
+          className={cn(BTN_BASE, 'bg-white border border-slate-200 hover:bg-slate-50 text-slate-600')}
+        >
+          <Download className="w-3.5 h-3.5" /> Download Template
+        </a>
+        <button
+          onClick={() => fileInputRef.current?.click()}
+          disabled={upload.isPending}
+          className={cn(BTN_BASE, 'bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)] text-white')}
+        >
+          <Upload className="w-3.5 h-3.5" /> {upload.isPending ? 'Uploading…' : 'Upload File'}
+        </button>
+        <input ref={fileInputRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleFileSelected} />
         <button
           onClick={() => setShowAdd(true)}
-          className={cn(BTN_BASE, 'bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)] text-white')}
+          className={cn(BTN_BASE, 'bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)] text-white ml-auto')}
         >
           <Plus className="w-3.5 h-3.5" /> Apply Leave
         </button>
-      </div>
-
-      <div className="surface-card rounded-xl px-4 py-2.5 mb-4 flex flex-wrap items-end gap-3">
-        <div className="w-64">
-          <label className="block text-[11.5px] font-medium text-slate-500 mb-1">Branch</label>
-          <BranchSearch value={branch} onChange={(v) => { setBranch(v); setEmployee(''); setPage(1); }} branches={branches} />
-        </div>
-        <div className="w-[28rem]">
-          <label className="block text-[11.5px] font-medium text-slate-500 mb-1">Employee</label>
-          <EmployeeSearch value={employee} onChange={(v) => { setEmployee(v); setPage(1); }} emptyLabel="All employees" branch={branch} />
-        </div>
-        <div>
-          <label className="block text-[11.5px] font-medium text-slate-500 mb-1">Month</label>
-          <input type="month" value={month} onChange={(e) => { setMonth(e.target.value); setPage(1); }} className={INPUT_CLASS} />
-        </div>
-        <div className="flex items-center gap-2">
-          <a
-            href={templateHref}
-            className={cn(BTN_BASE, 'bg-white border border-slate-200 hover:bg-slate-50 text-slate-600')}
-          >
-            <Download className="w-3.5 h-3.5" /> Download Template
-          </a>
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            disabled={upload.isPending}
-            className={cn(BTN_BASE, 'bg-[color:var(--color-primary)] hover:bg-[color:var(--color-primary-dark)] text-white')}
-          >
-            <Upload className="w-3.5 h-3.5" /> {upload.isPending ? 'Uploading…' : 'Upload File'}
-          </button>
-          <input ref={fileInputRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleFileSelected} />
-        </div>
-        {message && <span className="text-[12.5px] text-slate-500">{message}</span>}
+        {message && <span className="w-full text-[12.5px] text-slate-500">{message}</span>}
       </div>
 
       {upload.isError && <p className="text-[12.5px] text-[color:var(--color-danger)] mb-3">{String(upload.error)}</p>}

@@ -1,7 +1,7 @@
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
-import { getAttPeriod, FIELD_COLUMNS } from '@/lib/attendance';
+import { getAttPeriod } from '@/lib/attendance';
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket } from 'mysql2';
 import * as XLSX from 'xlsx';
@@ -11,9 +11,11 @@ import * as XLSX from 'xlsx';
 // the 1st-to-last-day calendar month), plus Employee ID/Name/Direction. "Employee ID" is the login
 // user_id (user_credentials.user_id), matching uploadandsaveempctc()'s own lookup — same convention
 // already used by the Leave bulk-upload template. Rows are pre-filled with active employees who
-// have a login (upload can't resolve an emp_fkey without one); Direction and date cells are left
-// blank for the admin to fill in per employee (legacy's own template doesn't pre-split rows by
-// direction — one row covers one direction; duplicate a row to also record the other punch).
+// have a login (upload can't resolve an emp_fkey without one). Legacy's own template also does NOT
+// write the FIELDn status text into date cells — that SetCellValue call is commented out in
+// downloadempattendanceformat() (only the cell's fill COLOR is set from the status, as a visual hint,
+// never the text) — nor does it look at device_attandance, so an existing punch is never shown either.
+// Date cells here are left genuinely blank, matching that.
 
 export async function GET(request: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -61,36 +63,15 @@ export async function GET(request: NextRequest) {
     args
   );
 
-  // Pre-fill each date cell with the employee's existing attendance_register status for that day
-  // (P/WO/LOP/HO/NA/leave code), matching downloadempattendanceformat() — the admin edits/adds punch
-  // times on top of what's already there rather than starting from a blank grid.
-  const registerByEmp = new Map<number, Record<string, string>>();
-  if (employees.length > 0) {
-    const placeholders = employees.map(() => '?').join(',');
-    const [registers] = await pool.execute<RowDataPacket[]>(
-      `SELECT emp_fkey, ${FIELD_COLUMNS.join(', ')}
-       FROM attendance_register
-       WHERE month_year = ? AND emp_fkey IN (${placeholders})`,
-      [month, ...employees.map((e) => e.emp_pkey)]
-    );
-    for (const row of registers) {
-      registerByEmp.set(row.emp_fkey, row);
-    }
-  }
-
   // downloadempattendanceformat() emits TWO rows per employee — one with Direction pre-filled "in",
-  // one "out" — both carrying the same date/status pre-fill, so the admin only has to overwrite the
-  // date cells with actual punch times rather than also having to type the direction or duplicate
-  // rows by hand.
+  // one "out" — so the admin only has to fill in date cells with actual punch times, not also type
+  // the direction or duplicate rows by hand. Date cells themselves start blank (see note above).
   const headers = ['Employee ID *', 'Employee Name', 'Direction * (in/out)', ...dates];
-  const rows = employees.flatMap((e) => {
-    const register = registerByEmp.get(e.emp_pkey);
-    const dateValues = dates.map((_, i) => (register?.[FIELD_COLUMNS[i]] ?? '').toString().trim());
-    return [
-      [e.user_id, e.emp_name, 'in', ...dateValues],
-      [e.user_id, e.emp_name, 'out', ...dateValues],
-    ];
-  });
+  const blankDates = dates.map(() => '');
+  const rows = employees.flatMap((e) => [
+    [e.user_id, e.emp_name, 'in', ...blankDates],
+    [e.user_id, e.emp_name, 'out', ...blankDates],
+  ]);
 
   const worksheet = XLSX.utils.aoa_to_sheet([headers, ...rows]);
   const workbook = XLSX.utils.book_new();
