@@ -1,7 +1,7 @@
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
-import { createAdvanceRequest, listAdvanceRequests } from '@/lib/advances';
+import { createAdvanceRequest, listAdvanceRequests, type AdvanceRequestStatus } from '@/lib/advances';
 import { NextRequest, NextResponse } from 'next/server';
 
 // Salary Advance "My Request" flow. Employee submissions land here (Pending), NOT directly in
@@ -16,7 +16,7 @@ export async function GET(request: NextRequest) {
 
   const isAdmin = session.user.userGroup === 1;
   const empFkey = isAdmin ? request.nextUrl.searchParams.get('empFkey') : String(session.user.empFkey);
-  const requestStatus = request.nextUrl.searchParams.get('status') as 'Pending' | 'Approved' | 'Rejected' | null;
+  const requestStatus = request.nextUrl.searchParams.get('status') as AdvanceRequestStatus | null;
   const month = request.nextUrl.searchParams.get('month');
 
   const pool = await getCompanyPool(session.user.companyCode);

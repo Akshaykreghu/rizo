@@ -36,7 +36,7 @@ interface LoanRequestRow {
   intrest_rate: number;
   emi_start_month: string;
   remarks: string | null;
-  request_status: 'Pending' | 'Approved' | 'Rejected';
+  request_status: 'Pending' | 'Approved' | 'Rejected' | 'Deleted';
   admin_remarks: string | null;
   created_date: string;
 }
@@ -45,6 +45,7 @@ const STATUS_BADGE: Record<string, string> = {
   Pending: 'bg-amber-50 text-amber-700',
   Approved: 'bg-emerald-50 text-emerald-700',
   Rejected: 'bg-rose-50 text-rose-700',
+  Deleted: 'bg-slate-100 text-slate-500',
 };
 
 const INPUT_CLASS =
@@ -285,7 +286,7 @@ function LoansTab() {
 // approveLoanRequest() in lib/loans.ts. Rejecting leaves emp_loan/emp_loan_info untouched.
 function RequestsTab() {
   const queryClient = useQueryClient();
-  const [status, setStatus] = useState<'Pending' | 'Approved' | 'Rejected' | ''>('Pending');
+  const [status, setStatus] = useState<'Pending' | 'Approved' | 'Rejected' | 'Deleted' | ''>('Pending');
   const [message, setMessage] = useState<string | null>(null);
 
   const { data, isLoading } = useQuery<{ rows: LoanRequestRow[] }>({
@@ -369,6 +370,7 @@ function RequestsTab() {
           <option value="Pending">Pending</option>
           <option value="Approved">Approved</option>
           <option value="Rejected">Rejected</option>
+          <option value="Deleted">Deleted</option>
           <option value="">All</option>
         </select>
       </div>

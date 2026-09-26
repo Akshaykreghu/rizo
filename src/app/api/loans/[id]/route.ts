@@ -1,7 +1,7 @@
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
-import { getLoanDetail } from '@/lib/loans';
+import { getLoanDetail, markLoanRequestDeletedByLoanId } from '@/lib/loans';
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket } from 'mysql2';
 
@@ -32,6 +32,17 @@ export async function GET(
 // with live payroll deductions (payLoanAmount/markLoanCompleted write emp_loan_info rows that
 // payroll reads), so silently deleting one mid-repayment would abandon that trail with nothing to
 // reverse it. A freshly-submitted loan with zero payments can still be withdrawn immediately.
+//
+// Bug fix vs. legacy (which has the same gap): payroll_master_approve's loan-deduction cursor
+// filters ONLY on emp_loan_info.status — it never checks the parent emp_loan.status. Soft-deleting
+// just the emp_loan row (as legacy's deleteEmployeeloan() does) leaves any still-pending
+// emp_loan_info rows (paid_status='A'/'S') live, so the next payroll approval for this employee
+// would still silently deduct that EMI even though the loan itself has vanished from every list
+// (all of which filter emp_loan.status=1). Soft-deleting those rows too closes that gap.
+//
+// Also flips any emp_loan_request that produced this loan from Approved -> Deleted, so a request
+// doesn't keep showing "Approved" for a loan that no longer exists (visible to both admin and the
+// employee's own My Request view). A no-op for loans created directly via "New Loan".
 export async function DELETE(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -57,5 +68,7 @@ export async function DELETE(
   }
 
   await pool.execute('UPDATE emp_loan SET status = 0 WHERE emp_loan_pkey = ?', [id]);
+  await pool.execute(`UPDATE emp_loan_info SET status = 0 WHERE loan_pkey = ? AND status = 1`, [id]);
+  await markLoanRequestDeletedByLoanId(pool, Number(id), session.user.loginUserId);
   return NextResponse.json({ success: true });
 }

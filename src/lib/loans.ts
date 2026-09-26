@@ -420,9 +420,11 @@ export async function createLoanRequest(pool: Pool, input: LoanRequestInput, use
   return result.insertId;
 }
 
+export type LoanRequestStatus = 'Pending' | 'Approved' | 'Rejected' | 'Deleted';
+
 export interface LoanRequestListParams {
   empFkey?: number;
-  requestStatus?: 'Pending' | 'Approved' | 'Rejected';
+  requestStatus?: LoanRequestStatus;
   month?: string; // 'YYYY-MM'
 }
 
@@ -502,5 +504,17 @@ export async function rejectLoanRequest(pool: Pool, requestId: number, userId: s
      SET request_status = 'Rejected', admin_remarks = ?, reviewed_by = ?, reviewed_date = NOW(), modified_by = ?, modified_date = NOW()
      WHERE emp_loan_request_pkey = ?`,
     [adminRemarks ?? null, userId, userId, requestId]
+  );
+}
+
+// Called from DELETE /api/loans/[id] whenever a loan is deleted, regardless of how it was created.
+// Only flips a request from Approved -> Deleted when one actually produced this loan (the WHERE
+// clause matches nothing, and this is a safe no-op, for a loan created directly via "New Loan").
+export async function markLoanRequestDeletedByLoanId(pool: Pool, loanId: number, userId: string): Promise<void> {
+  await pool.execute(
+    `UPDATE emp_loan_request
+     SET request_status = 'Deleted', deleted_by = ?, deleted_date = NOW(), modified_by = ?, modified_date = NOW()
+     WHERE linked_loan_pkey = ? AND request_status = 'Approved'`,
+    [userId, userId, loanId]
   );
 }

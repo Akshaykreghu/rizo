@@ -87,6 +87,7 @@ function badge(status: string) {
     Approved: { bg: '#f0fdf4', c: '#16a34a' },
     Rejected: { bg: '#fef2f2', c: '#dc2626' },
     Removed: { bg: '#f9fafb', c: '#6b7280' },
+    Deleted: { bg: '#f9fafb', c: '#6b7280' },
     P: { bg: '#fefce8', c: '#d97706' },
     A: { bg: '#f0fdf4', c: '#16a34a' },
     R: { bg: '#fef2f2', c: '#dc2626' },
@@ -507,7 +508,7 @@ function RegularizationTab({ initialDate }: { initialDate?: string }) {
 // ── SALARY ADVANCE ────────────────────────────────────────────────────────────
 interface AdvanceRow {
   emp_advance_request_pkey: number; advance_amount: number; affected_month: string; remarks: string | null;
-  request_status: 'Pending' | 'Approved' | 'Rejected'; admin_remarks: string | null; created_date: string;
+  request_status: 'Pending' | 'Approved' | 'Rejected' | 'Deleted'; admin_remarks: string | null; created_date: string;
 }
 
 function AdvanceTab() {
@@ -642,7 +643,7 @@ function AdvanceTab() {
 // ── LOAN APPLICATION ──────────────────────────────────────────────────────────
 interface LoanRow {
   emp_loan_request_pkey: number; loan_amount: number; tenure: number; intrest_rate: number;
-  emi_start_month: string; remarks: string | null; request_status: 'Pending' | 'Approved' | 'Rejected';
+  emi_start_month: string; remarks: string | null; request_status: 'Pending' | 'Approved' | 'Rejected' | 'Deleted';
 }
 
 function LoanTab() {

@@ -75,9 +75,11 @@ export async function createAdvanceRequest(pool: Pool, input: AdvanceRequestInpu
   return result.insertId;
 }
 
+export type AdvanceRequestStatus = 'Pending' | 'Approved' | 'Rejected' | 'Deleted';
+
 export interface AdvanceRequestListParams {
   empFkey?: number;
-  requestStatus?: 'Pending' | 'Approved' | 'Rejected';
+  requestStatus?: AdvanceRequestStatus;
   month?: string; // 'YYYY-MM'
 }
 
@@ -155,6 +157,18 @@ export async function rejectAdvanceRequest(pool: Pool, requestId: number, userId
      SET request_status = 'Rejected', admin_remarks = ?, reviewed_by = ?, reviewed_date = NOW(), modified_by = ?, modified_date = NOW()
      WHERE emp_advance_request_pkey = ?`,
     [adminRemarks ?? null, userId, userId, requestId]
+  );
+}
+
+// Called from DELETE /api/advances/[id] whenever an advance is deleted, regardless of how it was
+// created. Only flips a request from Approved -> Deleted when one actually produced this advance
+// (a safe no-op for an advance created directly via the admin's "New Advance" form).
+export async function markAdvanceRequestDeletedByAdvanceId(pool: Pool, advanceId: number, userId: string): Promise<void> {
+  await pool.execute(
+    `UPDATE emp_advance_request
+     SET request_status = 'Deleted', deleted_by = ?, deleted_date = NOW(), modified_by = ?, modified_date = NOW()
+     WHERE linked_advance_pkey = ? AND request_status = 'Approved'`,
+    [userId, userId, advanceId]
   );
 }
 

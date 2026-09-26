@@ -1,6 +1,7 @@
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getCompanyPool } from '@/lib/db';
+import { markAdvanceRequestDeletedByAdvanceId } from '@/lib/advances';
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket } from 'mysql2';
 
@@ -11,6 +12,11 @@ import type { RowDataPacket } from 'mysql2';
 // carve-out: the request's own owner may withdraw it, not just admin. Unlike legacy, blocks
 // deleting an advance that's already been credited (is_credited='Y') — once payroll has actually
 // paid it out, silently deleting the record would erase that trail with no reversal.
+//
+// Also flips any emp_advance_request that produced this advance from Approved -> Deleted, so a
+// request doesn't keep showing "Approved" for an advance that no longer exists (visible to both
+// admin and the employee's own My Request view). A no-op for advances created directly via "New
+// Advance".
 export async function DELETE(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -34,5 +40,6 @@ export async function DELETE(
   }
 
   await pool.execute('UPDATE emp_advance SET status = 0 WHERE emp_advance_pkey = ?', [id]);
+  await markAdvanceRequestDeletedByAdvanceId(pool, Number(id), session.user.loginUserId);
   return NextResponse.json({ success: true });
 }
