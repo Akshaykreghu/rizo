@@ -237,14 +237,14 @@ export function RepeatableRows({ fields, rows, pkeyField, onAdd, onRemove, onUpd
                 buttonClassName={SELECT_BUTTON_CLASS}
               />
             ) : f.type === 'checkbox' ? (
-              <label className="flex items-center gap-2 h-9 text-sm text-gray-600 whitespace-nowrap">
+              <label className="flex items-start gap-2 min-h-9 py-1.5 text-sm text-gray-600">
                 <input
                   type="checkbox"
                   checked={draft[f.key] === 'Y'}
                   onChange={(e) => setCheckbox(f.key, e.target.checked)}
-                  className="accent-indigo-600"
+                  className="mt-0.5 flex-shrink-0 accent-indigo-600"
                 />
-                {f.label}
+                <span className="leading-snug">{f.label}</span>
               </label>
             ) : f.type === 'date' ? (
               <DatePicker

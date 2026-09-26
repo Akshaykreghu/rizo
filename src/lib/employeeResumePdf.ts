@@ -131,8 +131,11 @@ export async function downloadEmployeeResumePdf(empPkey: number) {
     ['Aadhaar ID', txt(e.id_card), 'Blood Group', txt(e.blood)],
     ['Guardian Name', txt(e.guradian), 'Relation', txt(e.relation_guardian)],
     ['Marital Status', txt(e.maritual_status), 'Education', txt(e.education)],
-    ['ESI', txt(e.esi), 'UAN', txt(e.company_pf)],
-    ['PF', txt(e.pf), 'PAN', txt(e.pan_no)],
+    // emp_details.pf holds the UAN number and emp_details.company_pf holds the PF number —
+    // legacy's own onboarding step swaps them when copying emp_join into emp_details (see
+    // components/employees/EmployeeDetail.tsx's fieldValidators comment for the full story).
+    ['ESI', txt(e.esi), 'UAN', txt(e.pf)],
+    ['PF', txt(e.company_pf), 'PAN', txt(e.pan_no)],
   ]);
   grid([
     ['Bank Name', txt(e.bank_name), 'Branch', txt(e.branch_name)],

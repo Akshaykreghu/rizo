@@ -150,10 +150,10 @@ const INP: React.CSSProperties = { width: '100%', padding: '7px 10px', fontSize:
 type FormState = Record<string, string>;
 // Searchable dropdowns (same behavior as Employee Join's) sized to match INP text inputs.
 const DD_BTN: React.CSSProperties = { padding: '7px 10px', fontSize: 12, borderRadius: 7 };
-function EF({ label, name, form, onChange, type = 'text', opts, full, cols, min, max, required, disabled }: {
+function EF({ label, name, form, onChange, type = 'text', opts, full, cols, min, max, maxLength, required, disabled }: {
   label?: string; name: string; form: FormState; onChange: (e: { target: { name: string; value: string } }) => void;
   type?: 'text' | 'date' | 'tel' | 'email' | 'textarea' | 'checkbox'; opts?: readonly string[]; full?: boolean; cols?: number;
-  min?: string; max?: string; required?: boolean; disabled?: boolean;
+  min?: string; max?: string; maxLength?: number; required?: boolean; disabled?: boolean;
 }) {
   const style: React.CSSProperties = { gridColumn: full ? '1 / -1' : cols ? `span ${cols}` : undefined };
   return (
@@ -176,7 +176,7 @@ function EF({ label, name, form, onChange, type = 'text', opts, full, cols, min,
       ) : (
         <input
           type={type} name={name} value={form[name] ?? ''} disabled={disabled}
-          onChange={(e) => onChange({ target: { name, value: e.target.value } })} min={min} max={max}
+          onChange={(e) => onChange({ target: { name, value: e.target.value } })} min={min} max={max} maxLength={maxLength}
           style={{ ...INP, ...(disabled ? { opacity: 0.5, cursor: 'not-allowed' } : {}) }}
         />
       )}
@@ -323,27 +323,29 @@ function FamilyTree({ family, emp }: { family: FamilyMember[]; emp: Employee | n
           <BracketDown count={parents.length} />
         </>
       )}
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'center' }}>
-        {partners.length > 0 && (
-          <div style={{ display: 'flex', alignItems: 'flex-start' }}>
-            {partners.map((p, i) => (
-              <div key={i} style={{ display: 'flex', alignItems: 'flex-start' }}>
-                <TreeNode name={p.name} relation={p.relation} dob={p.DOB} />
-                <div style={{ display: 'flex', alignItems: 'center', height: 64, paddingBottom: 24 }}>
-                  <div style={{ width: 16, height: 2, background: 'var(--border)' }} />
-                  <span style={{ fontSize: 14, color: '#e11d48', lineHeight: 1 }}>♥</span>
-                  <div style={{ width: 16, height: 2, background: 'var(--border)' }} />
-                </div>
+      {/* "You" sits in the middle column so the parents' drop-line (centered on the whole outer
+          container, same as this grid) always lands on it — a plain flex row centers the group
+          of partners+You+siblings as one block, so appending siblings shifted that block's
+          midpoint off of "You" itself; two 1fr side columns are always equal width regardless of
+          how much (or how little) content is in them, which keeps the middle column centered
+          without having to measure anything. */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', alignItems: 'flex-start' }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'flex-end' }}>
+          {partners.map((p, i) => (
+            <div key={i} style={{ display: 'flex', alignItems: 'flex-start' }}>
+              <TreeNode name={p.name} relation={p.relation} dob={p.DOB} />
+              <div style={{ display: 'flex', alignItems: 'center', height: 64, paddingBottom: 24 }}>
+                <div style={{ width: 16, height: 2, background: 'var(--border)' }} />
+                <span style={{ fontSize: 14, color: '#e11d48', lineHeight: 1 }}>♥</span>
+                <div style={{ width: 16, height: 2, background: 'var(--border)' }} />
               </div>
-            ))}
-          </div>
-        )}
+            </div>
+          ))}
+        </div>
         <TreeNode name={empName} isEmployee empInitials={empInits} />
-        {siblings.length > 0 && (
-          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 20, marginLeft: 20, paddingTop: 8 }}>
-            {siblings.map((s, i) => <TreeNode key={i} name={s.name} relation={s.relation} dob={s.DOB} />)}
-          </div>
-        )}
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'flex-start', gap: 20, paddingLeft: 20, paddingTop: 8 }}>
+          {siblings.map((s, i) => <TreeNode key={i} name={s.name} relation={s.relation} dob={s.DOB} />)}
+        </div>
       </div>
       {children.length > 0 && (
         <>
@@ -883,8 +885,12 @@ export default function EssAboutPage() {
                   <G>
                     <EF label="PAN Number" name="pan_no" form={form} onChange={handleChange} />
                     <EF label="Aadhaar / ID Card" name="id_card" form={form} onChange={handleChange} />
-                    <EF label="PF Number" name="pf" form={form} onChange={handleChange} />
-                    <EF label="UAN Number" name="company_pf" form={form} onChange={handleChange} />
+                    {/* Bound to the "wrong" column names on purpose — see the read-only view's
+                        comment lower down: legacy's own onboarding step swaps pf/company_pf when
+                        copying emp_join into emp_details, so emp_details.pf actually holds the
+                        UAN number and emp_details.company_pf actually holds the PF number. */}
+                    <EF label="PF Number" name="company_pf" form={form} onChange={handleChange} maxLength={25} />
+                    <EF label="UAN Number" name="pf" form={form} onChange={handleChange} maxLength={12} />
                     <EF label="ESI Number" name="esi" form={form} onChange={handleChange} />
                     <EF label="ESI Dispensary" name="esi_dispensary" form={form} onChange={handleChange} />
                     <EF label="Previous Member ID" name="previous_member_id" form={form} onChange={handleChange} />
@@ -909,15 +915,18 @@ export default function EssAboutPage() {
                   <G>
                     <F label="PAN Number" value={emp.pan_no} masked />
                     <F label="Aadhaar / ID Card" value={emp.id_card} masked />
-                    <F label="PF Number" value={emp.pf} mono />
+                    {/* Bound to the "wrong" column names on purpose: legacy's own onboarding step
+                        (EmployeeJoinController.php's saveonboarding) swaps pf/company_pf when
+                        copying emp_join into emp_details, and legacy's real edit screen
+                        (View/Employee/setups.ctp) reads them back the same way — emp_details.pf
+                        holds the UAN number, emp_details.company_pf holds the PF number. */}
+                    <F label="PF Number" value={emp.company_pf} mono />
                     <F label="ESI Number" value={emp.esi} mono />
                     <F label="ESI Dispensary" value={emp.esi_dispensary} />
                     <F label="Previous Member ID" value={emp.previous_member_id} />
                     <F label="LWF Code" value={emp.lwf_code} />
                     <F label="WPS Code" value={emp.wps_code} />
-                    {/* emp_details.company_pf actually stores the UAN number (see PUT /api/employees/[id]
-                        and the join-onboarding "swapped per legacy quirk" comment) — not a Y/N flag. */}
-                    <F label="UAN Number" value={emp.company_pf} mono />
+                    <F label="UAN Number" value={emp.pf} mono />
                     <BoolF label="EPS" value={emp.eps} />
                     <BoolF label="International Worker" value={emp.international_worker} />
                     {isYes(emp.international_worker) && <F label="Country of Origin" value={emp.country_name} />}

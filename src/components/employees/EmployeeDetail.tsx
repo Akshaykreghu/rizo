@@ -350,8 +350,15 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
     mobile_no: (v) => mobileError(v) ?? '',
     pincode: (v) => pincodeError(v) ?? '',
     pan_no: (v) => panError(v) ?? '',
-    pf: (v) => pfNumberError(v) ?? '',
-    company_pf: (v) => uanError(v) ?? '',
+    // Swapped relative to their column names, not a typo: legacy's own onboarding step
+    // (EmployeeJoinController.php's saveonboarding) swaps pf/company_pf when copying emp_join
+    // into emp_details, and legacy's real edit screen (View/Employee/setups.ctp, the active
+    // block — an earlier, unswapped version is left commented out right above it in that file)
+    // reads them back the same way: emp_details.pf holds the UAN number, emp_details.company_pf
+    // holds the PF number. This form edits emp_details, so it has to follow that swap too, or
+    // "PF Number" and "UAN No" show each other's values for every already-onboarded employee.
+    pf: (v) => uanError(v) ?? '',
+    company_pf: (v) => pfNumberError(v) ?? '',
     esi: (v) => esiError(v) ?? '',
     lwf_code: (v) => lwfError(v) ?? '',
     account_no: (v) => accountNoError(v) ?? '',
@@ -643,9 +650,13 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
       {/* Scrollable tab content */}
       <div className="flex-1 overflow-y-auto scroll-fade px-6 py-6">
         {/* Ports legacy's disableAllSections()/setSectionAccess() — a locked record (editable=0)
-            can't have any of its fields touched until the toggle above unlocks it. A native
-            fieldset cascades disabled to every descendant input without touching each field. */}
-        <fieldset disabled={!editable} className="m-0 p-0 border-0 min-w-0">
+            can't have any of its fields touched until the toggle above unlocks it. Personal Info
+            and Onboarding are each wrapped in their own disabled <fieldset> below (a native
+            fieldset cascades disabled to every descendant input without touching each field
+            individually); Other Details' CollapsibleSections do the same per-section instead,
+            since a single fieldset wrapping all of it would disable each section's own eye-toggle
+            button too — a fieldset's disabled state has no way to exempt one descendant. */}
+        <div className="min-w-0">
         {TABS.map((tab) => {
           if (tab.key !== activeTab) return null;
           return (
@@ -654,6 +665,7 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                 // One continuous dense grid — matches legacy's Employee Details / Personal Info
                 // tab (and the Employee Join wizard's first step), which runs Name through LWF
                 // Registration Number as a single flat form with no sub-section headers.
+                <fieldset disabled={!editable} className="contents">
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-5 gap-y-5">
                   <div>
                     <label className={LABEL_CLASS}>Name<RequiredMark /></label>
@@ -792,14 +804,16 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                   </div>
 
                   <div>
+                    {/* Bound to company_pf, not pf — see the fieldValidators comment above. */}
                     <label className={LABEL_CLASS}>PF Number</label>
-                    <input className={cn(INPUT_CLASS, fieldErrors.pf && ERROR_INPUT_CLASS)} {...f('pf')} />
-                    <FieldError>{fieldErrors.pf}</FieldError>
+                    <input className={cn(INPUT_CLASS, fieldErrors.company_pf && ERROR_INPUT_CLASS)} {...f('company_pf')} maxLength={25} />
+                    <FieldError>{fieldErrors.company_pf}</FieldError>
                   </div>
                   <div>
+                    {/* Bound to pf, not company_pf — see the fieldValidators comment above. */}
                     <label className={LABEL_CLASS}>UAN No</label>
-                    <input className={cn(INPUT_CLASS, fieldErrors.company_pf && ERROR_INPUT_CLASS)} {...f('company_pf')} />
-                    <FieldError>{fieldErrors.company_pf}</FieldError>
+                    <input className={cn(INPUT_CLASS, fieldErrors.pf && ERROR_INPUT_CLASS)} {...f('pf')} maxLength={12} />
+                    <FieldError>{fieldErrors.pf}</FieldError>
                   </div>
                   <div>
                     <label className={LABEL_CLASS}>Previous Member ID</label>
@@ -843,9 +857,11 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                     </div>
                   )}
                 </div>
+                </fieldset>
               )}
 
               {tab.key === 'onboarding' && (
+                <fieldset disabled={!editable} className="contents">
                 <div className="space-y-8">
                   <div>
                     <SectionHeading>Company Information</SectionHeading>
@@ -953,11 +969,12 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                     </div>
                   </div>
                 </div>
+                </fieldset>
               )}
 
               {tab.key === 'other-details' && (
                 <div className="space-y-4">
-                  <CollapsibleSection title="Education" icon={GraduationCap}>
+                  <CollapsibleSection title="Education" icon={GraduationCap} disabled={!editable}>
                     <RepeatableRows
                       pkeyField="education_pkey"
                       rows={education}
@@ -974,7 +991,7 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                     />
                   </CollapsibleSection>
 
-                  <CollapsibleSection title="Experience" icon={History}>
+                  <CollapsibleSection title="Experience" icon={History} disabled={!editable}>
                     <RepeatableRows
                       pkeyField="experience_pkey"
                       rows={experience}
@@ -994,7 +1011,7 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                     />
                   </CollapsibleSection>
 
-                  <CollapsibleSection title="Family" icon={Users}>
+                  <CollapsibleSection title="Family" icon={Users} disabled={!editable}>
                     {family.length === 0 && !showFamilyForm && (
                       <p className="text-sm text-slate-400 py-6 text-center border border-dashed border-slate-200 rounded-lg">
                         No family members added yet.
@@ -1192,7 +1209,7 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                     )}
                   </CollapsibleSection>
 
-                  <CollapsibleSection title="Documents" icon={FileText}>
+                  <CollapsibleSection title="Documents" icon={FileText} disabled={!editable}>
                     {documents.length === 0 && !showDocForm && (
                       <p className="text-sm text-slate-400 py-6 text-center border border-dashed border-slate-200 rounded-lg">
                         No documents added yet.
@@ -1381,7 +1398,7 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
             </div>
           );
         })}
-        </fieldset>
+        </div>
       </div>
 
       {/* Sticky footer */}

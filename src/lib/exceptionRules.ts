@@ -123,7 +123,9 @@ export class RuleNameExistsError extends Error {
 
 export async function createRule(pool: Pool, input: RuleInput, createdBy: string): Promise<number> {
   const [[existing]] = await pool.execute<RowDataPacket[]>(
-    'SELECT exception_id FROM exception_rule WHERE LOWER(rule_name) = LOWER(?) AND status = 0',
+    // No `status = 0` filter — matches legacy's checkRuleName() (ExceptionRuleController.php),
+    // which blocks a name against ALL rows including soft-deleted ones, not just active rules.
+    'SELECT exception_id FROM exception_rule WHERE LOWER(rule_name) = LOWER(?)',
     [normalizeRuleName(input.ruleName)]
   );
   if (existing) throw new RuleNameExistsError();
@@ -145,7 +147,8 @@ export async function createRule(pool: Pool, input: RuleInput, createdBy: string
 
 export async function updateRule(pool: Pool, exceptionId: number, input: RuleInput, modifiedBy: string): Promise<void> {
   const [[existing]] = await pool.execute<RowDataPacket[]>(
-    'SELECT exception_id FROM exception_rule WHERE LOWER(rule_name) = LOWER(?) AND status = 0 AND exception_id != ?',
+    // Same as createRule above — no `status = 0` filter, matching legacy's checkRuleName().
+    'SELECT exception_id FROM exception_rule WHERE LOWER(rule_name) = LOWER(?) AND exception_id != ?',
     [normalizeRuleName(input.ruleName), exceptionId]
   );
   if (existing) throw new RuleNameExistsError();
