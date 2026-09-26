@@ -113,6 +113,89 @@ function RegimeCard({ regime, computation, preferred, onClick }: { regime: 'OLD'
 interface TaxLine { tax_heads_details_pkey: number; label: string; tax_value: number | null; locked: boolean }
 interface TaxHead { tax_heads_pkey: number; tax_name: string; tax_type: string; cap: number | null; lines: TaxLine[] }
 
+// ── PF Contributions panel ───────────────────────────────────────────────────
+// A small passbook-style ledger next to FY Detail — like the EPFO member portal: most recent
+// month at top, 6 rows visible before scrolling (same capped-list-plus-scrollbar technique as the
+// Organisation page's Branches panel), and a running Total that always stays visible below the
+// list rather than requiring a scroll to see, since it covers this employee's whole tenure here,
+// not just the FY currently selected above.
+// Both the PF table and the FY Detail table scroll within the same fixed height, so the two
+// side-by-side grids read as a matched pair regardless of how many rows either one has.
+const GRID_SCROLL_HEIGHT = 290;
+
+const PF_EMPLOYEE_COLOR = BRAND;
+const PF_EMPLOYER_COLOR = '#7c3aed';
+
+// Column widths shared by the scrolling body table and the fixed footer table below it, so the
+// two independent <table>s (needed so the Total row stays visible without scrolling) line up.
+const PF_COL_WIDTHS = ['34%', '22%', '22%', '22%'];
+
+function PFPanel({ pf, monthLabel }: { pf: PayData['pf']; monthLabel: (m: string | null) => string }) {
+  const grandTotal = pf.employeeTotal + pf.employerTotal;
+  return (
+    <div style={{ ...card, overflow: 'hidden' }}>
+      <style>{`
+        .grid-scroll-y { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+        .grid-scroll-y::-webkit-scrollbar { width: 7px; }
+        .grid-scroll-y::-webkit-scrollbar-track { background: transparent; }
+        .grid-scroll-y::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+        .grid-scroll-y::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+      `}</style>
+      <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)' }}>
+        <div style={{ fontSize: 10.5, fontWeight: 800, color: 'var(--text-primary)' }}>💳 PF Contributions (Approx)</div>
+      </div>
+
+      {pf.months.length === 0 ? (
+        <div style={{ height: GRID_SCROLL_HEIGHT, display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center', color: 'var(--text-muted)', fontSize: 11.5 }}>
+          No contributions recorded yet.
+        </div>
+      ) : (
+        <>
+          <div className="grid-scroll-y" style={{ maxHeight: GRID_SCROLL_HEIGHT, overflowY: 'auto' }}>
+            <table style={{ width: '100%', tableLayout: 'fixed', borderCollapse: 'collapse', fontSize: 11 }}>
+              <thead>
+                <tr style={{ background: 'var(--bg-page)' }}>
+                  {['Month', 'Employee', 'Employer', 'Total'].map((h, i) => (
+                    <th key={h} style={{ width: PF_COL_WIDTHS[i], position: 'sticky', top: 0, background: 'var(--bg-page)', padding: '6px 12px', textAlign: i === 0 ? 'left' : 'right', fontWeight: 700, fontSize: 9, color: 'var(--text-muted)', textTransform: 'uppercase', borderBottom: '1px solid var(--border)' }}>
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {pf.months.map((m) => (
+                  <tr key={m.month} style={{ borderBottom: '1px solid var(--border)' }}>
+                    <td style={{ padding: '7px 12px', fontWeight: 600, color: 'var(--text-primary)' }}>{monthLabel(m.month)}</td>
+                    <td style={{ padding: '7px 12px', textAlign: 'right', color: PF_EMPLOYEE_COLOR, fontWeight: 700 }}>₹{fmtINR(m.employee)}</td>
+                    <td style={{ padding: '7px 12px', textAlign: 'right', color: PF_EMPLOYER_COLOR, fontWeight: 700 }}>₹{fmtINR(m.employer)}</td>
+                    <td style={{ padding: '7px 12px', textAlign: 'right', fontWeight: 800, color: 'var(--text-primary)' }}>₹{fmtINR(m.employee + m.employer)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* A separate table (not part of the scrolling body above) so this Total row always
+              stays visible — it covers this employee's whole tenure here, not just the rows
+              currently scrolled into view. */}
+          <table style={{ width: '100%', tableLayout: 'fixed', borderCollapse: 'collapse', fontSize: 11 }}>
+            <tfoot>
+              <tr style={{ borderTop: `2px solid ${BRAND}`, background: `${BRAND}0a` }}>
+                <td style={{ width: PF_COL_WIDTHS[0], padding: '8px 12px', fontWeight: 800, fontSize: 8.5, textTransform: 'uppercase', letterSpacing: '0.3px', color: 'var(--text-muted)' }}>
+                  Total{pf.firstMonth && <><br />Since {monthLabel(pf.firstMonth)}</>}
+                </td>
+                <td style={{ width: PF_COL_WIDTHS[1], padding: '8px 12px', textAlign: 'right', fontWeight: 900, color: PF_EMPLOYEE_COLOR }}>₹{fmtINR(pf.employeeTotal)}</td>
+                <td style={{ width: PF_COL_WIDTHS[2], padding: '8px 12px', textAlign: 'right', fontWeight: 900, color: PF_EMPLOYER_COLOR }}>₹{fmtINR(pf.employerTotal)}</td>
+                <td style={{ width: PF_COL_WIDTHS[3], padding: '8px 12px', textAlign: 'right', fontWeight: 900, color: BRAND }}>₹{fmtINR(grandTotal)}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </>
+      )}
+    </div>
+  );
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 interface PayMonth { month: string; payroll_master_id: number; gross_salary: number; net_salary: number; total_deductions: number; present_days: number }
 interface PayData {
@@ -122,6 +205,8 @@ interface PayData {
   months: PayMonth[];
   allFYMonths: string[];
   latestLines: { head_type: string; item_name: string; amount: number }[];
+  lifetime: { monthsProcessed: number; firstMonth: string | null; grossTotal: number; netTotal: number; deductionsTotal: number };
+  pf: { months: { month: string; employee: number; employer: number }[]; employeeTotal: number; employerTotal: number; firstMonth: string | null };
 }
 
 export default function EssSalaryPage() {
@@ -222,7 +307,7 @@ export default function EssSalaryPage() {
   }
   if (!payData) return null;
 
-  const { employee, finYear, allFinYears, months, allFYMonths, latestLines } = payData;
+  const { employee, finYear, allFinYears, months, allFYMonths, latestLines, lifetime, pf } = payData;
   const processedMap = new Map(months.map((m) => [m.month, m]));
   const monthlyCTC = employee.gross_ctc;
   const annualCTC = monthlyCTC * 12;
@@ -233,6 +318,12 @@ export default function EssSalaryPage() {
   const thisMonthStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
   const earningsLines = latestLines.filter((l) => l.head_type === 'Addition');
   const earningsTotal = earningsLines.reduce((s, l) => s + l.amount, 0);
+  const monthLabel = (m: string | null) => {
+    if (!m) return '';
+    const [yr, mo] = m.split('-');
+    return `${MON[parseInt(mo)]} ${yr}`;
+  };
+  const firstMonthLabel = monthLabel(lifetime.firstMonth);
 
   return (
     <div style={{ background: 'var(--bg-page)', minHeight: '100%' }}>
@@ -270,12 +361,18 @@ export default function EssSalaryPage() {
       <div style={{ padding: '20px 28px 48px' }}>
         {tab === 'salary' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
               {[
                 { label: 'Monthly CTC', val: fmtINR(monthlyCTC), sub: 'per month', color: BRAND, bg: `${BRAND}0d` },
                 { label: 'Annual CTC', val: fmtINR(annualCTC), sub: finYear?.fin_year || '', color: '#2d7fb8', bg: '#eff6ff' },
                 { label: 'YTD Earned', val: fmtINR(ytdGross), sub: `${months.length} months processed`, color: '#16a34a', bg: '#f0fdf4' },
                 { label: 'YTD Net Pay', val: fmtINR(ytdNet), sub: `After ${fmtINR(ytdDeduct)} deductions`, color: '#7c3aed', bg: '#f5f3ff' },
+                {
+                  label: 'Total Earned (This Company)',
+                  val: fmtINR(lifetime.netTotal),
+                  sub: firstMonthLabel ? `Net pay since joining ${firstMonthLabel} · ${lifetime.monthsProcessed} months` : 'No payslips processed yet',
+                  color: '#d97706', bg: '#fffbeb',
+                },
               ].map((s) => (
                 <div key={s.label} style={{ ...card, padding: '14px 18px', background: s.bg, border: `1.5px solid ${s.color}22` }}>
                   <div style={{ fontSize: 10, fontWeight: 700, color: s.color, textTransform: 'uppercase', marginBottom: 4 }}>{s.label}</div>
@@ -307,35 +404,38 @@ export default function EssSalaryPage() {
               )}
             </div>
 
-            <div style={{ ...card, overflow: 'hidden' }}>
-              <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)' }}>
-                <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--text-primary)' }}>FY Detail — {finYear?.fin_year}</div>
-              </div>
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
-                  <thead><tr style={{ background: 'var(--bg-page)' }}>{['Sl.No', 'Month', 'Status', 'Net Salary', 'Deductions', 'Present Days', 'Payslip'].map((h) => <th key={h} style={{ padding: '8px 14px', textAlign: h === 'Sl.No' || h === 'Month' || h === 'Status' ? 'left' : h === 'Payslip' ? 'center' : 'right', fontWeight: 700, fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', borderBottom: '1px solid var(--border)' }}>{h}</th>)}</tr></thead>
-                  <tbody>
-                    {/* Always exactly 12 rows (one per FY month) — a fixed calendar view, not paginated,
-                        so switching financial years doesn't hide months behind a page click. */}
-                    {allFYMonths.map((m, i) => {
-                      const p = processedMap.get(m);
-                      const isFuture = m > thisMonthStr;
-                      const isCurrent = m === thisMonthStr;
-                      const [yr, mo] = m.split('-');
-                      return (
-                        <tr key={m} style={{ background: p ? `${BRAND}06` : isCurrent ? `${BRAND}0a` : 'transparent', borderBottom: '1px solid var(--border)' }}>
-                          <td style={{ padding: '9px 14px', color: 'var(--text-muted)' }}>{i + 1}</td>
-                          <td style={{ padding: '9px 14px', fontWeight: isCurrent ? 800 : 600 }}>{MON[parseInt(mo)]} {yr}</td>
-                          <td style={{ padding: '9px 14px' }}>{p ? <span style={{ padding: '2px 8px', borderRadius: 20, fontSize: 9, fontWeight: 800, background: '#f0fdf4', color: '#16a34a' }}>Processed</span> : isFuture ? <span style={{ padding: '2px 8px', borderRadius: 20, fontSize: 9, fontWeight: 800, background: '#f1f5f9', color: '#64748b' }}>Upcoming</span> : <span style={{ padding: '2px 8px', borderRadius: 20, fontSize: 9, fontWeight: 800, background: '#fffbeb', color: '#d97706' }}>Pending</span>}</td>
-                          <td style={{ padding: '9px 14px', textAlign: 'right', fontWeight: p ? 700 : 400, color: p ? BRAND : 'var(--text-muted)' }}>{p ? fmtINR(p.net_salary) : '—'}</td>
-                          <td style={{ padding: '9px 14px', textAlign: 'right', color: 'var(--text-muted)' }}>{p ? fmtINR(p.total_deductions) : '—'}</td>
-                          <td style={{ padding: '9px 14px', textAlign: 'right', color: 'var(--text-muted)' }}>{p ? p.present_days : '—'}</td>
-                          <td style={{ padding: '9px 14px', textAlign: 'center' }}>{p ? <button onClick={() => setSlipId(p.payroll_master_id)} style={{ padding: '3px 10px', fontSize: 9, fontWeight: 700, cursor: 'pointer', border: `1px solid ${BRAND}`, borderRadius: 12, background: 'transparent', color: BRAND }}>👁 Payslip</button> : '—'}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, alignItems: 'start' }}>
+              <PFPanel pf={pf} monthLabel={monthLabel} />
+
+              <div style={{ ...card, overflow: 'hidden' }}>
+                <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)' }}>
+                  <div style={{ fontSize: 10.5, fontWeight: 800, color: 'var(--text-primary)' }}>FY Detail — {finYear?.fin_year}</div>
+                </div>
+                <div className="grid-scroll-y" style={{ maxHeight: GRID_SCROLL_HEIGHT, overflowY: 'auto', overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 10.5 }}>
+                    <thead><tr>{['Month', 'Status', 'Net Salary', 'Deductions', 'Present', 'Payslip'].map((h) => <th key={h} style={{ position: 'sticky', top: 0, background: 'var(--bg-page)', padding: '6px 10px', textAlign: h === 'Month' || h === 'Status' ? 'left' : h === 'Payslip' ? 'center' : 'right', fontWeight: 700, fontSize: 9, color: 'var(--text-muted)', textTransform: 'uppercase', borderBottom: '1px solid var(--border)' }}>{h}</th>)}</tr></thead>
+                    <tbody>
+                      {/* Always exactly 12 rows (one per FY month) — a fixed calendar view, not paginated,
+                          so switching financial years doesn't hide months behind a page click. */}
+                      {allFYMonths.map((m, i) => {
+                        const p = processedMap.get(m);
+                        const isFuture = m > thisMonthStr;
+                        const isCurrent = m === thisMonthStr;
+                        const [yr, mo] = m.split('-');
+                        return (
+                          <tr key={m} style={{ background: p ? `${BRAND}06` : isCurrent ? `${BRAND}0a` : i % 2 ? 'var(--bg-page)' : 'transparent', borderBottom: '1px solid var(--border)' }}>
+                            <td style={{ padding: '7px 10px', fontWeight: isCurrent ? 800 : 600 }}>{MON[parseInt(mo)]} {yr}</td>
+                            <td style={{ padding: '7px 10px' }}>{p ? <span style={{ padding: '2px 7px', borderRadius: 20, fontSize: 8.5, fontWeight: 800, background: '#f0fdf4', color: '#16a34a' }}>Processed</span> : isFuture ? <span style={{ padding: '2px 7px', borderRadius: 20, fontSize: 8.5, fontWeight: 800, background: '#f1f5f9', color: '#64748b' }}>Upcoming</span> : <span style={{ padding: '2px 7px', borderRadius: 20, fontSize: 8.5, fontWeight: 800, background: '#fffbeb', color: '#d97706' }}>Pending</span>}</td>
+                            <td style={{ padding: '7px 10px', textAlign: 'right', fontWeight: p ? 700 : 400, color: p ? BRAND : 'var(--text-muted)' }}>{p ? fmtINR(p.net_salary) : '—'}</td>
+                            <td style={{ padding: '7px 10px', textAlign: 'right', color: 'var(--text-muted)' }}>{p ? fmtINR(p.total_deductions) : '—'}</td>
+                            <td style={{ padding: '7px 10px', textAlign: 'right', color: 'var(--text-muted)' }}>{p ? p.present_days : '—'}</td>
+                            <td style={{ padding: '7px 10px', textAlign: 'center' }}>{p ? <button onClick={() => setSlipId(p.payroll_master_id)} style={{ padding: '3px 9px', fontSize: 8.5, fontWeight: 700, cursor: 'pointer', border: `1px solid ${BRAND}`, borderRadius: 12, background: 'transparent', color: BRAND }}>👁 Payslip</button> : '—'}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
           </div>
