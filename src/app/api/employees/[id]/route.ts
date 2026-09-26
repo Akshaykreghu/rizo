@@ -157,7 +157,9 @@ export async function PUT(
     (body.contract_end_date && body.joining_date && body.contract_end_date <= body.joining_date
       ? 'Contract end date must be after the joining date'
       : null) ||
-    statutoryFieldErrors(body) ||
+    // pfUanSwapped: this edits emp_details, where pf/company_pf are swapped relative to their
+    // names — see statutoryFieldErrors' own comment for why.
+    statutoryFieldErrors(body, { pfUanSwapped: true }) ||
     (body.date_of_birth && body.joining_date ? ageAtDateError(body.date_of_birth, body.joining_date) : null);
   if (validationError) {
     return NextResponse.json({ error: validationError }, { status: 400 });

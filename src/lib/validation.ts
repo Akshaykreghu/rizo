@@ -138,22 +138,32 @@ export function pfNumberError(value: string): string | null {
 // Runs every statutory-format check legacy's Employee Join form enforces. Returns the first
 // error message, or null. `aadhaarRequired` toggles required behaviour (join form requires
 // Aadhaar; edit form only format-checks when present unless the caller passes it too).
+//
+// `pfUanSwapped` accounts for a genuine legacy quirk: EmployeeJoinController.php's
+// saveonboarding() swaps pf/company_pf when copying an emp_join draft into the permanent
+// emp_details row, and the real edit screen (View/Employee/setups.ctp) reads them back swapped
+// to compensate — so on emp_join (the Join wizard, still pf=PF/company_pf=UAN as typed) this
+// must stay false, but on emp_details (the Employee Detail / ESS About Me edit, post-onboarding)
+// it must be true, or this ends up validating the PF number as a UAN and vice versa — exactly
+// backwards, and confirmed the hard way (see EmployeeDetail.tsx's fieldValidators comment for the
+// full trace through the legacy source).
 export function statutoryFieldErrors(
   v: {
     id_card?: string; pan_no?: string; esi?: string; company_pf?: string;
     lwf_code?: string; account_no?: string; pf?: string; pincode?: string;
   },
-  opts?: { aadhaarRequired?: boolean }
+  opts?: { aadhaarRequired?: boolean; pfUanSwapped?: boolean }
 ): string | null {
   if (opts?.aadhaarRequired && !v.id_card) return 'Aadhaar/ID Card is required';
+  const [uanValue, pfValue] = opts?.pfUanSwapped ? [v.pf, v.company_pf] : [v.company_pf, v.pf];
   return (
     aadhaarError(v.id_card ?? '') ||
     panError(v.pan_no ?? '') ||
     esiError(v.esi ?? '') ||
-    uanError(v.company_pf ?? '') ||
+    uanError(uanValue ?? '') ||
     lwfError(v.lwf_code ?? '') ||
     accountNoError(v.account_no ?? '') ||
-    pfNumberError(v.pf ?? '') ||
+    pfNumberError(pfValue ?? '') ||
     pincodeError(v.pincode ?? '') ||
     null
   );

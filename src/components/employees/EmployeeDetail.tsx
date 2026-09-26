@@ -982,6 +982,7 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                       onAdd={addEducation}
                       onRemove={removeEducation}
                       onUpdate={(pkey, values) => updateRow('education', pkey, values)}
+                      disabled={!editable}
                       fields={[
                         { key: 'degree', label: 'Course', required: true, maxLength: CHILD_FIELD_LIMITS.course },
                         { key: 'university', label: 'University', required: true, maxLength: CHILD_FIELD_LIMITS.university },
@@ -999,6 +1000,7 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                       onAdd={addExperience}
                       onRemove={removeExperience}
                       onUpdate={(pkey, values) => updateRow('experience', pkey, values)}
+                      disabled={!editable}
                       fields={[
                         { key: 'company_name', label: 'Company', required: true, maxLength: CHILD_FIELD_LIMITS.company },
                         { key: 'designation', label: 'Designation', required: true, maxLength: CHILD_FIELD_LIMITS.designation },
@@ -1047,29 +1049,33 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                                   Nominee
                                 </span>
                               )}
-                              <button
-                                type="button"
-                                onClick={() => openEditFamily(row)}
-                                className="p-2 rounded-lg text-slate-400 hover:text-[color:var(--color-primary)] hover:bg-slate-50 transition-colors duration-150 flex-shrink-0"
-                                title="Edit"
-                              >
-                                <Pencil className="w-4 h-4" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => removeFamilyMember(Number(row.emp_family_pkey))}
-                                className="p-2 rounded-lg text-slate-400 hover:text-[color:var(--color-danger)] hover:bg-slate-50 transition-colors duration-150 flex-shrink-0"
-                                title="Delete"
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </button>
+                              {editable && (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => openEditFamily(row)}
+                                    className="p-2 rounded-lg text-slate-400 hover:text-[color:var(--color-primary)] hover:bg-slate-50 transition-colors duration-150 flex-shrink-0"
+                                    title="Edit"
+                                  >
+                                    <Pencil className="w-4 h-4" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => removeFamilyMember(Number(row.emp_family_pkey))}
+                                    className="p-2 rounded-lg text-slate-400 hover:text-[color:var(--color-danger)] hover:bg-slate-50 transition-colors duration-150 flex-shrink-0"
+                                    title="Delete"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                </>
+                              )}
                             </div>
                           );
                         })}
                       </div>
                     )}
 
-                    {!showFamilyForm && (
+                    {editable && !showFamilyForm && (
                       <button
                         type="button"
                         onClick={openAddFamily}
@@ -1079,7 +1085,7 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                       </button>
                     )}
 
-                    {showFamilyForm && (
+                    {editable && showFamilyForm && (
                       <div className="mt-4 rounded-xl border border-slate-100 bg-slate-50/60 p-5">
                         <h3 className="text-sm font-semibold text-[#0F172A] mb-4">{editingFamilyPkey != null ? 'Edit Family Member' : 'Add Family Member'}</h3>
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-5 gap-y-4">
@@ -1254,22 +1260,26 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                                     <Eye className="w-4 h-4" />
                                   </button>
                                 ) : null}
-                                <button
-                                  type="button"
-                                  onClick={() => openReplaceDocument(row)}
-                                  className="p-2 rounded-lg text-slate-400 hover:text-[color:var(--color-primary)] hover:bg-slate-50 transition-colors duration-150"
-                                  title="Edit"
-                                >
-                                  <Pencil className="w-4 h-4" />
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => removeDocument(Number(row.emp_passport_visa_pkey))}
-                                  className="p-2 rounded-lg text-slate-400 hover:text-[color:var(--color-danger)] hover:bg-slate-50 transition-colors duration-150"
-                                  title="Delete"
-                                >
-                                  <Trash2 className="w-4 h-4" />
-                                </button>
+                                {editable && (
+                                  <>
+                                    <button
+                                      type="button"
+                                      onClick={() => openReplaceDocument(row)}
+                                      className="p-2 rounded-lg text-slate-400 hover:text-[color:var(--color-primary)] hover:bg-slate-50 transition-colors duration-150"
+                                      title="Edit"
+                                    >
+                                      <Pencil className="w-4 h-4" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => removeDocument(Number(row.emp_passport_visa_pkey))}
+                                      className="p-2 rounded-lg text-slate-400 hover:text-[color:var(--color-danger)] hover:bg-slate-50 transition-colors duration-150"
+                                      title="Delete"
+                                    >
+                                      <Trash2 className="w-4 h-4" />
+                                    </button>
+                                  </>
+                                )}
                               </div>
                             </div>
                           );
@@ -1277,7 +1287,7 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                       </div>
                     )}
 
-                    {!showDocForm && (
+                    {editable && !showDocForm && (
                       <button
                         type="button"
                         onClick={openAddDocument}
@@ -1287,7 +1297,7 @@ export function EmployeeDetail({ id, onBack, showBackLink = true }: EmployeeDeta
                       </button>
                     )}
 
-                    {showDocForm && (
+                    {editable && showDocForm && (
                       <div className="mt-4 rounded-xl border border-slate-100 bg-slate-50/60 p-5">
                         <h3 className="text-sm font-semibold text-[#0F172A] mb-4">
                           {replacingPkey != null ? 'Edit Document' : 'Add Document'}

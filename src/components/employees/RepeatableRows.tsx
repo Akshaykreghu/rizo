@@ -46,6 +46,12 @@ interface RepeatableRowsProps {
    *  saving then updates that same row in place (by pkey) instead of adding a new one. */
   onUpdate?: (pkey: number, values: Record<string, string>) => void | Promise<void>;
   addLabel?: string;
+  /** Employee Detail's "Editable" toggle off — hides Edit/Delete on every saved row and the
+   *  add-row form entirely, rather than leaving them visibly present but silently inert (the
+   *  ambient <fieldset disabled> a host page wraps this in wouldn't be visually obvious here,
+   *  since none of these buttons have their own disabled styling). Saved rows themselves still
+   *  show — this locks editing, not viewing. */
+  disabled?: boolean;
 }
 
 // Saved rows show dates like the picker does ("02 Feb 1966"), not the raw "1966-02-02T00:00:00.000Z"
@@ -56,7 +62,7 @@ function showDate(v: unknown): string {
   return m ? `${m[3]} ${MONTHS_SHORT[Number(m[2]) - 1]} ${m[1]}` : String(v ?? '');
 }
 
-export function RepeatableRows({ fields, rows, pkeyField, onAdd, onRemove, onUpdate, addLabel }: RepeatableRowsProps) {
+export function RepeatableRows({ fields, rows, pkeyField, onAdd, onRemove, onUpdate, addLabel, disabled }: RepeatableRowsProps) {
   const empty = Object.fromEntries(fields.map((f) => [f.key, f.defaultValue ?? '']));
   const [draft, setDraft] = useState<Record<string, string>>(empty);
   const [adding, setAdding] = useState(false);
@@ -175,7 +181,7 @@ export function RepeatableRows({ fields, rows, pkeyField, onAdd, onRemove, onUpd
                 {tableFields.map((f) => (
                   <th key={f.key} className="pb-2 pr-4 font-medium">{f.label}</th>
                 ))}
-                <th className="pb-2" />
+                {!disabled && <th className="pb-2" />}
               </tr>
             </thead>
             <tbody>
@@ -186,26 +192,28 @@ export function RepeatableRows({ fields, rows, pkeyField, onAdd, onRemove, onUpd
                       {f.type === 'date' ? (row[f.key] ? showDate(row[f.key]) : (f.requiredUnless ? 'Present' : '')) : String(row[f.key] ?? '')}
                     </td>
                   ))}
-                  <td className="py-2 whitespace-nowrap">
-                    {onUpdate && (
+                  {!disabled && (
+                    <td className="py-2 whitespace-nowrap">
+                      {onUpdate && (
+                        <button
+                          type="button"
+                          onClick={() => startEdit(row)}
+                          className="mr-2.5 text-gray-400 hover:text-indigo-600"
+                          title="Edit"
+                        >
+                          <Pencil className="w-4 h-4" />
+                        </button>
+                      )}
                       <button
                         type="button"
-                        onClick={() => startEdit(row)}
-                        className="mr-2.5 text-gray-400 hover:text-indigo-600"
-                        title="Edit"
+                        onClick={() => onRemove(Number(row[pkeyField]))}
+                        className="text-gray-400 hover:text-red-500"
+                        title="Remove"
                       >
-                        <Pencil className="w-4 h-4" />
+                        <Trash2 className="w-4 h-4" />
                       </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => onRemove(Number(row[pkeyField]))}
-                      className="text-gray-400 hover:text-red-500"
-                      title="Remove"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </td>
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
@@ -213,6 +221,8 @@ export function RepeatableRows({ fields, rows, pkeyField, onAdd, onRemove, onUpd
         </div>
       )}
 
+      {!disabled && (
+      <>
       {/* Labels and inputs are two separate grid rows (not one row of stacked label+input pairs)
           so a long label wrapping to two lines (e.g. "Name on Document") only grows the label
           row — it can no longer push just that one field's input out of line with its neighbors.
@@ -301,6 +311,8 @@ export function RepeatableRows({ fields, rows, pkeyField, onAdd, onRemove, onUpd
         >
           <Plus className="w-3.5 h-3.5" /> {addLabel ?? 'Add row'}
         </button>
+      )}
+      </>
       )}
     </div>
   );
